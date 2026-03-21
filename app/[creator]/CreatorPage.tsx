@@ -1,13 +1,41 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import Image from "next/image";
-import { Creator, PremiumLink } from "../../lib/types";
+import { Creator, PremiumLink, SocialLink } from "../../lib/types";
 
 interface CreatorPageProps {
   creator: Creator;
   slug: string;
   isBot: boolean;
+}
+
+// Generate or retrieve session ID
+function getSessionId(): string {
+  if (typeof window === "undefined") return "";
+  const key = "ghostlink_sid";
+  let sid = sessionStorage.getItem(key);
+  if (!sid) {
+    sid = crypto.randomUUID();
+    sessionStorage.setItem(key, sid);
+  }
+  return sid;
+}
+
+// Fire-and-forget tracking using sendBeacon (preferred) or fetch keepalive
+function sendBeacon(url: string, data: object): void {
+  const json = JSON.stringify(data);
+  if (typeof navigator !== "undefined" && navigator.sendBeacon) {
+    const blob = new Blob([json], { type: "application/json" });
+    navigator.sendBeacon(url, blob);
+  } else {
+    fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: json,
+      keepalive: true,
+    }).catch(() => {});
+  }
 }
 
 function SocialIcon({ icon }: { icon: string }) {
@@ -63,7 +91,7 @@ function InstagramBrowserBanner() {
       >
         Open in Browser
       </button>
-      <span className="text-xs opacity-75">or tap &hellip; then &quot;Open in Browser&quot;</span>
+      <span className="text-xs opacity-75">or tap &#x22EF; then &quot;Open in Browser&quot;</span>
     </div>
   );
 }
@@ -72,6 +100,8 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
   const [premiumLinks, setPremiumLinks] = useState<PremiumLink[]>([]);
   const [premiumVisible, setPremiumVisible] = useState(false);
   const [isInstagram, setIsInstagram] = useState(false);
+  const sessionIdRef = useRef<string>("");
+  const trackedView = useRef(false);
 
   const fetchPremiumLinks = useCallback(async () => {
     try {
@@ -82,43 +112,62 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
         setTimeout(() => setPremiumVisible(true), 100);
       }
     } catch {
-      // Silently fail — bots and errors just see no premium links
+      // Silently fail
     }
   }, [slug]);
 
   useEffect(() => {
-    // Check for Instagram in-app browser
     const ua = navigator.userAgent;
-    if (ua.includes("Instagram")) {
-      setIsInstagram(true);
+    const igDetected = ua.includes("Instagram");
+    setIsInstagram(igDetected);
+
+    const sid = getSessionId();
+    sessionIdRef.current = sid;
+
+    // Track page view (once per mount)
+    if (!trackedView.current) {
+      trackedView.current = true;
+      sendBeacon("/api/pageview", {
+        creator: slug,
+        sessionId: sid,
+        isInstagram: igDetected,
+        isBot: false, // Client-side = always human
+      });
     }
 
-    // Only load premium links for non-bot visitors (client-side only)
+    // Load premium links after 2s delay (non-bot only)
     if (!isBot) {
       const timer = setTimeout(() => {
         fetchPremiumLinks();
       }, 2000);
       return () => clearTimeout(timer);
     }
-  }, [isBot, fetchPremiumLinks]);
+  }, [isBot, fetchPremiumLinks, slug]);
 
-  const trackAndVisit = async (label: string, url: string) => {
-    try {
-      await fetch("/api/track", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          creator: slug,
-          linkLabel: label,
-          timestamp: new Date().toISOString(),
-          userAgent: navigator.userAgent,
-          referer: document.referrer,
-        }),
-      });
-    } catch {
-      // Fire and forget
-    }
-    window.location.href = url;
+  const trackSocialClick = (link: SocialLink) => {
+    sendBeacon("/api/track", {
+      creator: slug,
+      linkLabel: link.label,
+      linkUrl: link.url,
+      linkType: "social",
+      sessionId: sessionIdRef.current,
+      isInstagram,
+    });
+  };
+
+  const trackAndVisitPremium = async (link: PremiumLink) => {
+    sendBeacon("/api/track", {
+      creator: slug,
+      linkLabel: link.label,
+      linkUrl: link.url,
+      linkType: "premium",
+      sessionId: sessionIdRef.current,
+      isInstagram,
+    });
+    // Small delay to let beacon fire, then navigate
+    setTimeout(() => {
+      window.location.href = link.url;
+    }, 50);
   };
 
   const { theme } = creator;
@@ -155,7 +204,7 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
             <p className="text-sm opacity-70">{creator.tagline}</p>
           </div>
 
-          {/* Social Links */}
+          {/* Social Links — tracked */}
           <div className="w-full flex flex-col gap-3">
             {creator.socialLinks.map((link) => (
               <a
@@ -163,6 +212,7 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
                 href={link.url}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={() => trackSocialClick(link)}
                 className="w-full flex items-center justify-center gap-2 py-3 px-6 rounded-full border text-sm font-medium transition-opacity hover:opacity-80"
                 style={{ borderColor: `${theme.textColor}40`, color: theme.textColor }}
               >
@@ -182,7 +232,7 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
               {premiumLinks.map((link) => (
                 <button
                   key={link.label}
-                  onClick={() => trackAndVisit(link.label, link.url)}
+                  onClick={() => trackAndVisitPremium(link)}
                   className="w-full flex items-center justify-center gap-2 py-4 px-6 rounded-full text-sm font-bold transition-transform hover:scale-105 active:scale-95"
                   style={{
                     backgroundColor: theme.accentColor,
