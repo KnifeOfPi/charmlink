@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
-import { AnalyticsEvent, PageViewEvent, ClickEvent, DeviceType } from "./types";
+import { AnalyticsEvent, AnalyticsSummary, PageViewEvent, ClickEvent, DeviceType } from "./types";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const ANALYTICS_FILE = path.join(DATA_DIR, "analytics.jsonl");
@@ -53,6 +53,80 @@ export function readEvents(): AnalyticsEvent[] {
 
 export function generateId(): string {
   return randomUUID();
+}
+
+// ── Summary builder ─────────────────────────────────────────────────────────
+
+export function buildSummary(
+  allEvents: AnalyticsEvent[],
+  creator: string,
+  period: "today" | "7d" | "30d" | "all"
+): AnalyticsSummary {
+  const filtered = filterByPeriod(allEvents, period).filter((e) => e.creator === creator);
+  const pageviews = filtered.filter((e): e is PageViewEvent => e.type === "pageview");
+  const clicks = filtered.filter((e): e is ClickEvent => e.type === "click");
+
+  const totalViews = pageviews.length;
+  const humanViews = pageviews.filter((e) => !e.isBot).length;
+  const botViews = pageviews.filter((e) => e.isBot).length;
+  const uniqueSessions = new Set(filtered.map((e) => e.sessionId)).size;
+  const totalClicks = clicks.length;
+  const premiumClicks = clicks.filter((e) => e.linkType === "premium").length;
+  const socialClicks = clicks.filter((e) => e.linkType === "social").length;
+  const ctr = humanViews > 0 ? Math.round((premiumClicks / humanViews) * 10000) / 100 : 0;
+
+  const referrerCounts: Record<string, number> = {};
+  filtered.forEach((e) => {
+    const ref = e.referer || "direct";
+    referrerCounts[ref] = (referrerCounts[ref] || 0) + 1;
+  });
+  const topReferrers = Object.entries(referrerCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([referer, count]) => ({ referer, count }));
+
+  const deviceBreakdown: Record<DeviceType, number> = { mobile: 0, tablet: 0, desktop: 0 };
+  pageviews.forEach((e) => { deviceBreakdown[e.device]++; });
+
+  const countryCounts: Record<string, number> = {};
+  pageviews.forEach((e) => {
+    const c = e.country || "unknown";
+    countryCounts[c] = (countryCounts[c] || 0) + 1;
+  });
+  const countryBreakdown = Object.entries(countryCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([country, count]) => ({ country, count }));
+
+  const instagramTraffic = pageviews.filter((e) => e.isInstagram).length;
+
+  const linkCounts: Record<string, { label: string; url: string; type: string; clicks: number }> = {};
+  clicks.forEach((e) => {
+    const key = e.linkUrl;
+    if (!linkCounts[key]) {
+      linkCounts[key] = { label: e.linkLabel, url: e.linkUrl, type: e.linkType, clicks: 0 };
+    }
+    linkCounts[key].clicks++;
+  });
+  const linkBreakdown = Object.values(linkCounts).sort((a, b) => b.clicks - a.clicks);
+
+  return {
+    creator,
+    period,
+    totalViews,
+    humanViews,
+    botViews,
+    uniqueSessions,
+    totalClicks,
+    premiumClicks,
+    socialClicks,
+    ctr,
+    topReferrers,
+    deviceBreakdown,
+    countryBreakdown,
+    instagramTraffic,
+    linkBreakdown,
+  };
 }
 
 // ── Period filtering ──────────────────────────────────────────────────────────

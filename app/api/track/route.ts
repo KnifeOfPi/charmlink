@@ -1,50 +1,40 @@
 import { NextRequest, NextResponse } from "next/server";
-import { appendEvent, detectDevice, generateId } from "../../../lib/analytics";
-import { isInstagramBrowser } from "../../../lib/bot-detect";
+import { appendEvent, parseDeviceType, generateId } from "../../../lib/analytics";
+import { ClickEvent } from "../../../lib/types";
 
 interface TrackPayload {
   creator: string;
   linkLabel: string;
-  linkUrl?: string;
-  timestamp: string;
-  userAgent: string;
-  referer: string;
-  sessionId?: string;
+  linkUrl: string;
+  linkType: "social" | "premium";
+  sessionId: string;
+  isInstagram: boolean;
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body: TrackPayload = await request.json();
-    const ua = body.userAgent || request.headers.get("user-agent") || "";
-    const country = request.headers.get("x-vercel-ip-country") || "unknown";
-    const device = detectDevice(ua);
-    const instagram = isInstagramBrowser(ua);
-    const sessionId = body.sessionId || "unknown";
+    const ua = request.headers.get("user-agent") || "";
+    const country = request.headers.get("x-vercel-ip-country") || request.headers.get("cf-ipcountry") || "unknown";
 
-    appendEvent({
+    const event: ClickEvent = {
       type: "click",
       id: generateId(),
       creator: body.creator,
       linkLabel: body.linkLabel,
-      linkUrl: body.linkUrl || "",
-      linkType: "premium",
-      timestamp: body.timestamp || new Date().toISOString(),
+      linkUrl: body.linkUrl,
+      linkType: body.linkType || "social",
+      timestamp: new Date().toISOString(),
       userAgent: ua,
-      referer: body.referer || "",
+      referer: request.headers.get("referer") || "",
       country,
-      device,
-      isInstagram: instagram,
-      sessionId,
-    });
+      device: parseDeviceType(ua),
+      isInstagram: body.isInstagram || false,
+      sessionId: body.sessionId || generateId(),
+    };
 
-    console.log("[ghostlink:track]", JSON.stringify({
-      creator: body.creator,
-      linkLabel: body.linkLabel,
-      device,
-      country,
-      instagram,
-      ip: request.headers.get("x-forwarded-for") || "unknown",
-    }));
+    appendEvent(event);
+    console.log("[ghostlink:click]", event.creator, event.linkLabel, event.linkType);
 
     return NextResponse.json({ ok: true });
   } catch {

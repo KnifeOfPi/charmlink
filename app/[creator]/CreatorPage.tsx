@@ -4,38 +4,37 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import Image from "next/image";
 import { Creator, PremiumLink, SocialLink } from "../../lib/types";
 
-interface CreatorPageProps {
-  creator: Creator;
-  slug: string;
-  isBot: boolean;
-}
-
-// Generate or retrieve session ID
 function getSessionId(): string {
-  if (typeof window === "undefined") return "";
-  const key = "ghostlink_sid";
-  let sid = sessionStorage.getItem(key);
+  if (typeof window === "undefined") return "ssr";
+  let sid = sessionStorage.getItem("ghostlink_sid");
   if (!sid) {
     sid = crypto.randomUUID();
-    sessionStorage.setItem(key, sid);
+    sessionStorage.setItem("ghostlink_sid", sid);
   }
   return sid;
 }
 
-// Fire-and-forget tracking using sendBeacon (preferred) or fetch keepalive
-function sendBeacon(url: string, data: object): void {
-  const json = JSON.stringify(data);
-  if (typeof navigator !== "undefined" && navigator.sendBeacon) {
-    const blob = new Blob([json], { type: "application/json" });
-    navigator.sendBeacon(url, blob);
-  } else {
-    fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: json,
-      keepalive: true,
-    }).catch(() => {});
+function sendBeacon(url: string, data: Record<string, unknown>): void {
+  try {
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon(url, JSON.stringify(data));
+    } else {
+      fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+        keepalive: true,
+      });
+    }
+  } catch {
+    // Fire and forget
   }
+}
+
+interface CreatorPageProps {
+  creator: Creator;
+  slug: string;
+  isBot: boolean;
 }
 
 function SocialIcon({ icon }: { icon: string }) {

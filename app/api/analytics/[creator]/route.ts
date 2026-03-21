@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readEvents, filterByPeriod, buildCreatorStats, Period } from "../../../../lib/analytics";
+import { readEvents, buildSummary } from "../../../../lib/analytics";
 
 function checkAuth(request: NextRequest): boolean {
   const adminKey = process.env.GHOSTLINK_ADMIN_KEY;
-  if (!adminKey) return true; // no key configured → open
-  const auth = request.headers.get("authorization") || "";
-  return auth === `Bearer ${adminKey}`;
+  if (!adminKey) return true; // No key configured = open (dev mode)
+  const authHeader = request.headers.get("authorization");
+  const queryKey = new URL(request.url).searchParams.get("key");
+  return authHeader === `Bearer ${adminKey}` || queryKey === adminKey;
 }
 
 export async function GET(
@@ -17,12 +18,8 @@ export async function GET(
   }
 
   const { creator } = await params;
-  const { searchParams } = new URL(request.url);
-  const period = (searchParams.get("period") || "all") as Period;
-
-  const allEvents = readEvents();
-  const filtered = filterByPeriod(allEvents, period);
-  const stats = buildCreatorStats(filtered, creator);
-
-  return NextResponse.json(stats);
+  const period = (new URL(request.url).searchParams.get("period") || "7d") as "today" | "7d" | "30d" | "all";
+  const events = readEvents();
+  const summary = buildSummary(events, creator, period);
+  return NextResponse.json(summary);
 }
