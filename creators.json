@@ -1,0 +1,56 @@
+{
+  "holly": {
+    "name": "Holly",
+    "tagline": "Model & Content Creator ✨",
+    "avatar": "/avatars/placeholder.svg",
+    "socialLinks": [
+      { "label": "Twitter", "url": "https://twitter.com/example", "icon": "twitter" },
+      { "label": "TikTok", "url": "https://tiktok.com/@example", "icon": "tiktok" },
+      { "label": "Instagram", "url": "https://instagram.com/example", "icon": "instagram" }
+    ],
+    "premiumLinks": [
+      { "label": "Exclusive Content", "url": "https://onlyfans.com/example", "icon": "star" },
+      { "label": "VIP Access", "url": "https://onlyfans.com/example-vip", "icon": "crown" }
+    ],
+    "theme": {
+      "bgColor": "#0a0a0a",
+      "accentColor": "#e91e8a",
+      "textColor": "#ffffff"
+    }
+  },
+  "luna": {
+    "name": "Luna",
+    "tagline": "Lifestyle & Fitness Creator 🌙",
+    "avatar": "/avatars/placeholder.svg",
+    "socialLinks": [
+      { "label": "Twitter", "url": "https://twitter.com/luna", "icon": "twitter" },
+      { "label": "YouTube", "url": "https://youtube.com/@luna", "icon": "youtube" }
+    ],
+    "premiumLinks": [
+      { "label": "Join My Fanvue", "url": "https://fanvue.com/luna", "icon": "star" },
+      { "label": "Premium Access", "url": "https://onlyfans.com/luna", "icon": "crown" }
+    ],
+    "theme": {
+      "bgColor": "#0d0d1a",
+      "accentColor": "#7c3aed",
+      "textColor": "#ffffff"
+    }
+  },
+  "jade": {
+    "name": "Jade",
+    "tagline": "Art & Creativity 🎨",
+    "avatar": "/avatars/placeholder.svg",
+    "socialLinks": [
+      { "label": "TikTok", "url": "https://tiktok.com/@jade", "icon": "tiktok" },
+      { "label": "Instagram", "url": "https://instagram.com/jade", "icon": "instagram" }
+    ],
+    "premiumLinks": [
+      { "label": "My OnlyFans", "url": "https://onlyfans.com/jade", "icon": "star" }
+    ],
+    "theme": {
+      "bgColor": "#0a0f0a",
+      "accentColor": "#10b981",
+      "textColor": "#ffffff"
+    }
+  }
+}
