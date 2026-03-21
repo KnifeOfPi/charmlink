@@ -85,67 +85,58 @@ Or connect the GitHub repo to Vercel for automatic deployments.
 | `/[creator]` | Creator landing page |
 | `/api/links/[creator]` | Returns premium links (bot-filtered) |
 | `/api/track` | Click tracking endpoint |
-| `/api/analytics/pageview` | Page view ingestion (POST) |
+| `/api/pageview` | Page view tracking endpoint |
 | `/api/analytics/[creator]` | Per-creator analytics (GET, auth required) |
 | `/api/analytics/overview` | All-creator overview (GET, auth required) |
 | `/admin/analytics` | Analytics dashboard UI |
 
 ## Analytics
 
-GhostLink includes a built-in analytics system that tracks page views and link clicks.
+### Dashboard
 
-### Data Storage
+Visit `/admin/analytics?key=YOUR_KEY` to see the analytics dashboard.
 
-Events are stored locally in `data/analytics.jsonl` (JSONL format, one JSON object per line). This file is **not committed to git** — it stays on the server.
+Set `GHOSTLINK_ADMIN_KEY` in your environment to protect it.
 
-On Vercel, since the filesystem is ephemeral, analytics data resets on each deployment. For persistent analytics, consider pointing the write path to a mounted volume or replacing the file store with a database (e.g. PlanetScale, Supabase, or Vercel KV).
+### What Is Tracked
 
-### What's Tracked
+**Page Views** (via `/api/pageview`):
+- Creator, timestamp, user-agent, referer
+- Country (from `x-vercel-ip-country` header)
+- Device type (mobile/tablet/desktop)
+- Bot vs human, Instagram vs other
 
-**Page Views** (fires automatically on every visitor):
-- Creator, timestamp, user agent, referrer
-- Country (from Vercel's `x-vercel-ip-country` header)
-- Device type (mobile / tablet / desktop)
-- Bot detection flag
-- Instagram in-app browser flag
-- Session ID (stored in `sessionStorage`)
+**Clicks** (via `/api/track`):
+- All social link clicks + premium link clicks
+- Same metadata as page views
+- Link type (social vs premium) for CTR calculation
 
-**Clicks** (fires when a visitor taps a premium link):
-- Same fields as page view, plus `linkLabel` and `linkUrl`
+### Tracking Performance
 
-### Accessing the Dashboard
-
-1. Set `GHOSTLINK_ADMIN_KEY` in your Vercel environment variables (or `.env.local`)
-2. Visit `/admin/analytics?key=YOUR_KEY`
-3. Or enter the key manually on the login screen at `/admin/analytics`
-
-The dashboard shows:
-- **Overview cards**: total views, clicks, CTR, unique visitors
-- **Per-creator table**: sortable by views, with CTR highlight
-- **Expandable rows**: click any creator for detailed breakdown
-  - Clicks by link
-  - Top referrers
-  - Device split
-  - Top 5 countries
-  - Instagram vs. other traffic %
-  - Daily bar chart (last 14 days)
-- **Period selector**: Today / 7 Days / 30 Days / All Time
+All client-side tracking uses `navigator.sendBeacon` (falls back to `fetch` with `keepalive: true`). This is fire-and-forget — it does NOT block navigation or slow down the page.
 
 ### Analytics API
 
-Both endpoints require `Authorization: Bearer YOUR_KEY` header (unless `GHOSTLINK_ADMIN_KEY` is not set).
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/analytics/[creator]?period=7d&key=KEY` | Per-creator stats |
+| `GET /api/analytics/overview?period=30d&key=KEY` | All creators summary |
 
-```bash
-# Per-creator stats
-curl -H "Authorization: Bearer YOUR_KEY" \
-  https://your-domain.com/api/analytics/holly?period=7d
+Period options: `today`, `7d`, `30d`, `all`
 
-# Overview (all creators)
-curl -H "Authorization: Bearer YOUR_KEY" \
-  https://your-domain.com/api/analytics/overview?period=30d
-```
+### Storage & Migration
 
-Supported `?period=` values: `today`, `7d`, `30d`, `all`
+Data is stored in `data/analytics.json` as an array of events (append-only). This file is gitignored.
+
+**Migration path to SQLite:**
+1. Create a SQLite schema with `events` table matching the event types
+2. Replace `appendEvent()` and `readEvents()` in `lib/analytics.ts` with better-sqlite3 calls
+3. `buildSummary()` can be replaced with SQL aggregation queries
+
+**Migration path to Postgres/Supabase:**
+1. Use `pg` or Supabase client
+2. Same schema — one `events` table with `type`, `creator`, `timestamp`, and JSONB `data` column
+3. Replace the two functions in `lib/analytics.ts`
 
 ## Adding a Creator
 
