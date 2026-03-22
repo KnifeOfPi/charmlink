@@ -1,4 +1,4 @@
-# GhostLink
+# CharmLink
 
 Self-hosted Instagram-safe landing page system for OnlyFans/Fanvue creators.
 
@@ -21,8 +21,8 @@ Creator landing pages served on a custom domain (e.g. `links.example.com/holly`)
 ### 1. Clone & Install
 
 ```bash
-git clone https://github.com/KnifeOfPi/ghostlink.git
-cd ghostlink
+git clone https://github.com/KnifeOfPi/charmlink.git
+cd charmlink
 npm install
 ```
 
@@ -75,8 +75,8 @@ Or connect the GitHub repo to Vercel for automatic deployments.
 
 | Variable | Description |
 |----------|-------------|
-| `GHOSTLINK_SECRET` | Optional API key for the /api/links endpoint (future use) |
-| `GHOSTLINK_ADMIN_KEY` | Secret key to protect the analytics API and dashboard |
+| `CHARMLINK_SECRET` | Optional API key for the /api/links endpoint (future use) |
+| `CHARMLINK_ADMIN_KEY` | Secret key to protect the analytics API and dashboard |
 
 ## Routes
 
@@ -96,7 +96,7 @@ Or connect the GitHub repo to Vercel for automatic deployments.
 
 Visit `/admin/analytics?key=YOUR_KEY` to see the analytics dashboard.
 
-Set `GHOSTLINK_ADMIN_KEY` in your environment to protect it.
+Set `CHARMLINK_ADMIN_KEY` in your environment to protect it.
 
 ### What Is Tracked
 

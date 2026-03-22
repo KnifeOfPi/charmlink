@@ -6,7 +6,7 @@ import { CreatorsConfig } from "../../../../lib/types";
 const creators: CreatorsConfig = creatorsData as CreatorsConfig;
 
 function checkAuth(request: NextRequest): boolean {
-  const adminKey = process.env.GHOSTLINK_ADMIN_KEY;
+  const adminKey = process.env.CHARMLINK_ADMIN_KEY;
   if (!adminKey) return true;
   const authHeader = request.headers.get("authorization");
   const queryKey = new URL(request.url).searchParams.get("key");

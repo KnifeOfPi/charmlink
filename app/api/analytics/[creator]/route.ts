@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { readEvents, buildSummary } from "../../../../lib/analytics";
 
 function checkAuth(request: NextRequest): boolean {
-  const adminKey = process.env.GHOSTLINK_ADMIN_KEY;
+  const adminKey = process.env.CHARMLINK_ADMIN_KEY;
   if (!adminKey) return true; // No key configured = open (dev mode)
   const authHeader = request.headers.get("authorization");
   const queryKey = new URL(request.url).searchParams.get("key");

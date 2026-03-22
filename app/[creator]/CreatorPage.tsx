@@ -6,10 +6,10 @@ import { Creator, PremiumLink, SocialLink } from "../../lib/types";
 
 function getSessionId(): string {
   if (typeof window === "undefined") return "ssr";
-  let sid = sessionStorage.getItem("ghostlink_sid");
+  let sid = sessionStorage.getItem("charmlink_sid");
   if (!sid) {
     sid = crypto.randomUUID();
-    sessionStorage.setItem("ghostlink_sid", sid);
+    sessionStorage.setItem("charmlink_sid", sid);
   }
   return sid;
 }

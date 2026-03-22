@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
     };
 
     appendEvent(event);
-    console.log("[ghostlink:click]", event.creator, event.linkLabel, event.linkType);
+    console.log("[charmlink:click]", event.creator, event.linkLabel, event.linkType);
 
     return NextResponse.json({ ok: true });
   } catch {

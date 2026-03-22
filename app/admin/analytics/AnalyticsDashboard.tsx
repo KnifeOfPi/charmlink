@@ -169,7 +169,7 @@ export function AnalyticsDashboard({ summaries, totals, period, adminKey }: Dash
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h1 className="text-3xl font-bold">👑 GhostLink Analytics</h1>
+            <h1 className="text-3xl font-bold">👑 CharmLink Analytics</h1>
             <p className="text-gray-500 text-sm mt-1">Creator performance dashboard</p>
           </div>
           {/* Period selector */}
@@ -208,7 +208,7 @@ export function AnalyticsDashboard({ summaries, totals, period, adminKey }: Dash
         </div>
 
         <p className="text-center text-gray-700 text-xs mt-8">
-          GhostLink v1 · Data stored in data/analytics.json · Migrate to Postgres when needed
+          CharmLink v1 · Data stored in data/analytics.json · Migrate to Postgres when needed
         </p>
       </div>
     </main>

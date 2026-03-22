@@ -8,7 +8,7 @@ import { AnalyticsDashboard } from "./AnalyticsDashboard";
 const creators: CreatorsConfig = creatorsData as CreatorsConfig;
 
 export const metadata: Metadata = {
-  title: "GhostLink Analytics",
+  title: "CharmLink Analytics",
   robots: "noindex",
 };
 
@@ -21,7 +21,7 @@ interface PageProps {
 
 export default async function AnalyticsPage({ searchParams }: PageProps) {
   const { key, period: periodParam } = await searchParams;
-  const adminKey = process.env.GHOSTLINK_ADMIN_KEY;
+  const adminKey = process.env.CHARMLINK_ADMIN_KEY;
 
   // Auth check
   if (adminKey && key !== adminKey) {
