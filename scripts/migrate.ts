@@ -37,6 +37,30 @@ CREATE TABLE IF NOT EXISTS charmlink_creators (
   show_location BOOLEAN DEFAULT false,
   location_type VARCHAR(20) DEFAULT 'ip_auto',
   sensitive_default BOOLEAN DEFAULT false,
+  -- v3: background
+  bg_type VARCHAR(20) DEFAULT 'solid',
+  bg_gradient_type VARCHAR(20) DEFAULT 'linear',
+  bg_gradient_direction VARCHAR(30) DEFAULT 'to bottom',
+  bg_color_2 VARCHAR(20) DEFAULT '#1a1a2e',
+  bg_color_3 VARCHAR(20) DEFAULT NULL,
+  -- v3: floating icons
+  show_floating_icons BOOLEAN DEFAULT false,
+  floating_icon VARCHAR(10) DEFAULT '💫',
+  floating_icon_count INT DEFAULT 8,
+  -- v3: stars
+  show_stars BOOLEAN DEFAULT false,
+  stars_count INT DEFAULT 50,
+  stars_color VARCHAR(20) DEFAULT '#ffffff',
+  animation_speed INT DEFAULT 10,
+  -- v3: avatar border
+  avatar_border_style VARCHAR(20) DEFAULT 'solid',
+  avatar_border_color_1 VARCHAR(20) DEFAULT '#ffffff',
+  avatar_border_color_2 VARCHAR(20) DEFAULT '#f472b6',
+  avatar_border_color_3 VARCHAR(20) DEFAULT '#fda4af',
+  -- v3: misc
+  is_verified BOOLEAN DEFAULT false,
+  font VARCHAR(30) DEFAULT 'inter',
+  location_pill_color VARCHAR(20) DEFAULT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -59,6 +83,17 @@ CREATE TABLE IF NOT EXISTS charmlink_links (
   badge VARCHAR(20) DEFAULT NULL,
   notes TEXT DEFAULT '',
   tags TEXT[] DEFAULT '{}',
+  -- v3: text glow
+  show_text_glow BOOLEAN DEFAULT false,
+  text_glow_color VARCHAR(20) DEFAULT '#ffffff',
+  text_glow_intensity INT DEFAULT 5,
+  -- v3: hover & border
+  hover_animation VARCHAR(20) DEFAULT NULL,
+  border_color VARCHAR(20) DEFAULT NULL,
+  show_border BOOLEAN DEFAULT false,
+  -- v3: per-link overrides
+  title_color VARCHAR(20) DEFAULT NULL,
+  title_font_size VARCHAR(10) DEFAULT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
