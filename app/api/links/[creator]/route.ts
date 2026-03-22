@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import creatorsData from "../../../../creators.json";
-import { CreatorsConfig } from "../../../../lib/types";
+import { getCreatorBySlug, getCreatorLinks } from "../../../../lib/db";
 import { isBot } from "../../../../lib/bot-detect";
 
-const creators: CreatorsConfig = creatorsData as CreatorsConfig;
+export const runtime = "nodejs";
 
 export async function GET(
   request: NextRequest,
@@ -17,10 +16,20 @@ export async function GET(
     return NextResponse.json({ links: [] });
   }
 
-  const creator = creators[slug];
-  if (!creator) {
-    return NextResponse.json({ links: [] }, { status: 404 });
-  }
+  try {
+    const creator = await getCreatorBySlug(slug);
+    if (!creator) {
+      return NextResponse.json({ links: [] }, { status: 404 });
+    }
 
-  return NextResponse.json({ links: creator.premiumLinks });
+    const links = await getCreatorLinks(creator.id);
+    const premiumLinks = links
+      .filter((l) => l.link_type === "premium")
+      .map((l) => ({ label: l.label, url: l.url, icon: l.icon }));
+
+    return NextResponse.json({ links: premiumLinks });
+  } catch (err) {
+    console.error("[links:get] DB error", err);
+    return NextResponse.json({ links: [] }, { status: 500 });
+  }
 }

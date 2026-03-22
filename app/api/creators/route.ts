@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
-import { CreatorsConfig } from "../../../lib/types";
+import { getAllCreators } from "../../../lib/db";
+
+export const runtime = "nodejs";
 
 export async function GET() {
-  const configPath = path.join(process.cwd(), "creators.json");
-  const raw = fs.readFileSync(configPath, "utf8");
-  const config: CreatorsConfig = JSON.parse(raw);
-  return NextResponse.json(Object.keys(config));
+  try {
+    const creators = await getAllCreators();
+    return NextResponse.json(creators.map((c) => c.slug));
+  } catch (err) {
+    console.error("[creators:list] DB error", err);
+    return NextResponse.json([], { status: 500 });
+  }
 }

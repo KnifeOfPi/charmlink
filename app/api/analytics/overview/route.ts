@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readEvents, buildSummary } from "../../../../lib/analytics";
-import creatorsData from "../../../../creators.json";
-import { CreatorsConfig } from "../../../../lib/types";
+import { getAllCreators, getAnalytics, getAnalyticsOverview } from "../../../../lib/db";
 
-const creators: CreatorsConfig = creatorsData as CreatorsConfig;
+export const runtime = "nodejs";
 
 function checkAuth(request: NextRequest): boolean {
   const adminKey = process.env.CHARMLINK_ADMIN_KEY;
@@ -18,17 +16,25 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const period = (new URL(request.url).searchParams.get("period") || "7d") as "today" | "7d" | "30d" | "all";
-  const events = readEvents();
-  const summaries = Object.keys(creators).map((slug) => buildSummary(events, slug, period));
+  const period = (new URL(request.url).searchParams.get("period") || "7d") as
+    | "today"
+    | "7d"
+    | "30d"
+    | "all";
 
-  const totals = {
-    totalViews: summaries.reduce((s, c) => s + c.totalViews, 0),
-    humanViews: summaries.reduce((s, c) => s + c.humanViews, 0),
-    totalClicks: summaries.reduce((s, c) => s + c.totalClicks, 0),
-    premiumClicks: summaries.reduce((s, c) => s + c.premiumClicks, 0),
-    uniqueSessions: summaries.reduce((s, c) => s + c.uniqueSessions, 0),
-  };
+  try {
+    const [creators, totals] = await Promise.all([
+      getAllCreators(),
+      getAnalyticsOverview(period),
+    ]);
 
-  return NextResponse.json({ period, creators: summaries, totals });
+    const summaries = await Promise.all(
+      creators.map((c) => getAnalytics(c.slug, period))
+    );
+
+    return NextResponse.json({ period, creators: summaries, totals });
+  } catch (err) {
+    console.error("[analytics:overview] DB error", err);
+    return NextResponse.json({ error: "DB error" }, { status: 500 });
+  }
 }

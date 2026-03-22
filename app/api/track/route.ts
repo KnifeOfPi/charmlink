@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { appendEvent, parseDeviceType, generateId } from "../../../lib/analytics";
-import { ClickEvent } from "../../../lib/types";
+import { parseDeviceType, generateId } from "../../../lib/analytics";
+import { recordEvent, getCreatorBySlug } from "../../../lib/db";
+
+export const runtime = "nodejs";
 
 interface TrackPayload {
   creator: string;
@@ -15,27 +17,37 @@ export async function POST(request: NextRequest) {
   try {
     const body: TrackPayload = await request.json();
     const ua = request.headers.get("user-agent") || "";
-    const country = request.headers.get("x-vercel-ip-country") || request.headers.get("cf-ipcountry") || "unknown";
+    const country =
+      request.headers.get("x-vercel-ip-country") ||
+      request.headers.get("cf-ipcountry") ||
+      "unknown";
 
-    const event: ClickEvent = {
+    // Look up creator_id for FK reference
+    let creatorId: string | null = null;
+    try {
+      const creator = await getCreatorBySlug(body.creator);
+      creatorId = creator?.id ?? null;
+    } catch {
+      // Non-fatal
+    }
+
+    await recordEvent({
       type: "click",
-      id: generateId(),
-      creator: body.creator,
-      linkLabel: body.linkLabel,
-      linkUrl: body.linkUrl,
-      linkType: body.linkType || "social",
-      timestamp: new Date().toISOString(),
-      userAgent: ua,
+      creator_id: creatorId,
+      creator_slug: body.creator,
+      link_label: body.linkLabel,
+      link_url: body.linkUrl,
+      link_type: body.linkType || "social",
+      session_id: body.sessionId || generateId(),
+      user_agent: ua,
       referer: request.headers.get("referer") || "",
       country,
       device: parseDeviceType(ua),
-      isInstagram: body.isInstagram || false,
-      sessionId: body.sessionId || generateId(),
-    };
+      is_bot: false,
+      is_instagram: body.isInstagram || false,
+    });
 
-    appendEvent(event);
-    console.log("[charmlink:click]", event.creator, event.linkLabel, event.linkType);
-
+    console.log("[charmlink:click]", body.creator, body.linkLabel, body.linkType);
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ ok: false }, { status: 400 });

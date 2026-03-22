@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { appendEvent, parseDeviceType, generateId } from "../../../lib/analytics";
-import { PageViewEvent } from "../../../lib/types";
+import { parseDeviceType, generateId } from "../../../lib/analytics";
+import { recordEvent, getCreatorBySlug } from "../../../lib/db";
+
+export const runtime = "nodejs";
 
 interface PageViewPayload {
   creator: string;
@@ -13,23 +15,33 @@ export async function POST(request: NextRequest) {
   try {
     const body: PageViewPayload = await request.json();
     const ua = request.headers.get("user-agent") || "";
-    const country = request.headers.get("x-vercel-ip-country") || request.headers.get("cf-ipcountry") || "unknown";
+    const country =
+      request.headers.get("x-vercel-ip-country") ||
+      request.headers.get("cf-ipcountry") ||
+      "unknown";
 
-    const event: PageViewEvent = {
+    // Look up creator_id for FK reference
+    let creatorId: string | null = null;
+    try {
+      const creator = await getCreatorBySlug(body.creator);
+      creatorId = creator?.id ?? null;
+    } catch {
+      // Non-fatal
+    }
+
+    await recordEvent({
       type: "pageview",
-      id: generateId(),
-      creator: body.creator,
-      timestamp: new Date().toISOString(),
-      userAgent: ua,
+      creator_id: creatorId,
+      creator_slug: body.creator,
+      session_id: body.sessionId || generateId(),
+      user_agent: ua,
       referer: request.headers.get("referer") || "",
       country,
       device: parseDeviceType(ua),
-      isBot: body.isBot || false,
-      isInstagram: body.isInstagram || false,
-      sessionId: body.sessionId || generateId(),
-    };
+      is_bot: body.isBot || false,
+      is_instagram: body.isInstagram || false,
+    });
 
-    appendEvent(event);
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ ok: false }, { status: 400 });

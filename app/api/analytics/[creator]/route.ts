@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readEvents, buildSummary } from "../../../../lib/analytics";
+import { getAnalytics } from "../../../../lib/db";
+
+export const runtime = "nodejs";
 
 function checkAuth(request: NextRequest): boolean {
   const adminKey = process.env.CHARMLINK_ADMIN_KEY;
-  if (!adminKey) return true; // No key configured = open (dev mode)
+  if (!adminKey) return true;
   const authHeader = request.headers.get("authorization");
   const queryKey = new URL(request.url).searchParams.get("key");
   return authHeader === `Bearer ${adminKey}` || queryKey === adminKey;
@@ -18,8 +20,17 @@ export async function GET(
   }
 
   const { creator } = await params;
-  const period = (new URL(request.url).searchParams.get("period") || "7d") as "today" | "7d" | "30d" | "all";
-  const events = readEvents();
-  const summary = buildSummary(events, creator, period);
-  return NextResponse.json(summary);
+  const period = (new URL(request.url).searchParams.get("period") || "7d") as
+    | "today"
+    | "7d"
+    | "30d"
+    | "all";
+
+  try {
+    const summary = await getAnalytics(creator, period);
+    return NextResponse.json(summary);
+  } catch (err) {
+    console.error("[analytics:creator] DB error", err);
+    return NextResponse.json({ error: "DB error" }, { status: 500 });
+  }
 }
