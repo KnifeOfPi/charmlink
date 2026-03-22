@@ -48,36 +48,31 @@ export default async function CreatorPageServer({ params }: PageProps) {
     if (!dbCreator) notFound();
 
     const links = await getCreatorLinks(dbCreator.id);
-    const socialLinks = links
-      .filter((l) => l.link_type === "social")
-      .map((l) => ({
-        id: l.id,
-        label: l.label,
-        url: l.url,
-        icon: l.icon,
-        subtitle: l.subtitle,
-        badge: l.badge,
-        sensitive: l.sensitive,
-        image_url: l.image_url,
-        deeplink_enabled: l.deeplink_enabled,
-        recovery_url: l.recovery_url,
-        redirect_url: l.redirect_url,
-      }));
-    const premiumLinks = links
-      .filter((l) => l.link_type === "premium")
-      .map((l) => ({
-        id: l.id,
-        label: l.label,
-        url: l.url,
-        icon: l.icon,
-        subtitle: l.subtitle,
-        badge: l.badge,
-        sensitive: l.sensitive,
-        image_url: l.image_url,
-        deeplink_enabled: l.deeplink_enabled,
-        recovery_url: l.recovery_url,
-        redirect_url: l.redirect_url,
-      }));
+    const mapLink = (l: (typeof links)[0]) => ({
+      id: l.id,
+      label: l.label,
+      url: l.url,
+      icon: l.icon,
+      subtitle: l.subtitle,
+      badge: l.badge,
+      sensitive: l.sensitive,
+      image_url: l.image_url,
+      deeplink_enabled: l.deeplink_enabled,
+      recovery_url: l.recovery_url,
+      redirect_url: l.redirect_url,
+      // v3
+      show_text_glow: l.show_text_glow,
+      text_glow_color: l.text_glow_color,
+      text_glow_intensity: l.text_glow_intensity,
+      hover_animation: l.hover_animation,
+      border_color: l.border_color,
+      show_border: l.show_border,
+      title_color: l.title_color,
+      title_font_size: l.title_font_size,
+    });
+
+    const socialLinks = links.filter((l) => l.link_type === "social").map(mapLink);
+    const premiumLinks = links.filter((l) => l.link_type === "premium").map(mapLink);
 
     creator = {
       name: dbCreator.name,
@@ -93,6 +88,30 @@ export default async function CreatorPageServer({ params }: PageProps) {
       show_location: dbCreator.show_location,
       location_type: dbCreator.location_type,
       sensitive_default: dbCreator.sensitive_default,
+      // v3 background
+      bg_type: dbCreator.bg_type,
+      bg_gradient_type: dbCreator.bg_gradient_type,
+      bg_gradient_direction: dbCreator.bg_gradient_direction,
+      bg_color_2: dbCreator.bg_color_2,
+      bg_color_3: dbCreator.bg_color_3,
+      // v3 floating icons
+      show_floating_icons: dbCreator.show_floating_icons,
+      floating_icon: dbCreator.floating_icon,
+      floating_icon_count: dbCreator.floating_icon_count,
+      // v3 stars
+      show_stars: dbCreator.show_stars,
+      stars_count: dbCreator.stars_count,
+      stars_color: dbCreator.stars_color,
+      animation_speed: dbCreator.animation_speed,
+      // v3 avatar
+      avatar_border_style: dbCreator.avatar_border_style,
+      avatar_border_color_1: dbCreator.avatar_border_color_1,
+      avatar_border_color_2: dbCreator.avatar_border_color_2,
+      avatar_border_color_3: dbCreator.avatar_border_color_3,
+      // v3 misc
+      is_verified: dbCreator.is_verified,
+      font: dbCreator.font,
+      location_pill_color: dbCreator.location_pill_color,
     };
   } catch (err) {
     console.error("[creator:page] DB error", err);

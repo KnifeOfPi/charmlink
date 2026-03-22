@@ -4,6 +4,29 @@ import { useEffect, useState, use } from "react";
 import { useRouter } from "next/navigation";
 import { useAdminAuth } from "../../useAdminAuth";
 import { AdminNav } from "../../AdminNav";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface DBCreator {
   id: string;
@@ -19,6 +42,26 @@ interface DBCreator {
   show_location: boolean;
   location_type: string;
   sensitive_default: boolean;
+  // v3
+  bg_type: string;
+  bg_gradient_type: string;
+  bg_gradient_direction: string;
+  bg_color_2: string;
+  bg_color_3: string | null;
+  show_floating_icons: boolean;
+  floating_icon: string;
+  floating_icon_count: number;
+  show_stars: boolean;
+  stars_count: number;
+  stars_color: string;
+  animation_speed: number;
+  avatar_border_style: string;
+  avatar_border_color_1: string;
+  avatar_border_color_2: string;
+  avatar_border_color_3: string;
+  is_verified: boolean;
+  font: string;
+  location_pill_color: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -41,6 +84,15 @@ interface DBLink {
   badge: string | null;
   notes: string;
   tags: string[];
+  // v3
+  show_text_glow: boolean;
+  text_glow_color: string;
+  text_glow_intensity: number;
+  hover_animation: string | null;
+  border_color: string | null;
+  show_border: boolean;
+  title_color: string | null;
+  title_font_size: string | null;
   created_at: string;
 }
 
@@ -51,8 +103,37 @@ interface AnalyticsSummary {
   ctr: number;
 }
 
-const inputCls = "w-full bg-[#111] border border-[#333] rounded-lg px-3 py-2 text-white text-sm placeholder-gray-600 outline-none focus:border-[#e91e8a] transition-colors";
-const labelCls = "block text-gray-400 text-xs mb-1";
+// ── Color Input ───────────────────────────────────────────────────────────────
+
+function ColorInput({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="space-y-1">
+      <Label className="text-xs text-muted-foreground">{label}</Label>
+      <div className="flex items-center gap-2">
+        <input
+          type="color"
+          value={value || "#000000"}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-8 w-8 rounded border border-input cursor-pointer bg-transparent flex-shrink-0"
+        />
+        <Input
+          value={value || ""}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="#000000"
+          className="font-mono text-xs"
+        />
+      </div>
+    </div>
+  );
+}
 
 // ── Link Row ──────────────────────────────────────────────────────────────────
 
@@ -69,48 +150,54 @@ function LinkRow({
     twitter: "𝕏", tiktok: "♪", instagram: "📸", youtube: "▶",
     star: "⭐", crown: "👑", heart: "💖", link: "🔗",
   };
-  const badgeColors: Record<string, string> = {
-    new: "bg-green-800 text-green-300",
-    popular: "bg-orange-800 text-orange-300",
-    exclusive: "bg-purple-800 text-purple-300",
-  };
+
   return (
-    <div className={`flex items-start gap-3 p-3 rounded-lg border ${link.is_active ? "border-[#333] bg-[#111]" : "border-[#222] bg-[#0d0d0d] opacity-60"}`}>
+    <div
+      className={`flex items-start gap-3 p-3 rounded-lg border transition-opacity ${
+        link.is_active ? "border-border bg-card" : "border-border/40 bg-muted/20 opacity-60"
+      }`}
+    >
       <span className="text-base w-6 text-center flex-shrink-0 mt-0.5">{icons[link.icon] ?? "🔗"}</span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <p className="text-white text-sm font-medium truncate">{link.label}</p>
+          <p className="text-sm font-medium truncate">{link.label}</p>
           {link.badge && (
-            <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-full ${badgeColors[link.badge] ?? "bg-gray-700 text-gray-300"}`}>
+            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
               {link.badge}
-            </span>
+            </Badge>
           )}
-          {link.sensitive && <span className="text-[10px] bg-red-900 text-red-300 px-1.5 py-0.5 rounded-full">sensitive</span>}
-          {link.deeplink_enabled && <span className="text-[10px] bg-blue-900 text-blue-300 px-1.5 py-0.5 rounded-full">deeplink</span>}
+          {link.sensitive && (
+            <Badge variant="destructive" className="text-[10px] px-1.5 py-0">sensitive</Badge>
+          )}
+          {link.deeplink_enabled && (
+            <Badge className="text-[10px] px-1.5 py-0 bg-blue-600 text-white">deeplink</Badge>
+          )}
+          {link.show_text_glow && (
+            <Badge className="text-[10px] px-1.5 py-0 bg-purple-600 text-white">glow</Badge>
+          )}
+          {link.hover_animation && (
+            <Badge className="text-[10px] px-1.5 py-0 bg-amber-600 text-white">{link.hover_animation}</Badge>
+          )}
         </div>
-        {link.subtitle && <p className="text-gray-400 text-xs mt-0.5 truncate">{link.subtitle}</p>}
-        <p className="text-gray-500 text-xs truncate">{link.url}</p>
-        {link.tags && link.tags.length > 0 && (
-          <div className="flex gap-1 flex-wrap mt-1">
-            {link.tags.map((t) => (
-              <span key={t} className="text-[10px] bg-[#222] text-gray-400 px-1.5 py-0.5 rounded-full">#{t}</span>
-            ))}
-          </div>
-        )}
+        {link.subtitle && <p className="text-muted-foreground text-xs mt-0.5 truncate">{link.subtitle}</p>}
+        <p className="text-muted-foreground/60 text-xs truncate">{link.url}</p>
       </div>
-      <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${link.link_type === "premium" ? "bg-pink-900 text-pink-300" : "bg-blue-900 text-blue-300"}`}>
+      <Badge
+        variant={link.link_type === "premium" ? "default" : "secondary"}
+        className="flex-shrink-0 text-xs"
+      >
         {link.link_type}
-      </span>
+      </Badge>
       <button
         onClick={() => onToggle(link.id, !link.is_active)}
-        className="text-gray-500 hover:text-white text-xs transition-colors flex-shrink-0"
+        className="text-muted-foreground hover:text-foreground text-xs transition-colors flex-shrink-0"
         title={link.is_active ? "Deactivate" : "Activate"}
       >
         {link.is_active ? "⏸" : "▶"}
       </button>
       <button
         onClick={() => onDelete(link.id)}
-        className="text-red-700 hover:text-red-400 text-xs transition-colors flex-shrink-0"
+        className="text-destructive hover:text-destructive/70 text-xs transition-colors flex-shrink-0"
       >
         ✕
       </button>
@@ -138,13 +225,23 @@ function AddLinkForm({ creatorId, onAdded, authHeaders }: AddLinkFormProps) {
     recovery_url: "",
     redirect_url: "",
     sensitive: false,
-    badge: "" as string,
+    badge: "",
     notes: "",
     tags: "",
+    // v3
+    show_text_glow: false,
+    text_glow_color: "#ffffff",
+    text_glow_intensity: 5,
+    hover_animation: "",
+    border_color: "",
+    show_border: false,
+    title_color: "",
+    title_font_size: "",
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(false);
+  const [expandedV3, setExpandedV3] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -170,6 +267,14 @@ function AddLinkForm({ creatorId, onAdded, authHeaders }: AddLinkFormProps) {
         badge: form.badge || null,
         notes: form.notes,
         tags: tagsArray,
+        show_text_glow: form.show_text_glow,
+        text_glow_color: form.text_glow_color,
+        text_glow_intensity: form.text_glow_intensity,
+        hover_animation: form.hover_animation || null,
+        border_color: form.border_color || null,
+        show_border: form.show_border,
+        title_color: form.title_color || null,
+        title_font_size: form.title_font_size || null,
       };
 
       const res = await fetch(`/api/admin/creators/${creatorId}/links`, {
@@ -182,8 +287,12 @@ function AddLinkForm({ creatorId, onAdded, authHeaders }: AddLinkFormProps) {
           label: "", url: "", icon: "link", link_type: "social",
           subtitle: "", image_url: "", deeplink_enabled: false, recovery_url: "",
           redirect_url: "", sensitive: false, badge: "", notes: "", tags: "",
+          show_text_glow: false, text_glow_color: "#ffffff", text_glow_intensity: 5,
+          hover_animation: "", border_color: "", show_border: false,
+          title_color: "", title_font_size: "",
         });
         setExpanded(false);
+        setExpandedV3(false);
         onAdded();
       } else {
         const err = await res.json();
@@ -195,126 +304,281 @@ function AddLinkForm({ creatorId, onAdded, authHeaders }: AddLinkFormProps) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="p-3 bg-[#111] border border-[#333] rounded-lg space-y-2">
-      <p className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">Add Link</p>
-
-      {/* Basic fields */}
-      <div className="grid grid-cols-2 gap-2">
-        <div>
-          <label className={labelCls}>Label</label>
-          <input className={inputCls} value={form.label} onChange={(e) => setForm((p) => ({ ...p, label: e.target.value }))} required placeholder="Twitter" />
-        </div>
-        <div>
-          <label className={labelCls}>Icon</label>
-          <select className={inputCls} value={form.icon} onChange={(e) => setForm((p) => ({ ...p, icon: e.target.value }))}>
-            <option value="link">🔗 Link</option>
-            <option value="twitter">𝕏 Twitter</option>
-            <option value="tiktok">♪ TikTok</option>
-            <option value="instagram">📸 Instagram</option>
-            <option value="youtube">▶ YouTube</option>
-            <option value="star">⭐ Star</option>
-            <option value="crown">👑 Crown</option>
-            <option value="heart">💖 Heart</option>
-          </select>
-        </div>
-      </div>
-
-      <div>
-        <label className={labelCls}>URL</label>
-        <input className={inputCls} value={form.url} onChange={(e) => setForm((p) => ({ ...p, url: e.target.value }))} required placeholder="https://..." type="url" />
-      </div>
+    <form onSubmit={handleSubmit} className="space-y-3">
+      <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wider">Add Link</p>
 
       <div className="grid grid-cols-2 gap-2">
-        <div>
-          <label className={labelCls}>Type</label>
-          <select className={inputCls} value={form.link_type} onChange={(e) => setForm((p) => ({ ...p, link_type: e.target.value as "social" | "premium" }))}>
-            <option value="social">Social</option>
-            <option value="premium">Premium (OF/Fanvue)</option>
-          </select>
+        <div className="space-y-1">
+          <Label className="text-xs">Label</Label>
+          <Input
+            value={form.label}
+            onChange={(e) => setForm((p) => ({ ...p, label: e.target.value }))}
+            required
+            placeholder="Twitter"
+            className="text-sm"
+          />
         </div>
-        <div>
-          <label className={labelCls}>Badge</label>
-          <select className={inputCls} value={form.badge} onChange={(e) => setForm((p) => ({ ...p, badge: e.target.value }))}>
-            <option value="">None</option>
-            <option value="new">🟢 New</option>
-            <option value="popular">🟠 Popular</option>
-            <option value="exclusive">🟣 Exclusive</option>
-          </select>
+        <div className="space-y-1">
+          <Label className="text-xs">Icon</Label>
+          <Select value={form.icon} onValueChange={(v) => setForm((p) => ({ ...p, icon: v ?? "link" }))}>
+            <SelectTrigger className="text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="link">🔗 Link</SelectItem>
+              <SelectItem value="twitter">𝕏 Twitter</SelectItem>
+              <SelectItem value="tiktok">♪ TikTok</SelectItem>
+              <SelectItem value="instagram">📸 Instagram</SelectItem>
+              <SelectItem value="youtube">▶ YouTube</SelectItem>
+              <SelectItem value="star">⭐ Star</SelectItem>
+              <SelectItem value="crown">👑 Crown</SelectItem>
+              <SelectItem value="heart">💖 Heart</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
-      <div>
-        <label className={labelCls}>Subtitle</label>
-        <input className={inputCls} value={form.subtitle} onChange={(e) => setForm((p) => ({ ...p, subtitle: e.target.value }))} placeholder="Secondary text under link" />
+      <div className="space-y-1">
+        <Label className="text-xs">URL</Label>
+        <Input
+          value={form.url}
+          onChange={(e) => setForm((p) => ({ ...p, url: e.target.value }))}
+          required
+          placeholder="https://..."
+          type="url"
+          className="text-sm"
+        />
       </div>
 
-      {/* Toggle for advanced fields */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1">
+          <Label className="text-xs">Type</Label>
+          <Select
+            value={form.link_type}
+            onValueChange={(v) => setForm((p) => ({ ...p, link_type: v as "social" | "premium" }))}
+          >
+            <SelectTrigger className="text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="social">Social</SelectItem>
+              <SelectItem value="premium">Premium</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Badge</Label>
+          <Select value={form.badge} onValueChange={(v) => setForm((p) => ({ ...p, badge: v ?? "" }))}>
+            <SelectTrigger className="text-sm">
+              <SelectValue placeholder="None" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="">None</SelectItem>
+              <SelectItem value="new">🟢 New</SelectItem>
+              <SelectItem value="popular">🟠 Popular</SelectItem>
+              <SelectItem value="exclusive">🟣 Exclusive</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <div className="space-y-1">
+        <Label className="text-xs">Subtitle</Label>
+        <Input
+          value={form.subtitle}
+          onChange={(e) => setForm((p) => ({ ...p, subtitle: e.target.value }))}
+          placeholder="Secondary text"
+          className="text-sm"
+        />
+      </div>
+
+      {/* Advanced options toggle */}
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="text-gray-500 hover:text-gray-300 text-xs transition-colors w-full text-left"
+        className="text-muted-foreground hover:text-foreground text-xs transition-colors w-full text-left"
       >
-        {expanded ? "▲ Hide advanced options" : "▼ Show advanced options"}
+        {expanded ? "▲ Hide advanced" : "▼ Show advanced"}
       </button>
 
       {expanded && (
-        <div className="space-y-2 border-t border-[#222] pt-2">
-          <div>
-            <label className={labelCls}>Image URL (for image card style)</label>
-            <input className={inputCls} value={form.image_url} onChange={(e) => setForm((p) => ({ ...p, image_url: e.target.value }))} placeholder="https://..." />
+        <div className="space-y-3 border-t border-border pt-3">
+          <div className="space-y-1">
+            <Label className="text-xs">Image URL (card style)</Label>
+            <Input
+              value={form.image_url}
+              onChange={(e) => setForm((p) => ({ ...p, image_url: e.target.value }))}
+              placeholder="https://..."
+              className="text-sm"
+            />
           </div>
-
-          <div>
-            <label className={labelCls}>Redirect URL (overrides destination)</label>
-            <input className={inputCls} value={form.redirect_url} onChange={(e) => setForm((p) => ({ ...p, redirect_url: e.target.value }))} placeholder="https://..." />
+          <div className="space-y-1">
+            <Label className="text-xs">Redirect URL</Label>
+            <Input
+              value={form.redirect_url}
+              onChange={(e) => setForm((p) => ({ ...p, redirect_url: e.target.value }))}
+              placeholder="https://..."
+              className="text-sm"
+            />
           </div>
-
-          <div>
-            <label className={labelCls}>Recovery URL (deeplink fallback)</label>
-            <input className={inputCls} value={form.recovery_url} onChange={(e) => setForm((p) => ({ ...p, recovery_url: e.target.value }))} placeholder="https://..." />
+          <div className="space-y-1">
+            <Label className="text-xs">Recovery URL (deeplink fallback)</Label>
+            <Input
+              value={form.recovery_url}
+              onChange={(e) => setForm((p) => ({ ...p, recovery_url: e.target.value }))}
+              placeholder="https://..."
+              className="text-sm"
+            />
           </div>
-
-          <div className="flex gap-4">
-            <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
-              <input
-                type="checkbox"
+          <div className="flex gap-6">
+            <div className="flex items-center gap-2">
+              <Switch
                 checked={form.sensitive}
-                onChange={(e) => setForm((p) => ({ ...p, sensitive: e.target.checked }))}
-                className="w-4 h-4 accent-[#e91e8a]"
+                onCheckedChange={(v) => setForm((p) => ({ ...p, sensitive: v }))}
               />
-              Sensitive content
-            </label>
-            <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
-              <input
-                type="checkbox"
+              <Label className="text-xs">Sensitive</Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch
                 checked={form.deeplink_enabled}
-                onChange={(e) => setForm((p) => ({ ...p, deeplink_enabled: e.target.checked }))}
-                className="w-4 h-4 accent-[#e91e8a]"
+                onCheckedChange={(v) => setForm((p) => ({ ...p, deeplink_enabled: v }))}
               />
-              Enable deeplink
-            </label>
+              <Label className="text-xs">Deeplink</Label>
+            </div>
           </div>
-
-          <div>
-            <label className={labelCls}>Notes (internal, admin only)</label>
-            <textarea className={inputCls + " resize-none"} rows={2} value={form.notes} onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))} placeholder="Internal notes..." />
+          <div className="space-y-1">
+            <Label className="text-xs">Notes (admin only)</Label>
+            <textarea
+              className="w-full text-sm bg-background border border-input rounded-md px-3 py-2 placeholder-muted-foreground resize-none outline-none focus:ring-1 focus:ring-ring"
+              rows={2}
+              value={form.notes}
+              onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))}
+              placeholder="Internal notes..."
+            />
           </div>
-
-          <div>
-            <label className={labelCls}>Tags (comma-separated, admin only)</label>
-            <input className={inputCls} value={form.tags} onChange={(e) => setForm((p) => ({ ...p, tags: e.target.value }))} placeholder="promo, featured, seasonal" />
+          <div className="space-y-1">
+            <Label className="text-xs">Tags (comma-separated)</Label>
+            <Input
+              value={form.tags}
+              onChange={(e) => setForm((p) => ({ ...p, tags: e.target.value }))}
+              placeholder="promo, featured, seasonal"
+              className="text-sm"
+            />
           </div>
         </div>
       )}
 
-      {error && <p className="text-red-400 text-xs">{error}</p>}
+      {/* V3 Visual options */}
       <button
-        type="submit"
-        disabled={loading}
-        className="w-full bg-[#e91e8a] hover:bg-[#d01577] disabled:opacity-50 text-white text-sm font-semibold py-2 rounded-lg transition-colors"
+        type="button"
+        onClick={() => setExpandedV3(!expandedV3)}
+        className="text-muted-foreground hover:text-foreground text-xs transition-colors w-full text-left"
       >
-        {loading ? "Adding..." : "Add Link"}
+        {expandedV3 ? "▲ Hide visual options" : "✨ Show visual options"}
       </button>
+
+      {expandedV3 && (
+        <div className="space-y-3 border-t border-border pt-3">
+          {/* Text glow */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={form.show_text_glow}
+                onCheckedChange={(v) => setForm((p) => ({ ...p, show_text_glow: v }))}
+              />
+              <Label className="text-xs">Text Glow</Label>
+            </div>
+          </div>
+          {form.show_text_glow && (
+            <div className="grid grid-cols-2 gap-2">
+              <ColorInput
+                label="Glow Color"
+                value={form.text_glow_color}
+                onChange={(v) => setForm((p) => ({ ...p, text_glow_color: v }))}
+              />
+              <div className="space-y-1">
+                <Label className="text-xs">Intensity (1-10)</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={form.text_glow_intensity}
+                  onChange={(e) => setForm((p) => ({ ...p, text_glow_intensity: Number(e.target.value) }))}
+                  className="text-sm"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Hover animation */}
+          <div className="space-y-1">
+            <Label className="text-xs">Hover Animation</Label>
+            <Select
+              value={form.hover_animation || "none"}
+              onValueChange={(v) => setForm((p) => ({ ...p, hover_animation: !v || v === "none" ? "" : v }))}
+            >
+              <SelectTrigger className="text-sm">
+                <SelectValue placeholder="None" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">None</SelectItem>
+                <SelectItem value="pulse">Pulse</SelectItem>
+                <SelectItem value="bounce">Bounce</SelectItem>
+                <SelectItem value="shake">Shake</SelectItem>
+                <SelectItem value="glow">Glow</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Border */}
+          <div className="flex items-center gap-3">
+            <Switch
+              checked={form.show_border}
+              onCheckedChange={(v) => setForm((p) => ({ ...p, show_border: v }))}
+            />
+            <Label className="text-xs">Show Border</Label>
+          </div>
+          {form.show_border && (
+            <ColorInput
+              label="Border Color"
+              value={form.border_color}
+              onChange={(v) => setForm((p) => ({ ...p, border_color: v }))}
+            />
+          )}
+
+          {/* Title overrides */}
+          <div className="grid grid-cols-2 gap-2">
+            <ColorInput
+              label="Title Color (override)"
+              value={form.title_color}
+              onChange={(v) => setForm((p) => ({ ...p, title_color: v }))}
+            />
+            <div className="space-y-1">
+              <Label className="text-xs">Title Font Size</Label>
+              <Select
+                value={form.title_font_size || "none"}
+                onValueChange={(v) => setForm((p) => ({ ...p, title_font_size: !v || v === "none" ? "" : v }))}
+              >
+                <SelectTrigger className="text-sm">
+                  <SelectValue placeholder="Default" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Default</SelectItem>
+                  <SelectItem value="sm">Small</SelectItem>
+                  <SelectItem value="base">Base</SelectItem>
+                  <SelectItem value="lg">Large</SelectItem>
+                  <SelectItem value="xl">XL</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {error && <p className="text-destructive text-xs">{error}</p>}
+      <Button type="submit" disabled={loading} className="w-full">
+        {loading ? "Adding..." : "Add Link"}
+      </Button>
     </form>
   );
 }
@@ -357,7 +621,6 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
         const c: DBCreator = await creatorRes.json();
         setCreator(c);
         setForm(c);
-
         fetch(`/api/analytics/${c.slug}?period=30d`, { headers }).then(async (r) => {
           if (r.ok) setAnalytics(await r.json());
         });
@@ -379,10 +642,7 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
     setSaveError("");
     setSaveSuccess(false);
     try {
-      const payload = {
-        ...form,
-        custom_domain: form.custom_domain || null,
-      };
+      const payload = { ...form, custom_domain: form.custom_domain || null };
       const res = await fetch(`/api/admin/creators/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -434,7 +694,7 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
       });
       const data = await res.json();
       if (res.ok) {
-        setDomainStatus((data as { verified?: boolean }).verified ? "✅ Verified" : "⏳ Added — awaiting DNS verification");
+        setDomainStatus((data as { verified?: boolean }).verified ? "✅ Verified" : "⏳ Added — awaiting DNS");
       } else {
         setDomainStatus(`❌ ${(data as { error?: string }).error}`);
       }
@@ -450,9 +710,9 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
   if (!ready) return null;
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0a0a0a]">
+      <div className="min-h-screen bg-background">
         <AdminNav />
-        <div className="text-gray-500 text-center py-16">Loading...</div>
+        <div className="text-muted-foreground text-center py-16">Loading...</div>
       </div>
     );
   }
@@ -462,15 +722,29 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
   const premiumLinks = links.filter((l) => l.link_type === "premium");
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a]">
+    <div className="min-h-screen bg-background">
       <AdminNav />
-      <main className="max-w-5xl mx-auto px-4 py-8">
+      <main className="max-w-6xl mx-auto px-4 py-8">
+
         {/* Header */}
         <div className="flex items-center gap-4 mb-8">
-          <button onClick={() => router.back()} className="text-gray-500 hover:text-white transition-colors">← Back</button>
+          <button
+            onClick={() => router.back()}
+            className="text-muted-foreground hover:text-foreground transition-colors text-sm"
+          >
+            ← Back
+          </button>
           <div>
-            <h1 className="text-2xl font-bold text-white">{creator.name}</h1>
-            <p className="text-gray-500 text-sm">/{creator.slug}</p>
+            <h1 className="text-2xl font-bold">{creator.name}</h1>
+            <p className="text-muted-foreground text-sm">/{creator.slug}</p>
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            {creator.is_verified && (
+              <Badge className="bg-blue-600 text-white">✓ Verified</Badge>
+            )}
+            <Badge variant={creator.is_active ? "default" : "secondary"}>
+              {creator.is_active ? "Active" : "Inactive"}
+            </Badge>
           </div>
         </div>
 
@@ -483,173 +757,500 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
               { label: "CTR", value: `${analytics.ctr}%` },
               { label: "Total Views", value: analytics.totalViews },
             ].map((s) => (
-              <div key={s.label} className="bg-[#1a1a1a] border border-[#333] rounded-xl p-4">
-                <p className="text-gray-500 text-xs uppercase tracking-wider mb-1">{s.label}</p>
-                <p className="text-white text-xl font-bold">{s.value}</p>
-              </div>
+              <Card key={s.label}>
+                <CardContent className="pt-4">
+                  <p className="text-muted-foreground text-xs uppercase tracking-wider mb-1">{s.label}</p>
+                  <p className="text-xl font-bold">{s.value}</p>
+                </CardContent>
+              </Card>
             ))}
           </div>
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Edit form */}
-          <div className="space-y-4">
-            <div className="bg-[#1a1a1a] border border-[#333] rounded-2xl p-6">
-              <h2 className="text-white font-semibold mb-4">Creator Details</h2>
-              <form onSubmit={handleSave} className="space-y-4">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className={labelCls}>Name</label>
-                    <input className={inputCls} value={form.name ?? ""} onChange={(e) => setField("name", e.target.value)} required />
-                  </div>
-                  <div>
-                    <label className={labelCls}>Slug</label>
-                    <input className={inputCls} value={form.slug ?? ""} onChange={(e) => setField("slug", e.target.value.toLowerCase())} required />
-                  </div>
-                </div>
-                <div>
-                  <label className={labelCls}>Tagline</label>
-                  <input className={inputCls} value={form.tagline ?? ""} onChange={(e) => setField("tagline", e.target.value)} />
-                </div>
-                <div>
-                  <label className={labelCls}>Avatar URL</label>
-                  <input className={inputCls} value={form.avatar_url ?? ""} onChange={(e) => setField("avatar_url", e.target.value)} />
-                </div>
-                <div>
-                  <label className={labelCls}>Custom Domain</label>
-                  <div className="flex gap-2">
-                    <input
-                      className={inputCls}
-                      value={form.custom_domain ?? ""}
-                      onChange={(e) => setField("custom_domain", e.target.value || null)}
-                      placeholder="holly.example.com"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleAddToVercel}
-                      disabled={!form.custom_domain || addingDomain}
-                      className="flex-shrink-0 bg-[#333] hover:bg-[#444] disabled:opacity-40 text-white text-xs px-3 py-2 rounded-lg transition-colors"
-                    >
-                      {addingDomain ? "..." : "Add to Vercel"}
-                    </button>
-                  </div>
-                  {domainStatus && <p className="text-xs mt-1 text-gray-400">{domainStatus}</p>}
-                </div>
+          {/* ── Left column: Edit form ── */}
+          <div>
+            <form onSubmit={handleSave}>
+              <Tabs defaultValue="profile" className="space-y-4">
+                <TabsList className="w-full grid grid-cols-5 text-xs">
+                  <TabsTrigger value="profile">Profile</TabsTrigger>
+                  <TabsTrigger value="theme">Theme</TabsTrigger>
+                  <TabsTrigger value="effects">Effects</TabsTrigger>
+                  <TabsTrigger value="avatar">Avatar</TabsTrigger>
+                  <TabsTrigger value="misc">Misc</TabsTrigger>
+                </TabsList>
 
-                <div>
-                  <label className={labelCls}>Theme Colors</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {(["theme_bg", "theme_accent", "theme_text"] as const).map((key) => (
-                      <div key={key}>
-                        <label className="text-gray-600 text-xs mb-1 block capitalize">{key.replace("theme_", "")}</label>
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="color"
-                            value={(form[key] as string) ?? "#000000"}
-                            onChange={(e) => setField(key, e.target.value)}
-                            className="w-7 h-7 rounded border border-[#333] cursor-pointer bg-transparent"
+                {/* ── Profile Tab ── */}
+                <TabsContent value="profile">
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base">Profile</CardTitle>
+                      <CardDescription className="text-xs">Basic info shown on the creator page</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <Label>Name</Label>
+                          <Input
+                            value={form.name ?? ""}
+                            onChange={(e) => setField("name", e.target.value)}
+                            required
                           />
-                          <input
-                            className={inputCls + " !py-1 !px-2 text-xs"}
-                            value={(form[key] as string) ?? ""}
-                            onChange={(e) => setField(key, e.target.value)}
+                        </div>
+                        <div className="space-y-1">
+                          <Label>Slug</Label>
+                          <Input
+                            value={form.slug ?? ""}
+                            onChange={(e) => setField("slug", e.target.value.toLowerCase())}
+                            required
                           />
                         </div>
                       </div>
-                    ))}
-                  </div>
-                </div>
+                      <div className="space-y-1">
+                        <Label>Tagline</Label>
+                        <Input
+                          value={form.tagline ?? ""}
+                          onChange={(e) => setField("tagline", e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label>Avatar URL</Label>
+                        <Input
+                          value={form.avatar_url ?? ""}
+                          onChange={(e) => setField("avatar_url", e.target.value)}
+                          placeholder="https://..."
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label>Custom Domain</Label>
+                        <div className="flex gap-2">
+                          <Input
+                            value={form.custom_domain ?? ""}
+                            onChange={(e) => setField("custom_domain", e.target.value || null)}
+                            placeholder="holly.example.com"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={handleAddToVercel}
+                            disabled={!form.custom_domain || addingDomain}
+                            className="flex-shrink-0 text-xs"
+                          >
+                            {addingDomain ? "..." : "Add to Vercel"}
+                          </Button>
+                        </div>
+                        {domainStatus && <p className="text-xs mt-1 text-muted-foreground">{domainStatus}</p>}
+                      </div>
 
-                {/* Behavior toggles */}
-                <div className="border-t border-[#222] pt-3 space-y-2">
-                  <p className="text-gray-500 text-xs uppercase tracking-wider">Behavior</p>
-                  <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={form.is_active ?? true}
-                      onChange={(e) => setField("is_active", e.target.checked)}
-                      className="w-4 h-4 accent-[#e91e8a]"
-                    />
-                    Active (visible to visitors)
-                  </label>
-                  <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={form.show_location ?? false}
-                      onChange={(e) => setField("show_location", e.target.checked)}
-                      className="w-4 h-4 accent-[#e91e8a]"
-                    />
-                    Show visitor location
-                  </label>
-                  <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={form.sensitive_default ?? false}
-                      onChange={(e) => setField("sensitive_default", e.target.checked)}
-                      className="w-4 h-4 accent-[#e91e8a]"
-                    />
-                    Sensitive content default (all links)
-                  </label>
-                  {form.show_location && (
-                    <div>
-                      <label className={labelCls}>Location Type</label>
-                      <select
-                        className={inputCls}
-                        value={form.location_type ?? "ip_auto"}
-                        onChange={(e) => setField("location_type", e.target.value)}
-                      >
-                        <option value="ip_auto">Auto (IP geolocation)</option>
-                        <option value="manual">Manual</option>
-                      </select>
-                    </div>
-                  )}
-                </div>
+                      <Separator />
 
-                {saveError && <p className="text-red-400 text-sm">{saveError}</p>}
-                {saveSuccess && <p className="text-green-400 text-sm">✓ Saved successfully</p>}
+                      <div className="space-y-3">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Behavior</p>
+                        <div className="flex items-center justify-between">
+                          <Label className="font-normal">Active (visible)</Label>
+                          <Switch
+                            checked={form.is_active ?? true}
+                            onCheckedChange={(v) => setField("is_active", v)}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <Label className="font-normal">Sensitive default</Label>
+                          <Switch
+                            checked={form.sensitive_default ?? false}
+                            onCheckedChange={(v) => setField("sensitive_default", v)}
+                          />
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
 
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="w-full bg-[#e91e8a] hover:bg-[#d01577] disabled:opacity-50 text-white font-semibold py-2.5 rounded-lg transition-colors"
-                >
-                  {saving ? "Saving..." : "Save Changes"}
-                </button>
-              </form>
-            </div>
+                {/* ── Theme Tab ── */}
+                <TabsContent value="theme">
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base">Theme & Background</CardTitle>
+                      <CardDescription className="text-xs">Colors, gradients, and background type</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="grid grid-cols-3 gap-3">
+                        <ColorInput
+                          label="Background"
+                          value={form.theme_bg ?? "#0a0a0a"}
+                          onChange={(v) => setField("theme_bg", v)}
+                        />
+                        <ColorInput
+                          label="Accent"
+                          value={form.theme_accent ?? "#e91e8a"}
+                          onChange={(v) => setField("theme_accent", v)}
+                        />
+                        <ColorInput
+                          label="Text"
+                          value={form.theme_text ?? "#ffffff"}
+                          onChange={(v) => setField("theme_text", v)}
+                        />
+                      </div>
+
+                      <Separator />
+
+                      <div className="space-y-1">
+                        <Label>Background Type</Label>
+                        <Select
+                          value={form.bg_type ?? "solid"}
+                          onValueChange={(v) => setField("bg_type", v ?? "solid")}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="solid">Solid Color</SelectItem>
+                            <SelectItem value="gradient">Gradient</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {form.bg_type === "gradient" && (
+                        <>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <Label>Gradient Type</Label>
+                              <Select
+                                value={form.bg_gradient_type ?? "linear"}
+                                onValueChange={(v) => setField("bg_gradient_type", v ?? "linear")}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="linear">Linear</SelectItem>
+                                  <SelectItem value="radial">Radial</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            {form.bg_gradient_type !== "radial" && (
+                              <div className="space-y-1">
+                                <Label>Direction</Label>
+                                <Select
+                                  value={form.bg_gradient_direction ?? "to bottom"}
+                                  onValueChange={(v) => setField("bg_gradient_direction", v ?? "to bottom")}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="to bottom">↓ To Bottom</SelectItem>
+                                    <SelectItem value="to top">↑ To Top</SelectItem>
+                                    <SelectItem value="to right">→ To Right</SelectItem>
+                                    <SelectItem value="to left">← To Left</SelectItem>
+                                    <SelectItem value="to bottom right">↘ Diagonal</SelectItem>
+                                    <SelectItem value="135deg">135°</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <ColorInput
+                              label="Color 2"
+                              value={form.bg_color_2 ?? "#1a1a2e"}
+                              onChange={(v) => setField("bg_color_2", v)}
+                            />
+                            <ColorInput
+                              label="Color 3 (optional)"
+                              value={form.bg_color_3 ?? ""}
+                              onChange={(v) => setField("bg_color_3", v || null)}
+                            />
+                          </div>
+                        </>
+                      )}
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+
+                {/* ── Effects Tab ── */}
+                <TabsContent value="effects">
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base">Background Effects</CardTitle>
+                      <CardDescription className="text-xs">Floating icons and star particles</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {/* Floating Icons */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <Label>Floating Icons</Label>
+                            <p className="text-xs text-muted-foreground">Emoji floating up from the bottom</p>
+                          </div>
+                          <Switch
+                            checked={form.show_floating_icons ?? false}
+                            onCheckedChange={(v) => setField("show_floating_icons", v)}
+                          />
+                        </div>
+                        {form.show_floating_icons && (
+                          <div className="grid grid-cols-3 gap-3 pl-2 border-l-2 border-border">
+                            <div className="space-y-1">
+                              <Label className="text-xs">Emoji</Label>
+                              <Input
+                                value={form.floating_icon ?? "💫"}
+                                onChange={(e) => setField("floating_icon", e.target.value)}
+                                className="text-xl text-center"
+                                maxLength={2}
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Count</Label>
+                              <Input
+                                type="number"
+                                min={1}
+                                max={30}
+                                value={form.floating_icon_count ?? 8}
+                                onChange={(e) => setField("floating_icon_count", Number(e.target.value))}
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Speed (s)</Label>
+                              <Input
+                                type="number"
+                                min={3}
+                                max={30}
+                                value={form.animation_speed ?? 10}
+                                onChange={(e) => setField("animation_speed", Number(e.target.value))}
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <Separator />
+
+                      {/* Star Particles */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <Label>Star Particles</Label>
+                            <p className="text-xs text-muted-foreground">Twinkling star dots on the background</p>
+                          </div>
+                          <Switch
+                            checked={form.show_stars ?? false}
+                            onCheckedChange={(v) => setField("show_stars", v)}
+                          />
+                        </div>
+                        {form.show_stars && (
+                          <div className="grid grid-cols-2 gap-3 pl-2 border-l-2 border-border">
+                            <div className="space-y-1">
+                              <Label className="text-xs">Star Count</Label>
+                              <Input
+                                type="number"
+                                min={5}
+                                max={200}
+                                value={form.stars_count ?? 50}
+                                onChange={(e) => setField("stars_count", Number(e.target.value))}
+                              />
+                            </div>
+                            <ColorInput
+                              label="Star Color"
+                              value={form.stars_color ?? "#ffffff"}
+                              onChange={(v) => setField("stars_color", v)}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+
+                {/* ── Avatar Tab ── */}
+                <TabsContent value="avatar">
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base">Avatar & Identity</CardTitle>
+                      <CardDescription className="text-xs">Border style, verified badge</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="space-y-1">
+                        <Label>Border Style</Label>
+                        <Select
+                          value={form.avatar_border_style ?? "solid"}
+                          onValueChange={(v) => setField("avatar_border_style", v ?? "solid")}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="solid">Solid</SelectItem>
+                            <SelectItem value="gradient">Gradient (animated)</SelectItem>
+                            <SelectItem value="none">None</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {form.avatar_border_style !== "none" && (
+                        <div className="grid grid-cols-3 gap-3">
+                          <ColorInput
+                            label={form.avatar_border_style === "gradient" ? "Color 1" : "Border Color"}
+                            value={form.avatar_border_color_1 ?? "#ffffff"}
+                            onChange={(v) => setField("avatar_border_color_1", v)}
+                          />
+                          {form.avatar_border_style === "gradient" && (
+                            <>
+                              <ColorInput
+                                label="Color 2"
+                                value={form.avatar_border_color_2 ?? "#f472b6"}
+                                onChange={(v) => setField("avatar_border_color_2", v)}
+                              />
+                              <ColorInput
+                                label="Color 3"
+                                value={form.avatar_border_color_3 ?? "#fda4af"}
+                                onChange={(v) => setField("avatar_border_color_3", v)}
+                              />
+                            </>
+                          )}
+                        </div>
+                      )}
+
+                      <Separator />
+
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label>Verified Badge</Label>
+                          <p className="text-xs text-muted-foreground">Shows blue checkmark next to name</p>
+                        </div>
+                        <Switch
+                          checked={form.is_verified ?? false}
+                          onCheckedChange={(v) => setField("is_verified", v)}
+                        />
+                      </div>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+
+                {/* ── Misc Tab ── */}
+                <TabsContent value="misc">
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base">Font & Location</CardTitle>
+                      <CardDescription className="text-xs">Typography and visitor location display</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="space-y-1">
+                        <Label>Font Family</Label>
+                        <Select
+                          value={form.font ?? "inter"}
+                          onValueChange={(v) => setField("font", v ?? "inter")}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="inter">Inter (default)</SelectItem>
+                            <SelectItem value="poppins">Poppins</SelectItem>
+                            <SelectItem value="playfair">Playfair Display</SelectItem>
+                            <SelectItem value="roboto">Roboto</SelectItem>
+                            <SelectItem value="montserrat">Montserrat</SelectItem>
+                            <SelectItem value="dancing-script">Dancing Script</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <Separator />
+
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <Label>Show Visitor Location</Label>
+                            <p className="text-xs text-muted-foreground">IP geolocation pill above avatar</p>
+                          </div>
+                          <Switch
+                            checked={form.show_location ?? false}
+                            onCheckedChange={(v) => setField("show_location", v)}
+                          />
+                        </div>
+                        {form.show_location && (
+                          <div className="space-y-3 pl-2 border-l-2 border-border">
+                            <div className="space-y-1">
+                              <Label className="text-xs">Location Type</Label>
+                              <Select
+                                value={form.location_type ?? "ip_auto"}
+                                onValueChange={(v) => setField("location_type", v ?? "ip_auto")}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="ip_auto">Auto (IP geolocation)</SelectItem>
+                                  <SelectItem value="manual">Manual</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <ColorInput
+                              label="Pill Background Color"
+                              value={form.location_pill_color ?? ""}
+                              onChange={(v) => setField("location_pill_color", v || null)}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+              </Tabs>
+
+              {saveError && <p className="text-destructive text-sm mt-3">{saveError}</p>}
+              {saveSuccess && <p className="text-green-500 text-sm mt-3">✓ Saved successfully</p>}
+
+              <Button type="submit" disabled={saving} className="w-full mt-4">
+                {saving ? "Saving..." : "Save Changes"}
+              </Button>
+            </form>
           </div>
 
-          {/* Links management */}
+          {/* ── Right column: Links ── */}
           <div className="space-y-4">
-            <div className="bg-[#1a1a1a] border border-[#333] rounded-2xl p-6">
-              <h2 className="text-white font-semibold mb-4">Social Links ({socialLinks.length})</h2>
-              <div className="space-y-2 mb-3">
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">
+                  Social Links
+                  <Badge variant="secondary" className="ml-2">{socialLinks.length}</Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
                 {socialLinks.length === 0 ? (
-                  <p className="text-gray-600 text-sm">No social links yet</p>
+                  <p className="text-muted-foreground text-sm">No social links yet</p>
                 ) : (
                   socialLinks.map((l) => (
                     <LinkRow key={l.id} link={l} onDelete={handleDeleteLink} onToggle={handleToggleLink} />
                   ))
                 )}
-              </div>
-            </div>
+              </CardContent>
+            </Card>
 
-            <div className="bg-[#1a1a1a] border border-[#333] rounded-2xl p-6">
-              <h2 className="text-white font-semibold mb-4">Premium Links ({premiumLinks.length})</h2>
-              <div className="space-y-2 mb-3">
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">
+                  Premium Links
+                  <Badge variant="secondary" className="ml-2">{premiumLinks.length}</Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
                 {premiumLinks.length === 0 ? (
-                  <p className="text-gray-600 text-sm">No premium links yet</p>
+                  <p className="text-muted-foreground text-sm">No premium links yet</p>
                 ) : (
                   premiumLinks.map((l) => (
                     <LinkRow key={l.id} link={l} onDelete={handleDeleteLink} onToggle={handleToggleLink} />
                   ))
                 )}
-              </div>
-            </div>
+              </CardContent>
+            </Card>
 
-            <div className="bg-[#1a1a1a] border border-[#333] rounded-2xl p-6">
-              <AddLinkForm creatorId={id} onAdded={loadAll} authHeaders={authHeaders} />
-            </div>
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">Add Link</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <AddLinkForm creatorId={id} onAdded={loadAll} authHeaders={authHeaders} />
+              </CardContent>
+            </Card>
           </div>
         </div>
       </main>

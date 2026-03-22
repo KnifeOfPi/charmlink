@@ -73,6 +73,15 @@ export async function GET(
         deeplink_enabled: l.deeplink_enabled,
         recovery_url: l.recovery_url,
         redirect_url: l.redirect_url,
+        // v3
+        show_text_glow: l.show_text_glow,
+        text_glow_color: l.text_glow_color,
+        text_glow_intensity: l.text_glow_intensity,
+        hover_animation: l.hover_animation,
+        border_color: l.border_color,
+        show_border: l.show_border,
+        title_color: l.title_color,
+        title_font_size: l.title_font_size,
       }));
 
     return NextResponse.json({ links: premiumLinks });

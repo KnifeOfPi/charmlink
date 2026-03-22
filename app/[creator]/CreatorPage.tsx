@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import Image from "next/image";
 import { Creator, PremiumLink, SocialLink } from "../../lib/types";
 
@@ -60,6 +60,342 @@ function sendBeacon(url: string, data: Record<string, unknown>): void {
   } catch {
     // Fire and forget
   }
+}
+
+// ── Background Style ──────────────────────────────────────────────────────────
+
+function buildBackground(creator: Creator): React.CSSProperties {
+  const c1 = creator.theme.bgColor;
+  const c2 = creator.bg_color_2 ?? "#1a1a2e";
+  const c3 = creator.bg_color_3;
+  const bgType = creator.bg_type ?? "solid";
+
+  if (bgType === "gradient") {
+    const gradType = creator.bg_gradient_type ?? "linear";
+    if (gradType === "radial") {
+      const stops = c3 ? `${c1}, ${c2}, ${c3}` : `${c1}, ${c2}`;
+      return { background: `radial-gradient(ellipse at center, ${stops})` };
+    }
+    const dir = creator.bg_gradient_direction ?? "to bottom";
+    const stops = c3 ? `${c1}, ${c2}, ${c3}` : `${c1}, ${c2}`;
+    return { background: `linear-gradient(${dir}, ${stops})` };
+  }
+  return { backgroundColor: c1 };
+}
+
+// ── Font Loader ───────────────────────────────────────────────────────────────
+
+const FONT_MAP: Record<string, { family: string; googleName: string }> = {
+  inter: { family: "Inter, sans-serif", googleName: "Inter" },
+  poppins: { family: "Poppins, sans-serif", googleName: "Poppins" },
+  playfair: { family: "'Playfair Display', serif", googleName: "Playfair+Display" },
+  roboto: { family: "Roboto, sans-serif", googleName: "Roboto" },
+  montserrat: { family: "Montserrat, sans-serif", googleName: "Montserrat" },
+  "dancing-script": { family: "'Dancing Script', cursive", googleName: "Dancing+Script" },
+};
+
+function useFontLoader(font: string | undefined) {
+  useEffect(() => {
+    if (!font || font === "inter") return;
+    const f = FONT_MAP[font];
+    if (!f) return;
+    const id = `charmlink-font-${font}`;
+    if (document.getElementById(id)) return;
+    const link = document.createElement("link");
+    link.id = id;
+    link.rel = "stylesheet";
+    link.href = `https://fonts.googleapis.com/css2?family=${f.googleName}:wght@400;600;700&display=swap`;
+    document.head.appendChild(link);
+  }, [font]);
+
+  const fontEntry = font ? FONT_MAP[font] : undefined;
+  return fontEntry?.family ?? "Inter, sans-serif";
+}
+
+// ── Floating Icons ────────────────────────────────────────────────────────────
+
+interface FloatingIconsProps {
+  emoji: string;
+  count: number;
+  speed: number;
+}
+
+function FloatingIcons({ emoji, count, speed }: FloatingIconsProps) {
+  const items = useMemo(
+    () =>
+      Array.from({ length: count }, (_, i) => ({
+        id: i,
+        left: Math.random() * 90 + 5,
+        delay: Math.random() * speed,
+        duration: speed * 0.8 + Math.random() * speed * 0.4,
+        size: 14 + Math.floor(Math.random() * 14),
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [count, speed]
+  );
+
+  return (
+    <>
+      <style>{`
+        @keyframes floatUp {
+          0%   { transform: translateY(100vh) scale(0.6); opacity: 0; }
+          10%  { opacity: 0.9; }
+          90%  { opacity: 0.7; }
+          100% { transform: translateY(-20vh) scale(1); opacity: 0; }
+        }
+      `}</style>
+      <div
+        className="fixed inset-0 pointer-events-none overflow-hidden"
+        aria-hidden="true"
+        style={{ zIndex: 0 }}
+      >
+        {items.map((item) => (
+          <span
+            key={item.id}
+            style={{
+              position: "absolute",
+              left: `${item.left}%`,
+              bottom: "-5%",
+              fontSize: `${item.size}px`,
+              animation: `floatUp ${item.duration}s ${item.delay}s ease-in-out infinite`,
+              willChange: "transform, opacity",
+            }}
+          >
+            {emoji}
+          </span>
+        ))}
+      </div>
+    </>
+  );
+}
+
+// ── Star Particles ────────────────────────────────────────────────────────────
+
+interface StarParticlesProps {
+  count: number;
+  color: string;
+}
+
+function StarParticles({ count, color }: StarParticlesProps) {
+  const stars = useMemo(
+    () =>
+      Array.from({ length: count }, (_, i) => ({
+        id: i,
+        top: Math.random() * 100,
+        left: Math.random() * 100,
+        size: 1 + Math.random() * 2,
+        delay: Math.random() * 4,
+        duration: 2 + Math.random() * 3,
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [count]
+  );
+
+  return (
+    <>
+      <style>{`
+        @keyframes twinkle {
+          0%, 100% { opacity: 0.1; transform: scale(1); }
+          50%       { opacity: 1;   transform: scale(1.4); }
+        }
+      `}</style>
+      <div
+        className="fixed inset-0 pointer-events-none overflow-hidden"
+        aria-hidden="true"
+        style={{ zIndex: 0 }}
+      >
+        {stars.map((star) => (
+          <div
+            key={star.id}
+            style={{
+              position: "absolute",
+              top: `${star.top}%`,
+              left: `${star.left}%`,
+              width: `${star.size}px`,
+              height: `${star.size}px`,
+              borderRadius: "50%",
+              backgroundColor: color,
+              animation: `twinkle ${star.duration}s ${star.delay}s ease-in-out infinite`,
+              willChange: "opacity, transform",
+            }}
+          />
+        ))}
+      </div>
+    </>
+  );
+}
+
+// ── Avatar with Border ────────────────────────────────────────────────────────
+
+interface AvatarProps {
+  src: string;
+  name: string;
+  borderStyle: string;
+  color1: string;
+  color2: string;
+  color3: string;
+  accentColor: string;
+}
+
+function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, accentColor }: AvatarProps) {
+  const spinCss = `
+    @keyframes gradientSpin {
+      0%   { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    @keyframes statusPulse {
+      0%, 100% { transform: scale(1);   opacity: 0.6; }
+      50%       { transform: scale(1.8); opacity: 0; }
+    }
+  `;
+
+  const online = (
+    <div
+      className="absolute bottom-0.5 right-0.5 z-20"
+      style={{ width: 18, height: 18 }}
+    >
+      {/* White ring */}
+      <div
+        className="absolute inset-0 rounded-full"
+        style={{ backgroundColor: "white", width: 18, height: 18 }}
+      />
+      {/* Status pulse (blurred outer ring) */}
+      <div
+        className="absolute rounded-full"
+        style={{
+          width: 14,
+          height: 14,
+          top: 2,
+          left: 2,
+          backgroundColor: "#22c55e",
+          filter: "blur(3px)",
+          animation: "statusPulse 2s ease-in-out infinite",
+          willChange: "transform, opacity",
+        }}
+      />
+      {/* Ping ring */}
+      <div
+        className="absolute rounded-full animate-ping"
+        style={{
+          width: 12,
+          height: 12,
+          top: 3,
+          left: 3,
+          backgroundColor: "#22c55e",
+          opacity: 0.5,
+        }}
+      />
+      {/* Solid green dot */}
+      <div
+        className="absolute rounded-full"
+        style={{
+          width: 12,
+          height: 12,
+          top: 3,
+          left: 3,
+          backgroundColor: "#22c55e",
+        }}
+      />
+    </div>
+  );
+
+  if (borderStyle === "gradient") {
+    return (
+      <>
+        <style>{spinCss}</style>
+        <div className="relative" style={{ width: 96, height: 96 }}>
+          {/* Spinning gradient ring */}
+          <div
+            style={{
+              position: "absolute",
+              inset: -3,
+              borderRadius: "50%",
+              background: `conic-gradient(${color1}, ${color2}, ${color3}, ${color1})`,
+              animation: "gradientSpin 3s linear infinite",
+              willChange: "transform",
+            }}
+          />
+          {/* Inner white gap */}
+          <div
+            style={{
+              position: "absolute",
+              inset: 1,
+              borderRadius: "50%",
+              backgroundColor: "#0a0a0a",
+            }}
+          />
+          {/* Avatar */}
+          <div
+            style={{
+              position: "absolute",
+              inset: 3,
+              borderRadius: "50%",
+              overflow: "hidden",
+            }}
+          >
+            <Image src={src} alt={name} fill className="object-cover" unoptimized />
+          </div>
+          {online}
+        </div>
+      </>
+    );
+  }
+
+  if (borderStyle === "none") {
+    return (
+      <>
+        <style>{spinCss}</style>
+        <div className="relative" style={{ width: 96, height: 96 }}>
+          <div style={{ position: "absolute", inset: 0, borderRadius: "50%", overflow: "hidden" }}>
+            <Image src={src} alt={name} fill className="object-cover" unoptimized />
+          </div>
+          {online}
+        </div>
+      </>
+    );
+  }
+
+  // solid border
+  return (
+    <>
+      <style>{spinCss}</style>
+      <div className="relative" style={{ width: 96, height: 96 }}>
+        <div
+          style={{
+            position: "absolute",
+            inset: -2,
+            borderRadius: "50%",
+            border: `2px solid ${color1 || accentColor}`,
+          }}
+        />
+        <div style={{ position: "absolute", inset: 0, borderRadius: "50%", overflow: "hidden" }}>
+          <Image src={src} alt={name} fill className="object-cover" unoptimized />
+        </div>
+        {online}
+      </div>
+    </>
+  );
+}
+
+// ── Verified Badge ────────────────────────────────────────────────────────────
+
+function VerifiedBadge() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      width="20"
+      height="20"
+      aria-label="Verified"
+      role="img"
+      style={{ display: "inline", verticalAlign: "middle", flexShrink: 0 }}
+    >
+      <path
+        fill="#1d9bf0"
+        d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.33 2.19c-1.4-.46-2.91-.2-3.92.81s-1.26 2.52-.8 3.91C2.88 9.33 2 10.57 2 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.8 3.91s2.52 1.26 3.92.8c.66 1.31 1.9 2.19 3.33 2.19s2.68-.88 3.34-2.19c1.39.46 2.9.2 3.91-.8s1.27-2.52.81-3.91C21.37 14.67 22.25 13.43 22.25 12zm-6.47-1.22l-4.1 4.1a.75.75 0 0 1-1.06 0l-2.05-2.05a.75.75 0 1 1 1.06-1.06l1.52 1.52 3.57-3.57a.75.75 0 1 1 1.06 1.06z"
+      />
+    </svg>
+  );
 }
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
@@ -142,23 +478,16 @@ function buildDeepLink(url: string): string {
   try {
     const parsed = new URL(url);
     const host = parsed.hostname.toLowerCase();
-
-    if (host.includes("onlyfans.com")) {
-      return "onlyfans://";
-    }
+    if (host.includes("onlyfans.com")) return "onlyfans://";
     if (host.includes("instagram.com")) {
       const username = parsed.pathname.replace(/\//g, "");
       return username ? `instagram://user?username=${username}` : "instagram://";
     }
-    if (host.includes("tiktok.com")) {
-      return "tiktok://";
-    }
+    if (host.includes("tiktok.com")) return "tiktok://";
     if (host.includes("twitter.com") || host.includes("x.com")) {
       const username = parsed.pathname.replace(/\//g, "");
       return username ? `twitter://user?screen_name=${username}` : "twitter://";
     }
-
-    // Generic intent (Android) — iOS falls through to recovery
     const intentHost = url.replace(/^https?:\/\//, "");
     return `intent://${intentHost}#Intent;scheme=https;package=com.android.chrome;end`;
   } catch {
@@ -169,22 +498,10 @@ function buildDeepLink(url: string): string {
 function handleDeepLink(url: string, recoveryUrl: string) {
   const deepLink = buildDeepLink(url);
   const fallback = recoveryUrl || url;
-
-  // On iOS, deep link attempts must be a direct assignment
-  const isIos = /iPhone|iPad|iPod/.test(navigator.userAgent);
-
-  if (isIos) {
-    window.location.href = deepLink;
-    setTimeout(() => {
-      window.location.href = fallback;
-    }, 1500);
-  } else {
-    // Android / desktop: intent or custom scheme
-    window.location.href = deepLink;
-    setTimeout(() => {
-      window.location.href = fallback;
-    }, 1500);
-  }
+  window.location.href = deepLink;
+  setTimeout(() => {
+    window.location.href = fallback;
+  }, 1500);
 }
 
 // ── Instagram Banner ──────────────────────────────────────────────────────────
@@ -228,11 +545,10 @@ function InstagramBrowserBanner() {
 
 // ── Active Status ─────────────────────────────────────────────────────────────
 
-function ActiveStatus({ textColor, accentColor }: { textColor: string; accentColor: string }) {
+function ActiveStatus({ textColor }: { textColor: string }) {
   const [responseTime, setResponseTime] = useState<string | null>(null);
 
   useEffect(() => {
-    // Random between 30s and 90s
     const seconds = Math.floor(Math.random() * 61) + 30;
     if (seconds < 60) {
       setResponseTime(`${seconds}s`);
@@ -258,9 +574,15 @@ function ActiveStatus({ textColor, accentColor }: { textColor: string; accentCol
   );
 }
 
-// ── Location Display ──────────────────────────────────────────────────────────
+// ── Location Pill ─────────────────────────────────────────────────────────────
 
-function LocationBadge({ textColor }: { textColor: string }) {
+function LocationPill({
+  pillColor,
+  textColor,
+}: {
+  pillColor: string | null | undefined;
+  textColor: string;
+}) {
   const [location, setLocation] = useState<string | null>(null);
 
   useEffect(() => {
@@ -268,27 +590,59 @@ function LocationBadge({ textColor }: { textColor: string }) {
       .then((r) => r.json())
       .then((data: { city?: string; country_name?: string }) => {
         if (data.city && data.country_name) {
-          setLocation(`Visiting from ${data.city}, ${data.country_name}`);
+          setLocation(`${data.city}, ${data.country_name}`);
         } else if (data.country_name) {
-          setLocation(`Visiting from ${data.country_name}`);
+          setLocation(data.country_name);
         }
       })
-      .catch(() => {
-        // Silently ignore
-      });
+      .catch(() => {});
   }, []);
 
   if (!location) return null;
 
+  const bg = pillColor ?? `${textColor}15`;
+
   return (
-    <p
-      className="text-xs opacity-50 mt-1"
-      style={{ color: textColor }}
+    <div
+      className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs"
+      style={{ backgroundColor: bg, color: textColor }}
     >
-      📍 {location}
-    </p>
+      {/* Map pin SVG */}
+      <svg width="11" height="14" viewBox="0 0 11 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path
+          d="M5.5 0C2.46 0 0 2.46 0 5.5c0 3.85 5.5 8.5 5.5 8.5S11 9.35 11 5.5C11 2.46 8.54 0 5.5 0zm0 7.5A2 2 0 1 1 5.5 3.5a2 2 0 0 1 0 4z"
+          fill="currentColor"
+        />
+      </svg>
+      Visiting from {location}
+    </div>
   );
 }
+
+// ── Hover Animation CSS ───────────────────────────────────────────────────────
+
+const HOVER_KEYFRAMES = `
+  @keyframes linkPulse {
+    0%, 100% { transform: scale(1); }
+    50%       { transform: scale(1.03); }
+  }
+  @keyframes linkBounce {
+    0%, 100% { transform: translateY(0); }
+    30%       { transform: translateY(-6px); }
+    60%       { transform: translateY(-2px); }
+  }
+  @keyframes linkShake {
+    0%, 100% { transform: translateX(0); }
+    20%       { transform: translateX(-4px); }
+    40%       { transform: translateX(4px); }
+    60%       { transform: translateX(-3px); }
+    80%       { transform: translateX(3px); }
+  }
+  @keyframes countdownPulse {
+    0%, 100% { transform: scale(1); }
+    50%       { transform: scale(1.05); }
+  }
+`;
 
 // ── Link Components ───────────────────────────────────────────────────────────
 
@@ -302,40 +656,84 @@ interface LinkProps {
 
 function LinkButton({ link, isPremium, theme, isSensitive, onClick }: LinkProps) {
   const hasImage = Boolean(link.image_url);
+  const [hovered, setHovered] = useState(false);
+
+  // Hover animation style
+  const hoverAnim = link.hover_animation;
+  let hoverStyle: React.CSSProperties = {};
+  if (hovered && hoverAnim) {
+    if (hoverAnim === "pulse") {
+      hoverStyle = { animation: "linkPulse 0.8s ease-in-out infinite" };
+    } else if (hoverAnim === "bounce") {
+      hoverStyle = { animation: "linkBounce 0.6s ease-in-out" };
+    } else if (hoverAnim === "shake") {
+      hoverStyle = { animation: "linkShake 0.5s ease-in-out" };
+    } else if (hoverAnim === "glow") {
+      hoverStyle = { boxShadow: `0 0 16px 4px ${theme.accentColor}80` };
+    }
+  }
+
+  // Text glow
+  const glowStyle: React.CSSProperties = {};
+  if (link.show_text_glow) {
+    const intensity = (link.text_glow_intensity ?? 5) * 2;
+    const glowColor = link.text_glow_color ?? "#ffffff";
+    glowStyle.textShadow = `0 0 ${intensity}px ${glowColor}, 0 0 ${intensity * 2}px ${glowColor}`;
+  }
+
+  // Title font size
+  const titleFontSize: Record<string, string> = {
+    sm: "text-xs",
+    base: "text-sm",
+    lg: "text-base",
+    xl: "text-lg",
+  };
+  const titleCls = link.title_font_size ? (titleFontSize[link.title_font_size] ?? "text-sm") : "text-sm";
+
+  // Border
+  const borderStyle: React.CSSProperties = {};
+  if (link.show_border && link.border_color) {
+    borderStyle.border = `1.5px solid ${link.border_color}`;
+  }
 
   if (hasImage) {
-    // Image button style
     return (
       <SensitiveWrapper sensitive={isSensitive} accentColor={theme.accentColor}>
         <button
           onClick={onClick}
-          className="w-full relative overflow-hidden rounded-2xl h-20 flex items-center transition-transform hover:scale-[1.02] active:scale-[0.98]"
-          style={{ boxShadow: `0 2px 16px ${theme.accentColor}40` }}
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+          className="group w-full relative overflow-hidden rounded-2xl transition-transform active:scale-[0.98]"
+          style={{
+            ...borderStyle,
+            ...hoverStyle,
+            willChange: hoverAnim ? "transform" : undefined,
+          }}
         >
-          {/* Background image */}
-          <Image
-            src={link.image_url!}
-            alt={link.label}
-            fill
-            className="object-cover"
-            unoptimized
-          />
-          {/* Dark overlay */}
-          <div className="absolute inset-0 bg-black/40" />
-          {/* Content overlay */}
-          <div className="relative z-10 w-full px-4 flex items-center gap-3">
-            {isPremium ? (
-              <PremiumIcon icon={link.icon} />
-            ) : (
-              <SocialIcon icon={link.icon} />
-            )}
-            <div className="flex-1 text-left">
+          {/* 16:9 wrapper */}
+          <div className="relative w-full pt-[56.25%]">
+            <Image
+              src={link.image_url!}
+              alt={link.label}
+              fill
+              className="object-cover object-center transition-transform duration-300 group-hover:scale-105"
+              unoptimized
+            />
+            {/* Dark overlay */}
+            <div className="absolute inset-0 bg-black/40" />
+            {/* Bottom content */}
+            <div className="absolute inset-x-0 bottom-0 p-3 flex flex-col items-center justify-end">
               <div className="flex items-center gap-2">
-                <span className="text-white font-bold text-sm drop-shadow">{link.label}</span>
+                <span
+                  className={`text-white font-bold drop-shadow ${titleCls}`}
+                  style={{ color: link.title_color ?? "#ffffff", ...glowStyle }}
+                >
+                  {link.label}
+                </span>
                 {link.badge && <BadgePill badge={link.badge} />}
               </div>
               {link.subtitle && (
-                <p className="text-white/70 text-xs drop-shadow">{link.subtitle}</p>
+                <p className="text-white/70 text-xs drop-shadow mt-0.5">{link.subtitle}</p>
               )}
             </div>
           </div>
@@ -345,30 +743,37 @@ function LinkButton({ link, isPremium, theme, isSensitive, onClick }: LinkProps)
   }
 
   // Standard button style
-  const baseStyle = isPremium
+  const baseStyle: React.CSSProperties = isPremium
     ? {
         backgroundColor: theme.accentColor,
-        color: "#ffffff",
+        color: link.title_color ?? "#ffffff",
+        ...borderStyle,
+        ...hoverStyle,
       }
     : {
-        borderColor: `${theme.textColor}40`,
-        color: theme.textColor,
+        borderColor: link.show_border ? (link.border_color ?? `${theme.textColor}40`) : `${theme.textColor}40`,
+        color: link.title_color ?? theme.textColor,
+        ...hoverStyle,
       };
 
   return (
     <SensitiveWrapper sensitive={isSensitive} accentColor={theme.accentColor}>
       <button
         onClick={onClick}
-        className={`w-full flex flex-col items-center py-3 px-6 rounded-full text-sm font-medium transition-all hover:opacity-80 active:scale-95 ${
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        className={`w-full flex flex-col items-center py-3 px-6 rounded-full text-sm font-medium transition-all active:scale-95 ${
           isPremium
-            ? "font-bold transition-transform hover:scale-105 hover:opacity-100"
-            : "border"
+            ? "font-bold hover:opacity-90"
+            : "border hover:opacity-80"
         }`}
         style={baseStyle}
       >
         <div className="flex items-center gap-2">
           {isPremium ? <PremiumIcon icon={link.icon} /> : <SocialIcon icon={link.icon} />}
-          <span>{link.label}</span>
+          <span className={titleCls} style={glowStyle}>
+            {link.label}
+          </span>
           {link.badge && <BadgePill badge={link.badge} />}
         </div>
         {link.subtitle && (
@@ -381,6 +786,81 @@ function LinkButton({ link, isPremium, theme, isSensitive, onClick }: LinkProps)
         )}
       </button>
     </SensitiveWrapper>
+  );
+}
+
+// ── Countdown Timer ───────────────────────────────────────────────────────────
+
+function CountdownTimer({
+  targetDate,
+  label,
+  accentColor,
+  textColor,
+}: {
+  targetDate: string;
+  label: string;
+  accentColor: string;
+  textColor: string;
+}) {
+  const [timeLeft, setTimeLeft] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
+  const [expired, setExpired] = useState(false);
+
+  useEffect(() => {
+    const calculate = () => {
+      const diff = new Date(targetDate).getTime() - Date.now();
+      if (diff <= 0) {
+        setExpired(true);
+        return;
+      }
+      const days = Math.floor(diff / 86400000);
+      const hours = Math.floor((diff % 86400000) / 3600000);
+      const minutes = Math.floor((diff % 3600000) / 60000);
+      const seconds = Math.floor((diff % 60000) / 1000);
+      setTimeLeft({ days, hours, minutes, seconds });
+    };
+
+    calculate();
+    const timer = setInterval(calculate, 1000);
+    return () => clearInterval(timer);
+  }, [targetDate]);
+
+  if (expired) return null;
+
+  const units = [
+    { label: "Days", value: timeLeft.days },
+    { label: "Hours", value: timeLeft.hours },
+    { label: "Min", value: timeLeft.minutes },
+    { label: "Sec", value: timeLeft.seconds },
+  ];
+
+  return (
+    <div
+      className="w-full rounded-2xl p-4 text-center"
+      style={{ backgroundColor: `${accentColor}15`, border: `1px solid ${accentColor}30` }}
+    >
+      <p className="text-xs font-semibold uppercase tracking-widest mb-3 opacity-70" style={{ color: textColor }}>
+        {label}
+      </p>
+      <div className="flex items-center justify-center gap-2">
+        {units.map((u) => (
+          <div key={u.label} className="flex flex-col items-center">
+            <div
+              className="w-14 h-14 rounded-xl flex items-center justify-center text-xl font-bold"
+              style={{
+                backgroundColor: `${accentColor}25`,
+                color: textColor,
+                animation: "countdownPulse 1s ease-in-out",
+              }}
+            >
+              {String(u.value).padStart(2, "0")}
+            </div>
+            <span className="text-[10px] mt-1 opacity-50" style={{ color: textColor }}>
+              {u.label}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -399,6 +879,8 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
   const [isInstagram, setIsInstagram] = useState(false);
   const sessionIdRef = useRef<string>("");
   const trackedView = useRef(false);
+
+  const fontFamily = useFontLoader(creator.font);
 
   const fetchPremiumLinks = useCallback(async () => {
     try {
@@ -467,9 +949,7 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
   // ── Click Handlers ──────────────────────────────────────────────────────────
 
   function getNavigationUrl(link: SocialLink | PremiumLink): string {
-    if (link.redirect_url) {
-      return `/api/redirect/${link.id}`;
-    }
+    if (link.redirect_url) return `/api/redirect/${link.id}`;
     return link.url;
   }
 
@@ -478,8 +958,7 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
       handleDeepLink(link.url, link.recovery_url || link.url);
       return;
     }
-    const dest = getNavigationUrl(link);
-    window.location.href = dest;
+    window.location.href = getNavigationUrl(link);
   }
 
   const handleSocialClick = (link: SocialLink) => {
@@ -507,6 +986,7 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
   };
 
   const { theme } = creator;
+  const bgStyle = buildBackground(creator);
 
   if (!ageVerified) {
     return <AgeGate onConfirm={handleAgeConfirm} />;
@@ -514,36 +994,63 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
 
   return (
     <>
+      <style>{HOVER_KEYFRAMES}</style>
       {isInstagram && <InstagramBrowserBanner />}
+
+      {/* Background effects (fixed, behind content) */}
+      {creator.show_floating_icons && (
+        <FloatingIcons
+          emoji={creator.floating_icon ?? "💫"}
+          count={creator.floating_icon_count ?? 8}
+          speed={creator.animation_speed ?? 10}
+        />
+      )}
+      {creator.show_stars && (
+        <StarParticles
+          count={creator.stars_count ?? 50}
+          color={creator.stars_color ?? "#ffffff"}
+        />
+      )}
+
       <main
-        className="min-h-screen flex flex-col items-center justify-start px-4 pb-12"
+        className="min-h-screen flex flex-col items-center justify-start px-4 pb-12 relative"
         style={{
-          backgroundColor: theme.bgColor,
+          ...bgStyle,
           color: theme.textColor,
           paddingTop: isInstagram ? "5rem" : "3rem",
+          fontFamily,
+          zIndex: 1,
         }}
       >
-        <div className="w-full max-w-sm flex flex-col items-center gap-6">
-          {/* Avatar */}
-          <div
-            className="relative w-24 h-24 rounded-full overflow-hidden border-2"
-            style={{ borderColor: theme.accentColor }}
-          >
-            <Image
-              src={creator.avatar}
-              alt={creator.name}
-              fill
-              className="object-cover"
-              unoptimized
+        <div className="w-full max-w-sm flex flex-col items-center gap-6 relative z-10">
+
+          {/* Location Pill — above avatar */}
+          {creator.show_location && (
+            <LocationPill
+              pillColor={creator.location_pill_color}
+              textColor={theme.textColor}
             />
-          </div>
+          )}
+
+          {/* Avatar */}
+          <AvatarWithBorder
+            src={creator.avatar}
+            name={creator.name}
+            borderStyle={creator.avatar_border_style ?? "solid"}
+            color1={creator.avatar_border_color_1 ?? "#ffffff"}
+            color2={creator.avatar_border_color_2 ?? "#f472b6"}
+            color3={creator.avatar_border_color_3 ?? "#fda4af"}
+            accentColor={theme.accentColor}
+          />
 
           {/* Name & Tagline */}
           <div className="text-center">
-            <h1 className="text-2xl font-bold mb-1">{creator.name}</h1>
-            <p className="text-sm opacity-70">{creator.tagline}</p>
-            <ActiveStatus textColor={theme.textColor} accentColor={theme.accentColor} />
-            {creator.show_location && <LocationBadge textColor={theme.textColor} />}
+            <div className="flex items-center justify-center gap-2">
+              <h1 className="text-2xl font-bold">{creator.name}</h1>
+              {creator.is_verified && <VerifiedBadge />}
+            </div>
+            <p className="text-sm opacity-70 mt-1">{creator.tagline}</p>
+            <ActiveStatus textColor={theme.textColor} />
           </div>
 
           {/* Social Links */}
@@ -572,6 +1079,19 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
               <div className="w-full h-px opacity-20 my-1" style={{ background: theme.textColor }} />
               {premiumLinks.map((link) => {
                 const isSensitive = link.sensitive ?? creator.sensitive_default ?? false;
+                // Check for countdown type (countdown:YYYY-MM-DDTHH:mm:ss)
+                if (link.url.startsWith("countdown:")) {
+                  const targetDate = link.url.replace("countdown:", "");
+                  return (
+                    <CountdownTimer
+                      key={link.id ?? link.label}
+                      targetDate={targetDate}
+                      label={link.label}
+                      accentColor={theme.accentColor}
+                      textColor={theme.textColor}
+                    />
+                  );
+                }
                 return (
                   <LinkButton
                     key={link.id ?? link.label}

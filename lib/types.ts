@@ -10,6 +10,15 @@ export interface SocialLink {
   deeplink_enabled?: boolean;
   recovery_url?: string;
   redirect_url?: string;
+  // v3 visual
+  show_text_glow?: boolean;
+  text_glow_color?: string;
+  text_glow_intensity?: number;
+  hover_animation?: string | null;
+  border_color?: string | null;
+  show_border?: boolean;
+  title_color?: string | null;
+  title_font_size?: string | null;
 }
 
 export interface PremiumLink {
@@ -24,6 +33,15 @@ export interface PremiumLink {
   deeplink_enabled?: boolean;
   recovery_url?: string;
   redirect_url?: string;
+  // v3 visual
+  show_text_glow?: boolean;
+  text_glow_color?: string;
+  text_glow_intensity?: number;
+  hover_animation?: string | null;
+  border_color?: string | null;
+  show_border?: boolean;
+  title_color?: string | null;
+  title_font_size?: string | null;
 }
 
 export interface CreatorTheme {
@@ -42,6 +60,30 @@ export interface Creator {
   show_location?: boolean;
   location_type?: string;
   sensitive_default?: boolean;
+  // v3 background
+  bg_type?: string;
+  bg_gradient_type?: string;
+  bg_gradient_direction?: string;
+  bg_color_2?: string;
+  bg_color_3?: string | null;
+  // v3 floating icons
+  show_floating_icons?: boolean;
+  floating_icon?: string;
+  floating_icon_count?: number;
+  // v3 stars
+  show_stars?: boolean;
+  stars_count?: number;
+  stars_color?: string;
+  animation_speed?: number;
+  // v3 avatar
+  avatar_border_style?: string;
+  avatar_border_color_1?: string;
+  avatar_border_color_2?: string;
+  avatar_border_color_3?: string;
+  // v3 misc
+  is_verified?: boolean;
+  font?: string;
+  location_pill_color?: string | null;
 }
 
 export interface CreatorsConfig {

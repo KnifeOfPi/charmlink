@@ -51,6 +51,30 @@ export interface DBCreator {
   show_location: boolean;
   location_type: string;
   sensitive_default: boolean;
+  // v3 background
+  bg_type: string;
+  bg_gradient_type: string;
+  bg_gradient_direction: string;
+  bg_color_2: string;
+  bg_color_3: string | null;
+  // v3 floating icons
+  show_floating_icons: boolean;
+  floating_icon: string;
+  floating_icon_count: number;
+  // v3 stars
+  show_stars: boolean;
+  stars_count: number;
+  stars_color: string;
+  animation_speed: number;
+  // v3 avatar border
+  avatar_border_style: string;
+  avatar_border_color_1: string;
+  avatar_border_color_2: string;
+  avatar_border_color_3: string;
+  // v3 misc
+  is_verified: boolean;
+  font: string;
+  location_pill_color: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -73,6 +97,15 @@ export interface DBLink {
   badge: string | null;
   notes: string;
   tags: string[];
+  // v3 visual
+  show_text_glow: boolean;
+  text_glow_color: string;
+  text_glow_intensity: number;
+  hover_animation: string | null;
+  border_color: string | null;
+  show_border: boolean;
+  title_color: string | null;
+  title_font_size: string | null;
   created_at: string;
 }
 
@@ -89,6 +122,26 @@ export interface CreateCreatorInput {
   show_location?: boolean;
   location_type?: string;
   sensitive_default?: boolean;
+  // v3
+  bg_type?: string;
+  bg_gradient_type?: string;
+  bg_gradient_direction?: string;
+  bg_color_2?: string;
+  bg_color_3?: string | null;
+  show_floating_icons?: boolean;
+  floating_icon?: string;
+  floating_icon_count?: number;
+  show_stars?: boolean;
+  stars_count?: number;
+  stars_color?: string;
+  animation_speed?: number;
+  avatar_border_style?: string;
+  avatar_border_color_1?: string;
+  avatar_border_color_2?: string;
+  avatar_border_color_3?: string;
+  is_verified?: boolean;
+  font?: string;
+  location_pill_color?: string | null;
 }
 
 export interface UpdateCreatorInput extends Partial<CreateCreatorInput> {
@@ -112,6 +165,15 @@ export interface CreateLinkInput {
   badge?: string | null;
   notes?: string;
   tags?: string[];
+  // v3
+  show_text_glow?: boolean;
+  text_glow_color?: string;
+  text_glow_intensity?: number;
+  hover_animation?: string | null;
+  border_color?: string | null;
+  show_border?: boolean;
+  title_color?: string | null;
+  title_font_size?: string | null;
 }
 
 export interface UpdateLinkInput extends Partial<Omit<CreateLinkInput, "creator_id">> {
@@ -181,6 +243,12 @@ export async function updateCreator(input: UpdateCreatorInput): Promise<DBCreato
     "slug", "name", "tagline", "avatar_url", "custom_domain",
     "theme_bg", "theme_accent", "theme_text", "is_active",
     "show_location", "location_type", "sensitive_default",
+    // v3
+    "bg_type", "bg_gradient_type", "bg_gradient_direction", "bg_color_2", "bg_color_3",
+    "show_floating_icons", "floating_icon", "floating_icon_count",
+    "show_stars", "stars_count", "stars_color", "animation_speed",
+    "avatar_border_style", "avatar_border_color_1", "avatar_border_color_2", "avatar_border_color_3",
+    "is_verified", "font", "location_pill_color",
   ] as const;
 
   const setClauses: string[] = [];
@@ -269,6 +337,10 @@ export async function updateLink(input: UpdateLinkInput): Promise<DBLink | null>
     "label", "url", "icon", "link_type", "sort_order", "is_active",
     "subtitle", "image_url", "deeplink_enabled", "recovery_url", "redirect_url",
     "sensitive", "badge", "notes", "tags",
+    // v3
+    "show_text_glow", "text_glow_color", "text_glow_intensity",
+    "hover_animation", "border_color", "show_border",
+    "title_color", "title_font_size",
   ] as const;
 
   const setClauses: string[] = [];
