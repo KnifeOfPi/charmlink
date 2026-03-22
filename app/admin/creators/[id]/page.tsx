@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { THEME_PRESETS, type ThemePreset } from "@/lib/themes";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -867,6 +868,56 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
 
                 {/* ── Theme Tab ── */}
                 <TabsContent value="theme">
+                  {/* Theme Presets */}
+                  <Card className="mb-4">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base">🎨 Theme Presets</CardTitle>
+                      <CardDescription className="text-xs">One-click themes — or customize manually below</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                        {THEME_PRESETS.map((preset: ThemePreset) => (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            className="flex flex-col items-center gap-1 p-2 rounded-lg border border-border hover:border-primary hover:bg-accent/50 transition-colors text-center"
+                            title={preset.description}
+                            onClick={() => {
+                              const s = preset.settings;
+                              setForm((prev) => ({
+                                ...prev,
+                                theme_bg: s.theme_bg,
+                                theme_accent: s.theme_accent,
+                                theme_text: s.theme_text,
+                                bg_type: s.bg_type,
+                                bg_gradient_type: s.bg_gradient_type,
+                                bg_gradient_direction: s.bg_gradient_direction,
+                                bg_color_2: s.bg_color_2,
+                                bg_color_3: s.bg_color_3,
+                                show_floating_icons: s.show_floating_icons,
+                                floating_icon: s.floating_icon,
+                                floating_icon_count: s.floating_icon_count,
+                                show_stars: s.show_stars,
+                                stars_count: s.stars_count,
+                                stars_color: s.stars_color,
+                                animation_speed: s.animation_speed,
+                                avatar_border_style: s.avatar_border_style,
+                                avatar_border_color_1: s.avatar_border_color_1,
+                                avatar_border_color_2: s.avatar_border_color_2,
+                                avatar_border_color_3: s.avatar_border_color_3,
+                                font: s.font,
+                              }));
+                            }}
+                          >
+                            <span className="text-xl">{preset.preview}</span>
+                            <span className="text-[10px] font-medium leading-tight">{preset.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                      <p className="text-[10px] text-muted-foreground mt-2">Click a preset then hit Save. You can still tweak individual settings below.</p>
+                    </CardContent>
+                  </Card>
+
                   <Card>
                     <CardHeader className="pb-3">
                       <CardTitle className="text-base">Theme & Background</CardTitle>
