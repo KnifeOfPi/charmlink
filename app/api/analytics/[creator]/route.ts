@@ -5,10 +5,9 @@ export const runtime = "nodejs";
 
 function checkAuth(request: NextRequest): boolean {
   const adminKey = process.env.CHARMLINK_ADMIN_KEY;
-  if (!adminKey) return true;
+  if (!adminKey) return false;
   const authHeader = request.headers.get("authorization");
-  const queryKey = new URL(request.url).searchParams.get("key");
-  return authHeader === `Bearer ${adminKey}` || queryKey === adminKey;
+  return authHeader === `Bearer ${adminKey}`;
 }
 
 export async function GET(

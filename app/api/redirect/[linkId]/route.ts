@@ -43,6 +43,16 @@ export async function GET(
       });
     }
 
+    // Validate URL - only allow http/https
+    try {
+      const parsed = new URL(destination);
+      if (!['http:', 'https:'].includes(parsed.protocol)) {
+        return NextResponse.json({ error: "Invalid redirect" }, { status: 400 });
+      }
+    } catch {
+      return NextResponse.json({ error: "Invalid redirect" }, { status: 400 });
+    }
+
     return NextResponse.redirect(destination, { status: 302 });
   } catch (err) {
     console.error("[redirect:get]", err);
