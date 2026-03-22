@@ -173,12 +173,29 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
       });
     }
 
-    // Load premium links after 2s delay (non-bot only)
+    // Load premium links on first real user interaction (scroll, touch, click, mousemove)
+    // This defeats headless browsers that execute JS but don't simulate human input
     if (!isBot) {
-      const timer = setTimeout(() => {
-        fetchPremiumLinks();
-      }, 2000);
-      return () => clearTimeout(timer);
+      let loaded = false;
+      const loadOnInteraction = () => {
+        if (loaded) return;
+        loaded = true;
+        // Small delay after interaction to feel natural
+        setTimeout(() => fetchPremiumLinks(), 500);
+        // Clean up all listeners
+        for (const evt of interactionEvents) {
+          window.removeEventListener(evt, loadOnInteraction);
+        }
+      };
+      const interactionEvents = ["scroll", "touchstart", "click", "mousemove", "keydown"];
+      for (const evt of interactionEvents) {
+        window.addEventListener(evt, loadOnInteraction, { once: true, passive: true });
+      }
+      return () => {
+        for (const evt of interactionEvents) {
+          window.removeEventListener(evt, loadOnInteraction);
+        }
+      };
     }
   }, [isBot, fetchPremiumLinks, slug]);
 
@@ -287,6 +304,15 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
               ))}
             </div>
           )}
+          {/* Honeypot — invisible to real users, only bots follow these */}
+          <a
+            href="/api/honeypot"
+            tabIndex={-1}
+            aria-hidden="true"
+            style={{ position: "absolute", left: "-9999px", opacity: 0, width: 0, height: 0, overflow: "hidden" }}
+          >
+            Premium Content
+          </a>
         </div>
       </main>
     </>
