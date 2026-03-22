@@ -34,6 +34,9 @@ CREATE TABLE IF NOT EXISTS charmlink_creators (
   theme_accent VARCHAR(20) DEFAULT '#e91e8a',
   theme_text VARCHAR(20) DEFAULT '#ffffff',
   is_active BOOLEAN DEFAULT true,
+  show_location BOOLEAN DEFAULT false,
+  location_type VARCHAR(20) DEFAULT 'ip_auto',
+  sensitive_default BOOLEAN DEFAULT false,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -47,6 +50,15 @@ CREATE TABLE IF NOT EXISTS charmlink_links (
   link_type VARCHAR(20) NOT NULL CHECK (link_type IN ('social', 'premium')),
   sort_order INT DEFAULT 0,
   is_active BOOLEAN DEFAULT true,
+  subtitle TEXT DEFAULT '',
+  image_url TEXT DEFAULT '',
+  deeplink_enabled BOOLEAN DEFAULT false,
+  recovery_url TEXT DEFAULT '',
+  redirect_url TEXT DEFAULT '',
+  sensitive BOOLEAN DEFAULT false,
+  badge VARCHAR(20) DEFAULT NULL,
+  notes TEXT DEFAULT '',
+  tags TEXT[] DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

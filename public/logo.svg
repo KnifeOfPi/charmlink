@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 80" width="400" height="80">
+  <defs>
+    <linearGradient id="linkGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#67ECE1;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#EC1CA4;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Chain link icon -->
+  <g transform="translate(20, 40)">
+    <circle cx="-8" cy="0" r="12" fill="none" stroke="#67ECE1" stroke-width="3"/>
+    <circle cx="8" cy="0" r="12" fill="none" stroke="#EC1CA4" stroke-width="3"/>
+  </g>
+  <!-- Text -->
+  <text x="52" y="52" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-weight="700" font-size="42" fill="#67ECE1" letter-spacing="-1">Charm</text>
+  <text x="218" y="52" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-weight="700" font-size="42" fill="#EC1CA4" letter-spacing="-1">Link</text>
+</svg>

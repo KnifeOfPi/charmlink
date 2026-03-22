@@ -50,10 +50,34 @@ export default async function CreatorPageServer({ params }: PageProps) {
     const links = await getCreatorLinks(dbCreator.id);
     const socialLinks = links
       .filter((l) => l.link_type === "social")
-      .map((l) => ({ label: l.label, url: l.url, icon: l.icon }));
+      .map((l) => ({
+        id: l.id,
+        label: l.label,
+        url: l.url,
+        icon: l.icon,
+        subtitle: l.subtitle,
+        badge: l.badge,
+        sensitive: l.sensitive,
+        image_url: l.image_url,
+        deeplink_enabled: l.deeplink_enabled,
+        recovery_url: l.recovery_url,
+        redirect_url: l.redirect_url,
+      }));
     const premiumLinks = links
       .filter((l) => l.link_type === "premium")
-      .map((l) => ({ label: l.label, url: l.url, icon: l.icon }));
+      .map((l) => ({
+        id: l.id,
+        label: l.label,
+        url: l.url,
+        icon: l.icon,
+        subtitle: l.subtitle,
+        badge: l.badge,
+        sensitive: l.sensitive,
+        image_url: l.image_url,
+        deeplink_enabled: l.deeplink_enabled,
+        recovery_url: l.recovery_url,
+        redirect_url: l.redirect_url,
+      }));
 
     creator = {
       name: dbCreator.name,
@@ -66,6 +90,9 @@ export default async function CreatorPageServer({ params }: PageProps) {
         accentColor: dbCreator.theme_accent,
         textColor: dbCreator.theme_text,
       },
+      show_location: dbCreator.show_location,
+      location_type: dbCreator.location_type,
+      sensitive_default: dbCreator.sensitive_default,
     };
   } catch (err) {
     console.error("[creator:page] DB error", err);

@@ -38,6 +38,26 @@ When a visitor opens the link from Instagram (which uses an in-app WebView), a b
 - **iOS**: Attempts to open via `x-safari-https://` scheme, falls back to `window.open`
 - **Android**: Uses `intent://` scheme to open in Chrome
 
+## v2 Features
+
+### Link Enhancements
+- **Subtitles** — Optional secondary text shown below the link label
+- **Badges** — Visual pills: 🟢 New, 🟠 Popular, 🟣 Exclusive
+- **Sensitive Content** — Blur overlay with "Click to reveal" — per-link or creator-wide default
+- **Image Button Links** — Wide card style with full-bleed background image and title overlay
+- **Deeplinking** — Platform-specific app deep links (OnlyFans, Instagram, TikTok, Twitter/X) with fallback URL
+- **Redirect Control** — Route clicks through `/api/redirect/[linkId]` for tracking + redirect chain control
+- **Admin-only fields** — Internal notes and comma-separated tags (not shown on public page)
+
+### Creator Enhancements
+- **Location Display** — "Visiting from City, Country" banner pulled from IP geolocation (ipapi.co)
+- **Sensitive Default** — Creator-level toggle to mark all links as sensitive by default
+
+### Database
+- New columns on `charmlink_links`: `subtitle`, `image_url`, `deeplink_enabled`, `recovery_url`, `redirect_url`, `sensitive`, `badge`, `notes`, `tags`
+- New columns on `charmlink_creators`: `show_location`, `location_type`, `sensitive_default`
+- Run `npx tsx scripts/migrate-v2.ts` to apply to existing databases
+
 ## Tech Stack
 
 - **Framework**: Next.js 15 (App Router)
@@ -103,7 +123,8 @@ charmlink/
 │   └── vercel-domains.ts       # Vercel Domains API client
 ├── middleware.ts                # Bot detection + custom domain routing
 ├── scripts/
-│   └── migrate.ts              # DB schema creation + seed from creators.json
+│   ├── migrate.ts              # DB schema creation + seed from creators.json
+│   └── migrate-v2.ts           # v2 ALTER TABLE migration (run on existing DBs)
 ├── creators.json               # Sample creator data (used for seeding only)
 ├── package.json
 └── tsconfig.json

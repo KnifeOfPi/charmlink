@@ -48,6 +48,9 @@ export interface DBCreator {
   theme_accent: string;
   theme_text: string;
   is_active: boolean;
+  show_location: boolean;
+  location_type: string;
+  sensitive_default: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -61,6 +64,15 @@ export interface DBLink {
   link_type: "social" | "premium";
   sort_order: number;
   is_active: boolean;
+  subtitle: string;
+  image_url: string;
+  deeplink_enabled: boolean;
+  recovery_url: string;
+  redirect_url: string;
+  sensitive: boolean;
+  badge: string | null;
+  notes: string;
+  tags: string[];
   created_at: string;
 }
 
@@ -74,6 +86,9 @@ export interface CreateCreatorInput {
   theme_accent?: string;
   theme_text?: string;
   is_active?: boolean;
+  show_location?: boolean;
+  location_type?: string;
+  sensitive_default?: boolean;
 }
 
 export interface UpdateCreatorInput extends Partial<CreateCreatorInput> {
@@ -88,6 +103,15 @@ export interface CreateLinkInput {
   link_type: "social" | "premium";
   sort_order?: number;
   is_active?: boolean;
+  subtitle?: string;
+  image_url?: string;
+  deeplink_enabled?: boolean;
+  recovery_url?: string;
+  redirect_url?: string;
+  sensitive?: boolean;
+  badge?: string | null;
+  notes?: string;
+  tags?: string[];
 }
 
 export interface UpdateLinkInput extends Partial<Omit<CreateLinkInput, "creator_id">> {
@@ -129,8 +153,9 @@ export async function getAllCreators(): Promise<DBCreator[]> {
 export async function createCreator(input: CreateCreatorInput): Promise<DBCreator> {
   const rows = await query<DBCreator>(
     `INSERT INTO charmlink_creators
-      (slug, name, tagline, avatar_url, custom_domain, theme_bg, theme_accent, theme_text, is_active)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      (slug, name, tagline, avatar_url, custom_domain, theme_bg, theme_accent, theme_text, is_active,
+       show_location, location_type, sensitive_default)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
      RETURNING *`,
     [
       input.slug,
@@ -142,6 +167,9 @@ export async function createCreator(input: CreateCreatorInput): Promise<DBCreato
       input.theme_accent ?? "#e91e8a",
       input.theme_text ?? "#ffffff",
       input.is_active ?? true,
+      input.show_location ?? false,
+      input.location_type ?? "ip_auto",
+      input.sensitive_default ?? false,
     ]
   );
   return rows[0];
@@ -152,6 +180,7 @@ export async function updateCreator(input: UpdateCreatorInput): Promise<DBCreato
   const allowed = [
     "slug", "name", "tagline", "avatar_url", "custom_domain",
     "theme_bg", "theme_accent", "theme_text", "is_active",
+    "show_location", "location_type", "sensitive_default",
   ] as const;
 
   const setClauses: string[] = [];
@@ -207,8 +236,10 @@ export async function getLinksByCreatorSlug(slug: string): Promise<DBLink[]> {
 export async function createLink(input: CreateLinkInput): Promise<DBLink> {
   const rows = await query<DBLink>(
     `INSERT INTO charmlink_links
-      (creator_id, label, url, icon, link_type, sort_order, is_active)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)
+      (creator_id, label, url, icon, link_type, sort_order, is_active,
+       subtitle, image_url, deeplink_enabled, recovery_url, redirect_url,
+       sensitive, badge, notes, tags)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
      RETURNING *`,
     [
       input.creator_id,
@@ -218,6 +249,15 @@ export async function createLink(input: CreateLinkInput): Promise<DBLink> {
       input.link_type,
       input.sort_order ?? 0,
       input.is_active ?? true,
+      input.subtitle ?? "",
+      input.image_url ?? "",
+      input.deeplink_enabled ?? false,
+      input.recovery_url ?? "",
+      input.redirect_url ?? "",
+      input.sensitive ?? false,
+      input.badge ?? null,
+      input.notes ?? "",
+      input.tags ?? [],
     ]
   );
   return rows[0];
@@ -225,7 +265,11 @@ export async function createLink(input: CreateLinkInput): Promise<DBLink> {
 
 export async function updateLink(input: UpdateLinkInput): Promise<DBLink | null> {
   const { id, ...fields } = input;
-  const allowed = ["label", "url", "icon", "link_type", "sort_order", "is_active"] as const;
+  const allowed = [
+    "label", "url", "icon", "link_type", "sort_order", "is_active",
+    "subtitle", "image_url", "deeplink_enabled", "recovery_url", "redirect_url",
+    "sensitive", "badge", "notes", "tags",
+  ] as const;
 
   const setClauses: string[] = [];
   const values: unknown[] = [];
@@ -244,6 +288,14 @@ export async function updateLink(input: UpdateLinkInput): Promise<DBLink | null>
   const rows = await query<DBLink>(
     `UPDATE charmlink_links SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
     values
+  );
+  return rows[0] ?? null;
+}
+
+export async function getLinkById(id: string): Promise<DBLink | null> {
+  const rows = await query<DBLink>(
+    "SELECT * FROM charmlink_links WHERE id = $1",
+    [id]
   );
   return rows[0] ?? null;
 }

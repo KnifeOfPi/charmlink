@@ -61,7 +61,19 @@ export async function GET(
     const links = await getCreatorLinks(creator.id);
     const premiumLinks = links
       .filter((l) => l.link_type === "premium")
-      .map((l) => ({ label: l.label, url: l.url, icon: l.icon }));
+      .map((l) => ({
+        id: l.id,
+        label: l.label,
+        url: l.url,
+        icon: l.icon,
+        subtitle: l.subtitle,
+        badge: l.badge,
+        sensitive: l.sensitive,
+        image_url: l.image_url,
+        deeplink_enabled: l.deeplink_enabled,
+        recovery_url: l.recovery_url,
+        redirect_url: l.redirect_url,
+      }));
 
     return NextResponse.json({ links: premiumLinks });
   } catch (err) {

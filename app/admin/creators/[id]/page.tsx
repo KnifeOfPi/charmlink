@@ -16,6 +16,9 @@ interface DBCreator {
   theme_accent: string;
   theme_text: string;
   is_active: boolean;
+  show_location: boolean;
+  location_type: string;
+  sensitive_default: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -29,6 +32,15 @@ interface DBLink {
   link_type: "social" | "premium";
   sort_order: number;
   is_active: boolean;
+  subtitle: string;
+  image_url: string;
+  deeplink_enabled: boolean;
+  recovery_url: string;
+  redirect_url: string;
+  sensitive: boolean;
+  badge: string | null;
+  notes: string;
+  tags: string[];
   created_at: string;
 }
 
@@ -41,6 +53,8 @@ interface AnalyticsSummary {
 
 const inputCls = "w-full bg-[#111] border border-[#333] rounded-lg px-3 py-2 text-white text-sm placeholder-gray-600 outline-none focus:border-[#e91e8a] transition-colors";
 const labelCls = "block text-gray-400 text-xs mb-1";
+
+// ── Link Row ──────────────────────────────────────────────────────────────────
 
 function LinkRow({
   link,
@@ -55,12 +69,34 @@ function LinkRow({
     twitter: "𝕏", tiktok: "♪", instagram: "📸", youtube: "▶",
     star: "⭐", crown: "👑", heart: "💖", link: "🔗",
   };
+  const badgeColors: Record<string, string> = {
+    new: "bg-green-800 text-green-300",
+    popular: "bg-orange-800 text-orange-300",
+    exclusive: "bg-purple-800 text-purple-300",
+  };
   return (
-    <div className={`flex items-center gap-3 p-3 rounded-lg border ${link.is_active ? "border-[#333] bg-[#111]" : "border-[#222] bg-[#0d0d0d] opacity-60"}`}>
-      <span className="text-base w-6 text-center flex-shrink-0">{icons[link.icon] ?? "🔗"}</span>
+    <div className={`flex items-start gap-3 p-3 rounded-lg border ${link.is_active ? "border-[#333] bg-[#111]" : "border-[#222] bg-[#0d0d0d] opacity-60"}`}>
+      <span className="text-base w-6 text-center flex-shrink-0 mt-0.5">{icons[link.icon] ?? "🔗"}</span>
       <div className="flex-1 min-w-0">
-        <p className="text-white text-sm font-medium truncate">{link.label}</p>
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className="text-white text-sm font-medium truncate">{link.label}</p>
+          {link.badge && (
+            <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-full ${badgeColors[link.badge] ?? "bg-gray-700 text-gray-300"}`}>
+              {link.badge}
+            </span>
+          )}
+          {link.sensitive && <span className="text-[10px] bg-red-900 text-red-300 px-1.5 py-0.5 rounded-full">sensitive</span>}
+          {link.deeplink_enabled && <span className="text-[10px] bg-blue-900 text-blue-300 px-1.5 py-0.5 rounded-full">deeplink</span>}
+        </div>
+        {link.subtitle && <p className="text-gray-400 text-xs mt-0.5 truncate">{link.subtitle}</p>}
         <p className="text-gray-500 text-xs truncate">{link.url}</p>
+        {link.tags && link.tags.length > 0 && (
+          <div className="flex gap-1 flex-wrap mt-1">
+            {link.tags.map((t) => (
+              <span key={t} className="text-[10px] bg-[#222] text-gray-400 px-1.5 py-0.5 rounded-full">#{t}</span>
+            ))}
+          </div>
+        )}
       </div>
       <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${link.link_type === "premium" ? "bg-pink-900 text-pink-300" : "bg-blue-900 text-blue-300"}`}>
         {link.link_type}
@@ -82,6 +118,8 @@ function LinkRow({
   );
 }
 
+// ── Add Link Form ─────────────────────────────────────────────────────────────
+
 interface AddLinkFormProps {
   creatorId: string;
   onAdded: () => void;
@@ -89,26 +127,67 @@ interface AddLinkFormProps {
 }
 
 function AddLinkForm({ creatorId, onAdded, authHeaders }: AddLinkFormProps) {
-  const [form, setForm] = useState({ label: "", url: "", icon: "link", link_type: "social" as "social" | "premium" });
+  const [form, setForm] = useState({
+    label: "",
+    url: "",
+    icon: "link",
+    link_type: "social" as "social" | "premium",
+    subtitle: "",
+    image_url: "",
+    deeplink_enabled: false,
+    recovery_url: "",
+    redirect_url: "",
+    sensitive: false,
+    badge: "" as string,
+    notes: "",
+    tags: "",
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [expanded, setExpanded] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError("");
     try {
+      const tagsArray = form.tags
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean);
+
+      const payload = {
+        label: form.label,
+        url: form.url,
+        icon: form.icon,
+        link_type: form.link_type,
+        subtitle: form.subtitle,
+        image_url: form.image_url,
+        deeplink_enabled: form.deeplink_enabled,
+        recovery_url: form.recovery_url,
+        redirect_url: form.redirect_url,
+        sensitive: form.sensitive,
+        badge: form.badge || null,
+        notes: form.notes,
+        tags: tagsArray,
+      };
+
       const res = await fetch(`/api/admin/creators/${creatorId}/links`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       });
       if (res.ok) {
-        setForm({ label: "", url: "", icon: "link", link_type: "social" });
+        setForm({
+          label: "", url: "", icon: "link", link_type: "social",
+          subtitle: "", image_url: "", deeplink_enabled: false, recovery_url: "",
+          redirect_url: "", sensitive: false, badge: "", notes: "", tags: "",
+        });
+        setExpanded(false);
         onAdded();
       } else {
         const err = await res.json();
-        setError(err.error ?? "Failed");
+        setError((err as { error?: string }).error ?? "Failed");
       }
     } finally {
       setLoading(false);
@@ -118,6 +197,8 @@ function AddLinkForm({ creatorId, onAdded, authHeaders }: AddLinkFormProps) {
   return (
     <form onSubmit={handleSubmit} className="p-3 bg-[#111] border border-[#333] rounded-lg space-y-2">
       <p className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-2">Add Link</p>
+
+      {/* Basic fields */}
       <div className="grid grid-cols-2 gap-2">
         <div>
           <label className={labelCls}>Label</label>
@@ -137,21 +218,95 @@ function AddLinkForm({ creatorId, onAdded, authHeaders }: AddLinkFormProps) {
           </select>
         </div>
       </div>
+
       <div>
         <label className={labelCls}>URL</label>
         <input className={inputCls} value={form.url} onChange={(e) => setForm((p) => ({ ...p, url: e.target.value }))} required placeholder="https://..." type="url" />
       </div>
-      <div>
-        <label className={labelCls}>Type</label>
-        <select
-          className={inputCls}
-          value={form.link_type}
-          onChange={(e) => setForm((p) => ({ ...p, link_type: e.target.value as "social" | "premium" }))}
-        >
-          <option value="social">Social</option>
-          <option value="premium">Premium (OF/Fanvue)</option>
-        </select>
+
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className={labelCls}>Type</label>
+          <select className={inputCls} value={form.link_type} onChange={(e) => setForm((p) => ({ ...p, link_type: e.target.value as "social" | "premium" }))}>
+            <option value="social">Social</option>
+            <option value="premium">Premium (OF/Fanvue)</option>
+          </select>
+        </div>
+        <div>
+          <label className={labelCls}>Badge</label>
+          <select className={inputCls} value={form.badge} onChange={(e) => setForm((p) => ({ ...p, badge: e.target.value }))}>
+            <option value="">None</option>
+            <option value="new">🟢 New</option>
+            <option value="popular">🟠 Popular</option>
+            <option value="exclusive">🟣 Exclusive</option>
+          </select>
+        </div>
       </div>
+
+      <div>
+        <label className={labelCls}>Subtitle</label>
+        <input className={inputCls} value={form.subtitle} onChange={(e) => setForm((p) => ({ ...p, subtitle: e.target.value }))} placeholder="Secondary text under link" />
+      </div>
+
+      {/* Toggle for advanced fields */}
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="text-gray-500 hover:text-gray-300 text-xs transition-colors w-full text-left"
+      >
+        {expanded ? "▲ Hide advanced options" : "▼ Show advanced options"}
+      </button>
+
+      {expanded && (
+        <div className="space-y-2 border-t border-[#222] pt-2">
+          <div>
+            <label className={labelCls}>Image URL (for image card style)</label>
+            <input className={inputCls} value={form.image_url} onChange={(e) => setForm((p) => ({ ...p, image_url: e.target.value }))} placeholder="https://..." />
+          </div>
+
+          <div>
+            <label className={labelCls}>Redirect URL (overrides destination)</label>
+            <input className={inputCls} value={form.redirect_url} onChange={(e) => setForm((p) => ({ ...p, redirect_url: e.target.value }))} placeholder="https://..." />
+          </div>
+
+          <div>
+            <label className={labelCls}>Recovery URL (deeplink fallback)</label>
+            <input className={inputCls} value={form.recovery_url} onChange={(e) => setForm((p) => ({ ...p, recovery_url: e.target.value }))} placeholder="https://..." />
+          </div>
+
+          <div className="flex gap-4">
+            <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.sensitive}
+                onChange={(e) => setForm((p) => ({ ...p, sensitive: e.target.checked }))}
+                className="w-4 h-4 accent-[#e91e8a]"
+              />
+              Sensitive content
+            </label>
+            <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.deeplink_enabled}
+                onChange={(e) => setForm((p) => ({ ...p, deeplink_enabled: e.target.checked }))}
+                className="w-4 h-4 accent-[#e91e8a]"
+              />
+              Enable deeplink
+            </label>
+          </div>
+
+          <div>
+            <label className={labelCls}>Notes (internal, admin only)</label>
+            <textarea className={inputCls + " resize-none"} rows={2} value={form.notes} onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))} placeholder="Internal notes..." />
+          </div>
+
+          <div>
+            <label className={labelCls}>Tags (comma-separated, admin only)</label>
+            <input className={inputCls} value={form.tags} onChange={(e) => setForm((p) => ({ ...p, tags: e.target.value }))} placeholder="promo, featured, seasonal" />
+          </div>
+        </div>
+      )}
+
       {error && <p className="text-red-400 text-xs">{error}</p>}
       <button
         type="submit"
@@ -163,6 +318,8 @@ function AddLinkForm({ creatorId, onAdded, authHeaders }: AddLinkFormProps) {
     </form>
   );
 }
+
+// ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function EditCreatorPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -179,7 +336,6 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
   const [domainStatus, setDomainStatus] = useState<string>("");
   const [addingDomain, setAddingDomain] = useState(false);
 
-  // Form state (mirrors creator fields)
   const [form, setForm] = useState<Partial<DBCreator>>({});
 
   useEffect(() => {
@@ -202,7 +358,6 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
         setCreator(c);
         setForm(c);
 
-        // Load analytics in background
         fetch(`/api/analytics/${c.slug}?period=30d`, { headers }).then(async (r) => {
           if (r.ok) setAnalytics(await r.json());
         });
@@ -241,7 +396,7 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
         setTimeout(() => setSaveSuccess(false), 3000);
       } else {
         const err = await res.json();
-        setSaveError(err.error ?? "Failed to save");
+        setSaveError((err as { error?: string }).error ?? "Failed to save");
       }
     } finally {
       setSaving(false);
@@ -279,9 +434,9 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
       });
       const data = await res.json();
       if (res.ok) {
-        setDomainStatus(data.verified ? "✅ Verified" : "⏳ Added — awaiting DNS verification");
+        setDomainStatus((data as { verified?: boolean }).verified ? "✅ Verified" : "⏳ Added — awaiting DNS verification");
       } else {
-        setDomainStatus(`❌ ${data.error}`);
+        setDomainStatus(`❌ ${(data as { error?: string }).error}`);
       }
     } finally {
       setAddingDomain(false);
@@ -338,7 +493,7 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Edit form */}
-          <div>
+          <div className="space-y-4">
             <div className="bg-[#1a1a1a] border border-[#333] rounded-2xl p-6">
               <h2 className="text-white font-semibold mb-4">Creator Details</h2>
               <form onSubmit={handleSave} className="space-y-4">
@@ -405,15 +560,49 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    id="is_active"
-                    checked={form.is_active ?? true}
-                    onChange={(e) => setField("is_active", e.target.checked)}
-                    className="w-4 h-4 accent-[#e91e8a]"
-                  />
-                  <label htmlFor="is_active" className="text-gray-400 text-sm">Active</label>
+                {/* Behavior toggles */}
+                <div className="border-t border-[#222] pt-3 space-y-2">
+                  <p className="text-gray-500 text-xs uppercase tracking-wider">Behavior</p>
+                  <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.is_active ?? true}
+                      onChange={(e) => setField("is_active", e.target.checked)}
+                      className="w-4 h-4 accent-[#e91e8a]"
+                    />
+                    Active (visible to visitors)
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.show_location ?? false}
+                      onChange={(e) => setField("show_location", e.target.checked)}
+                      className="w-4 h-4 accent-[#e91e8a]"
+                    />
+                    Show visitor location
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.sensitive_default ?? false}
+                      onChange={(e) => setField("sensitive_default", e.target.checked)}
+                      className="w-4 h-4 accent-[#e91e8a]"
+                    />
+                    Sensitive content default (all links)
+                  </label>
+                  {form.show_location && (
+                    <div>
+                      <label className={labelCls}>Location Type</label>
+                      <select
+                        className={inputCls}
+                        value={form.location_type ?? "ip_auto"}
+                        onChange={(e) => setField("location_type", e.target.value)}
+                      >
+                        <option value="ip_auto">Auto (IP geolocation)</option>
+                        <option value="manual">Manual</option>
+                      </select>
+                    </div>
+                  )}
                 </div>
 
                 {saveError && <p className="text-red-400 text-sm">{saveError}</p>}

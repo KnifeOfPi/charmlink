@@ -1,13 +1,29 @@
 export interface SocialLink {
+  id?: string;
   label: string;
   url: string;
   icon: string;
+  subtitle?: string;
+  badge?: string | null;
+  sensitive?: boolean;
+  image_url?: string;
+  deeplink_enabled?: boolean;
+  recovery_url?: string;
+  redirect_url?: string;
 }
 
 export interface PremiumLink {
+  id?: string;
   label: string;
   url: string;
   icon: string;
+  subtitle?: string;
+  badge?: string | null;
+  sensitive?: boolean;
+  image_url?: string;
+  deeplink_enabled?: boolean;
+  recovery_url?: string;
+  redirect_url?: string;
 }
 
 export interface CreatorTheme {
@@ -23,6 +39,9 @@ export interface Creator {
   socialLinks: SocialLink[];
   premiumLinks: PremiumLink[];
   theme: CreatorTheme;
+  show_location?: boolean;
+  location_type?: string;
+  sensitive_default?: boolean;
 }
 
 export interface CreatorsConfig {
