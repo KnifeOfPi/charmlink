@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDomainStatus, listDomains } from "../../../../../lib/vercel-domains";
+import { checkDnsStatus } from "../../../../../lib/cloudflare-dns";
 
 export const runtime = "nodejs";
 
@@ -19,10 +20,30 @@ export async function GET(request: NextRequest) {
 
   try {
     if (domain) {
-      const status = await getDomainStatus(domain);
-      return NextResponse.json(status);
+      const vercelStatus = await getDomainStatus(domain);
+      let cloudflareStatus = null;
+      if (process.env.CLOUDFLARE_API_TOKEN) {
+        cloudflareStatus = await checkDnsStatus(domain);
+      }
+      return NextResponse.json({ vercel: vercelStatus, cloudflare: cloudflareStatus });
     } else {
       const domains = await listDomains();
+
+      // Enrich with Cloudflare DNS status if available
+      if (process.env.CLOUDFLARE_API_TOKEN) {
+        const enriched = await Promise.all(
+          domains.map(async (d) => {
+            try {
+              const cfStatus = await checkDnsStatus(d.name);
+              return { ...d, cloudflare: cfStatus };
+            } catch {
+              return { ...d, cloudflare: null };
+            }
+          })
+        );
+        return NextResponse.json(enriched);
+      }
+
       return NextResponse.json(domains);
     }
   } catch (err) {
