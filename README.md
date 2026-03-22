@@ -38,7 +38,7 @@ When a visitor opens the link from Instagram (which uses an in-app WebView), a b
 - **iOS**: Attempts to open via `x-safari-https://` scheme, falls back to `window.open`
 - **Android**: Uses `intent://` scheme to open in Chrome
 
-## v2 Features
+## v2 Features — Link Intelligence
 
 ### Link Enhancements
 - **Subtitles** — Optional secondary text shown below the link label
@@ -48,6 +48,7 @@ When a visitor opens the link from Instagram (which uses an in-app WebView), a b
 - **Deeplinking** — Platform-specific app deep links (OnlyFans, Instagram, TikTok, Twitter/X) with fallback URL
 - **Redirect Control** — Route clicks through `/api/redirect/[linkId]` for tracking + redirect chain control
 - **Admin-only fields** — Internal notes and comma-separated tags (not shown on public page)
+- **Active Status** — Pulsing green dot with randomized "Responds in ~Xs" (30s–90s) for social proof
 
 ### Creator Enhancements
 - **Location Display** — "Visiting from City, Country" banner pulled from IP geolocation (ipapi.co)
@@ -58,14 +59,64 @@ When a visitor opens the link from Instagram (which uses an in-app WebView), a b
 - New columns on `charmlink_creators`: `show_location`, `location_type`, `sensitive_default`
 - Run `npx tsx scripts/migrate-v2.ts` to apply to existing databases
 
+## v3 Features — Visual Design System
+
+### UI Framework
+- **shadcn/ui** — 13 pre-built components (Button, Input, Select, Switch, Label, Dialog, Tabs, Badge, Card, Separator, Popover, DropdownMenu, Tooltip) for a polished admin experience
+
+### Background Effects
+- **Gradient Backgrounds** — Solid, linear gradient, or radial gradient with 2–3 configurable color stops and direction control
+- **Floating Icons** — Animated floating emoji particles (configurable emoji, count, speed) using CSS `@keyframes floatUp`
+- **Star Particles** — Twinkling dot overlay with configurable count, size (1–3px), and color using `@keyframes twinkle`
+
+### Avatar & Identity
+- **Gradient Border** — Spinning conic-gradient avatar border with 3 configurable colors and `@keyframes gradientSpin` animation. Also supports solid color or no border.
+- **Polished Online Dot** — 4-layer green status indicator: solid circle + ping animation + blur pulse + white border ring
+- **Verified Badge** — Blue checkmark SVG (Twitter-style) next to creator name, toggled per creator
+
+### Typography & Fonts
+- **Google Fonts** — 6 font options per creator: Inter, Poppins, Playfair Display, Roboto, Montserrat, Dancing Script. Loaded dynamically via Google Fonts CDN.
+
+### Location
+- **Location Pill** — Styled rounded pill with map pin SVG icon, positioned above the avatar. Custom background color configurable per creator.
+
+### Link Visual Effects
+- **16:9 Image Cards** — Image button links use proper 16:9 aspect ratio (`pt-[56.25%]`), `bg-cover bg-center`, hover zoom (`group-hover:scale-105`), dark overlay, and title at bottom center
+- **Text Glow** — Per-link `text-shadow` glow effect with configurable color and intensity (1–10 scale)
+- **Hover Animations** — Per-link hover effects: `pulse` (scale), `bounce`, `shake` (horizontal), `glow` (box-shadow)
+- **Custom Border** — Per-link border toggle with custom color
+- **Title Color Override** — Per-link custom title color
+- **Font Size Control** — Per-link title font size (sm, base, lg, xl)
+
+### Countdown Timer
+- Triggered via special `countdown:ISO_DATE` URL format
+- Displays live countdown in styled day/hour/min/sec boxes
+- For launches, drops, and limited-time promotions
+
+### Admin Dashboard (rebuilt with shadcn/ui)
+- **5-tab layout**: Profile, Theme, Effects, Avatar, Misc
+- **Profile tab**: Name, tagline, slug, avatar URL, custom domain + Vercel integration, active/sensitive toggles
+- **Theme tab**: Background type selector, 3 color pickers, gradient type/direction controls
+- **Effects tab**: Floating icons toggle + emoji/count/speed config, star particles toggle + count/color
+- **Avatar tab**: Border style selector, 3 gradient color pickers, verified badge toggle
+- **Misc tab**: Font family selector, location toggle + type + pill color
+- **Link editor**: All v3 visual fields behind expandable "✨ Visual options" section
+
+### Database
+- 19 new columns on `charmlink_creators`: `bg_type`, `bg_gradient_type`, `bg_gradient_direction`, `bg_color_2`, `bg_color_3`, `show_floating_icons`, `floating_icon`, `floating_icon_count`, `show_stars`, `stars_count`, `stars_color`, `animation_speed`, `avatar_border_style`, `avatar_border_color_1/2/3`, `is_verified`, `font`, `location_pill_color`
+- 8 new columns on `charmlink_links`: `show_text_glow`, `text_glow_color`, `text_glow_intensity`, `hover_animation`, `border_color`, `show_border`, `title_color`, `title_font_size`
+- Run `npx tsx scripts/migrate-v3.ts` to apply to existing databases
+
 ## Tech Stack
 
 - **Framework**: Next.js 15 (App Router)
 - **Language**: TypeScript
 - **Styling**: Tailwind CSS v4
+- **UI Components**: shadcn/ui (base-ui/react)
 - **Database**: PostgreSQL (Supabase)
 - **Deployment**: Vercel
-- **Domain Management**: Vercel Domains API (+ Cloudflare DNS API planned)
+- **Domain Management**: Vercel Domains API + Cloudflare DNS API
+- **Fonts**: Google Fonts (dynamic per-creator loading)
 
 ## Project Structure
 
@@ -74,8 +125,8 @@ charmlink/
 ├── app/
 │   ├── [creator]/              # Public creator pages
 │   │   ├── page.tsx            # Server component — fetches from DB, passes to client
-│   │   └── CreatorPage.tsx     # Client component — age gate, bot evasion, premium links
-│   ├── admin/                  # Admin dashboard
+│   │   └── CreatorPage.tsx     # Client component — all visual effects, age gate, bot evasion
+│   ├── admin/                  # Admin dashboard (shadcn/ui)
 │   │   ├── page.tsx            # Login page
 │   │   ├── layout.tsx          # Admin layout with navigation
 │   │   ├── AdminNav.tsx        # Sidebar navigation
@@ -83,7 +134,7 @@ charmlink/
 │   │   ├── dashboard/          # Overview stats + recent activity
 │   │   ├── creators/           # Creator CRUD + link management
 │   │   │   ├── page.tsx        # Creator list + add/delete
-│   │   │   └── [id]/page.tsx   # Edit creator, links, domain, analytics
+│   │   │   └── [id]/page.tsx   # 5-tab editor (Profile/Theme/Effects/Avatar/Misc)
 │   │   ├── analytics/          # Analytics dashboard
 │   │   │   ├── page.tsx        # Analytics page wrapper
 │   │   │   └── AnalyticsDashboard.tsx  # Charts + stats
@@ -97,34 +148,52 @@ charmlink/
 │   │   │   │       ├── route.ts      # GET / PUT / DELETE
 │   │   │   │       └── links/
 │   │   │   │           └── route.ts  # GET / POST / PUT / DELETE links
-│   │   │   ├── domains/        # Vercel domain management
+│   │   │   ├── domains/        # Vercel + Cloudflare domain management
 │   │   │   │   ├── route.ts    # POST (add) / DELETE (remove)
 │   │   │   │   └── status/
 │   │   │   │       └── route.ts      # GET verification status
 │   │   │   └── recent-events/
 │   │   │       └── route.ts    # GET recent analytics events
-│   │   ├── analytics/          # Public analytics API (admin-key protected)
+│   │   ├── analytics/          # Analytics API (admin-key protected)
 │   │   │   ├── [creator]/route.ts    # Per-creator stats
 │   │   │   └── overview/route.ts     # All-creators summary
 │   │   ├── creators/route.ts   # GET list of creator slugs
 │   │   ├── honeypot/route.ts   # Bot honeypot endpoint
 │   │   ├── links/[creator]/route.ts  # GET premium links (bot-filtered, rate-limited)
-│   │   ├── pageview/route.ts   # POST pageview tracking (unused — analytics via DB now)
+│   │   ├── pageview/route.ts   # POST pageview tracking
+│   │   ├── redirect/[linkId]/route.ts  # Click tracking + 302 redirect
 │   │   ├── resolve-domain/route.ts   # Internal domain → slug resolution
 │   │   └── track/route.ts      # POST click tracking
 │   ├── globals.css
 │   ├── layout.tsx
 │   └── page.tsx                # Default landing page
+├── components/ui/              # shadcn/ui components
+│   ├── badge.tsx
+│   ├── button.tsx
+│   ├── card.tsx
+│   ├── dialog.tsx
+│   ├── dropdown-menu.tsx
+│   ├── input.tsx
+│   ├── label.tsx
+│   ├── popover.tsx
+│   ├── select.tsx
+│   ├── separator.tsx
+│   ├── switch.tsx
+│   ├── tabs.tsx
+│   └── tooltip.tsx
 ├── lib/
 │   ├── analytics.ts            # Legacy file-based analytics (kept for reference)
 │   ├── bot-detect.ts           # Bot UA detection
+│   ├── cloudflare-dns.ts       # Cloudflare DNS API client
 │   ├── db.ts                   # Database layer — all CRUD + analytics queries
 │   ├── types.ts                # TypeScript interfaces
+│   ├── utils.ts                # shadcn/ui utility (cn helper)
 │   └── vercel-domains.ts       # Vercel Domains API client
 ├── middleware.ts                # Bot detection + custom domain routing
 ├── scripts/
 │   ├── migrate.ts              # DB schema creation + seed from creators.json
-│   └── migrate-v2.ts           # v2 ALTER TABLE migration (run on existing DBs)
+│   ├── migrate-v2.ts           # v2 ALTER TABLE migration (links + location)
+│   └── migrate-v3.ts           # v3 ALTER TABLE migration (visual design system)
 ├── creators.json               # Sample creator data (used for seeding only)
 ├── package.json
 └── tsconfig.json
@@ -143,10 +212,32 @@ Three tables, all prefixed with `charmlink_`:
 | `tagline` | TEXT | Short bio shown on page |
 | `avatar_url` | TEXT | Avatar image URL |
 | `custom_domain` | VARCHAR(255) | Custom domain (unique, nullable) |
-| `theme_bg` | VARCHAR(20) | Background color hex |
+| `theme_bg` | VARCHAR(20) | Background color hex (also used as gradient color 1) |
 | `theme_accent` | VARCHAR(20) | Accent/button color hex |
 | `theme_text` | VARCHAR(20) | Text color hex |
 | `is_active` | BOOLEAN | Whether the page is live |
+| `show_location` | BOOLEAN | Show visitor location via IP geolocation |
+| `location_type` | VARCHAR(20) | `ip_auto` or `manual` |
+| `sensitive_default` | BOOLEAN | Default sensitive toggle for all links |
+| `bg_type` | VARCHAR(20) | `solid`, `gradient` |
+| `bg_gradient_type` | VARCHAR(20) | `linear`, `radial` |
+| `bg_gradient_direction` | VARCHAR(30) | CSS direction (e.g., `to bottom`, `to bottom right`) |
+| `bg_color_2` | VARCHAR(20) | Second gradient stop color |
+| `bg_color_3` | VARCHAR(20) | Optional third gradient stop color |
+| `show_floating_icons` | BOOLEAN | Enable floating emoji animation |
+| `floating_icon` | VARCHAR(10) | Emoji to float (e.g., `💫`) |
+| `floating_icon_count` | INT | Number of floating icons (default 8) |
+| `show_stars` | BOOLEAN | Enable twinkling star particles |
+| `stars_count` | INT | Number of stars (default 50) |
+| `stars_color` | VARCHAR(20) | Star particle color |
+| `animation_speed` | INT | Animation cycle in seconds (default 10) |
+| `avatar_border_style` | VARCHAR(20) | `solid`, `gradient`, `none` |
+| `avatar_border_color_1` | VARCHAR(20) | Primary border / gradient color 1 |
+| `avatar_border_color_2` | VARCHAR(20) | Gradient color 2 |
+| `avatar_border_color_3` | VARCHAR(20) | Gradient color 3 |
+| `is_verified` | BOOLEAN | Show blue verified badge next to name |
+| `font` | VARCHAR(30) | Google Font family name |
+| `location_pill_color` | VARCHAR(20) | Custom background for location pill |
 | `created_at` | TIMESTAMPTZ | Creation timestamp |
 | `updated_at` | TIMESTAMPTZ | Last update timestamp |
 
@@ -161,6 +252,23 @@ Three tables, all prefixed with `charmlink_`:
 | `link_type` | VARCHAR(20) | `social` or `premium` |
 | `sort_order` | INT | Display order (ascending) |
 | `is_active` | BOOLEAN | Whether the link is shown |
+| `subtitle` | TEXT | Secondary text below label |
+| `image_url` | TEXT | Background image for image button style |
+| `deeplink_enabled` | BOOLEAN | Try native app deep link first |
+| `recovery_url` | TEXT | Fallback URL if deep link fails |
+| `redirect_url` | TEXT | Route through redirect API for tracking |
+| `sensitive` | BOOLEAN | Show sensitive content warning |
+| `badge` | VARCHAR(20) | `new`, `popular`, or `exclusive` |
+| `notes` | TEXT | Internal notes (admin-only) |
+| `tags` | TEXT[] | Tag array (admin-only) |
+| `show_text_glow` | BOOLEAN | Enable text glow effect |
+| `text_glow_color` | VARCHAR(20) | Glow color hex |
+| `text_glow_intensity` | INT | Glow strength (1–10) |
+| `hover_animation` | VARCHAR(20) | `pulse`, `bounce`, `shake`, `glow` |
+| `border_color` | VARCHAR(20) | Custom link border color |
+| `show_border` | BOOLEAN | Show border on link |
+| `title_color` | VARCHAR(20) | Override title text color |
+| `title_font_size` | VARCHAR(10) | `sm`, `base`, `lg`, `xl` |
 | `created_at` | TIMESTAMPTZ | Creation timestamp |
 
 ### `charmlink_events`
@@ -210,9 +318,12 @@ DATABASE_URL=postgresql://user:password@host:5432/database
 # Admin dashboard access
 CHARMLINK_ADMIN_KEY=your-secret-admin-key
 
-# Custom domain management (optional — only needed if using the domains admin UI)
+# Custom domain management (optional)
 VERCEL_API_TOKEN=your-vercel-api-token
 VERCEL_PROJECT_ID=your-vercel-project-id
+
+# Cloudflare DNS automation (optional — auto-creates DNS records when adding domains)
+CLOUDFLARE_API_TOKEN=your-cloudflare-api-token
 ```
 
 > **⚠️ Note**: If your database password contains special characters (like `#`, `@`, `?`), URL-encode them in the connection string. For example, `#` becomes `%23`.
@@ -220,13 +331,17 @@ VERCEL_PROJECT_ID=your-vercel-project-id
 ### 3. Run database migration
 
 ```bash
+# Fresh install — creates all tables with latest schema
 npx tsx scripts/migrate.ts
-```
 
-This creates all three tables and indexes. To also seed with sample data from `creators.json`:
-
-```bash
+# With sample data
 npx tsx scripts/migrate.ts --seed
+
+# Upgrading from v1 → v2 (adds link intelligence columns)
+npx tsx scripts/migrate-v2.ts
+
+# Upgrading from v2 → v3 (adds visual design system columns)
+npx tsx scripts/migrate-v3.ts
 ```
 
 ### 4. Run locally
@@ -262,12 +377,13 @@ Access at `/admin` with your `CHARMLINK_ADMIN_KEY`.
 - Add new creators with name, slug, tagline, avatar, theme colors
 - Delete creators (cascades to links and nullifies events)
 
-### Creator Detail (`/admin/creators/[id]`)
-- Edit all creator fields (name, slug, tagline, avatar URL)
-- Theme customization (background, accent, text colors)
-- **Social links**: Add, edit, delete, reorder — these are always visible (Twitter, TikTok, Instagram, YouTube, etc.)
-- **Premium links**: Add, edit, delete, reorder — these are hidden from bots (OnlyFans, Fanvue, etc.)
-- **Custom domain**: Set a custom domain and add it to Vercel with one click
+### Creator Detail (`/admin/creators/[id]`) — 5-Tab Editor
+- **Profile tab**: Name, tagline, slug, avatar URL, custom domain + one-click Vercel setup, active/sensitive toggles
+- **Theme tab**: Background type (solid/gradient), gradient type (linear/radial) + direction, 3 color pickers with live preview, accent + text colors
+- **Effects tab**: Floating icons (toggle + emoji + count + speed), star particles (toggle + count + color), animation speed
+- **Avatar tab**: Border style (solid/gradient/none), 3 gradient color pickers, verified badge toggle
+- **Misc tab**: Font family selector (6 Google Fonts), location toggle + type + pill color
+- **Links section**: Add/edit/delete social + premium links with full v3 visual options (glow, animations, borders, badges, subtitles, image URLs, deeplinking)
 - **Analytics**: 30-day stats for this specific creator
 
 ### Analytics (`/admin/analytics`)
@@ -384,11 +500,16 @@ Tested architecture supports 100+ creators with custom domains from a single dep
 
 ## Roadmap
 
-- [ ] Cloudflare DNS API integration (fully automated domain setup)
+- [x] ~~Cloudflare DNS API integration~~ ✅ Shipped in v2
+- [x] ~~Visual design system (gradients, effects, fonts)~~ ✅ Shipped in v3
+- [x] ~~shadcn/ui admin dashboard~~ ✅ Shipped in v3
 - [ ] Avatar image upload (currently URL-only)
 - [ ] CSV bulk import for onboarding many creators at once
 - [ ] A/B testing for link labels and page themes
 - [ ] Webhook notifications for click milestones
+- [ ] Theme presets (one-click "dark neon", "pastel dream", "minimalist" etc.)
+- [ ] Carousel/marquee component for scrolling content
+- [ ] Video background support
 - [ ] SQLite/Turso option for self-hosted deployments without Postgres
 - [ ] Geolocation-based link routing (different links per country)
 
