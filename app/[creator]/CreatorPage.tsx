@@ -226,6 +226,38 @@ function InstagramBrowserBanner() {
   );
 }
 
+// ── Active Status ─────────────────────────────────────────────────────────────
+
+function ActiveStatus({ textColor, accentColor }: { textColor: string; accentColor: string }) {
+  const [responseTime, setResponseTime] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Random between 30s and 90s
+    const seconds = Math.floor(Math.random() * 61) + 30;
+    if (seconds < 60) {
+      setResponseTime(`${seconds}s`);
+    } else {
+      const mins = Math.floor(seconds / 60);
+      const secs = seconds % 60;
+      setResponseTime(secs > 0 ? `${mins}m ${secs}s` : `${mins}m`);
+    }
+  }, []);
+
+  if (!responseTime) return null;
+
+  return (
+    <div className="flex items-center justify-center gap-1.5 mt-1.5">
+      <span
+        className="inline-block w-2 h-2 rounded-full animate-pulse"
+        style={{ backgroundColor: "#22c55e" }}
+      />
+      <span className="text-xs opacity-60" style={{ color: textColor }}>
+        Active now · Responds in ~{responseTime}
+      </span>
+    </div>
+  );
+}
+
 // ── Location Display ──────────────────────────────────────────────────────────
 
 function LocationBadge({ textColor }: { textColor: string }) {
@@ -510,6 +542,7 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
           <div className="text-center">
             <h1 className="text-2xl font-bold mb-1">{creator.name}</h1>
             <p className="text-sm opacity-70">{creator.tagline}</p>
+            <ActiveStatus textColor={theme.textColor} accentColor={theme.accentColor} />
             {creator.show_location && <LocationBadge textColor={theme.textColor} />}
           </div>
 
