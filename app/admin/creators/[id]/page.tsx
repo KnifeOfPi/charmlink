@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, use } from "react";
+import { useEffect, useState, useRef, useCallback, use } from "react";
 import { useRouter } from "next/navigation";
 import { useAdminAuth } from "../../useAdminAuth";
 import { AdminNav } from "../../AdminNav";
@@ -602,6 +602,39 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
   const [addingDomain, setAddingDomain] = useState(false);
 
   const [form, setForm] = useState<Partial<DBCreator>>({});
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarError, setAvatarError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  const handleAvatarUpload = useCallback(async (file: File) => {
+    setAvatarUploading(true);
+    setAvatarError("");
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("creatorSlug", form.slug ?? "unknown");
+
+      const res = await fetch("/api/admin/avatar", {
+        method: "POST",
+        headers: authHeaders(),
+        body: formData,
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setForm((p) => ({ ...p, avatar_url: data.url }));
+      } else {
+        const err = await res.json();
+        setAvatarError((err as { error?: string }).error ?? "Upload failed");
+      }
+    } catch {
+      setAvatarError("Upload failed");
+    } finally {
+      setAvatarUploading(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.slug]);
 
   useEffect(() => {
     if (!ready) return;
@@ -814,13 +847,77 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
                           onChange={(e) => setField("tagline", e.target.value)}
                         />
                       </div>
-                      <div className="space-y-1">
-                        <Label>Avatar URL</Label>
-                        <Input
-                          value={form.avatar_url ?? ""}
-                          onChange={(e) => setField("avatar_url", e.target.value)}
-                          placeholder="https://..."
-                        />
+                      <div className="space-y-2">
+                        <Label>Avatar</Label>
+                        {/* Preview */}
+                        {form.avatar_url && (
+                          <div className="flex items-center gap-3">
+                            <img
+                              src={form.avatar_url}
+                              alt="Avatar preview"
+                              className="w-16 h-16 rounded-full object-cover border-2 border-border"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setField("avatar_url", "")}
+                              className="text-destructive text-xs hover:text-destructive/70 transition-colors"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        )}
+                        {/* Upload area */}
+                        <div
+                          className={`relative border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${
+                            dragOver
+                              ? "border-primary bg-primary/5"
+                              : "border-border hover:border-muted-foreground/50"
+                          }`}
+                          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                          onDragLeave={() => setDragOver(false)}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            setDragOver(false);
+                            const file = e.dataTransfer.files[0];
+                            if (file) handleAvatarUpload(file);
+                          }}
+                          onClick={() => fileInputRef.current?.click()}
+                        >
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp,image/gif"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) handleAvatarUpload(file);
+                              e.target.value = "";
+                            }}
+                          />
+                          {avatarUploading ? (
+                            <p className="text-sm text-muted-foreground">Uploading...</p>
+                          ) : (
+                            <>
+                              <p className="text-sm text-muted-foreground">
+                                {dragOver ? "Drop image here" : "Click or drag image to upload"}
+                              </p>
+                              <p className="text-xs text-muted-foreground/60 mt-1">
+                                JPG, PNG, WebP, GIF · Max 2 MB
+                              </p>
+                            </>
+                          )}
+                        </div>
+                        {avatarError && <p className="text-destructive text-xs">{avatarError}</p>}
+                        {/* Fallback URL input */}
+                        <div className="space-y-1">
+                          <Label className="text-xs text-muted-foreground">Or paste URL directly</Label>
+                          <Input
+                            value={form.avatar_url?.startsWith("data:") ? "" : (form.avatar_url ?? "")}
+                            onChange={(e) => setField("avatar_url", e.target.value)}
+                            placeholder="https://..."
+                            className="text-sm"
+                          />
+                        </div>
                       </div>
                       <div className="space-y-1">
                         <Label>Custom Domain</Label>
