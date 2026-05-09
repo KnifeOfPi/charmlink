@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { rateLimit } from "../../../lib/rate-limit";
 import { banIp } from "../../../lib/kv-ban";
+import { logHoneypotHit } from "../../../lib/db";
 
 // Honeypot endpoint — only bots follow invisible links.
 // Real users never see or click this link.
@@ -24,15 +25,16 @@ export async function GET(request: NextRequest) {
   const ua = request.headers.get("user-agent") ?? "unknown";
   const referer = request.headers.get("referer") ?? "none";
 
-  // Rate limit: 10 req/min (bots hammering the honeypot)
+  // Rate limit: 10 req/min
   const { allowed } = await rateLimit(ip, "honeypot", 10, 60);
 
   if (allowed) {
-    // Log and ban — fire-and-forget, don't await to keep response fast
-    void banIp(ip);
     console.warn(
       `[honeypot] hit — UA: ${ua.slice(0, 200)} | IP: ${ip} | Referer: ${referer}`
     );
+    // Fire-and-forget: ban IP + log to DB (errors are non-fatal)
+    void banIp(ip);
+    void logHoneypotHit(ip, ua, referer).catch(() => {});
   }
 
   return new NextResponse(LOADING_HTML, {
