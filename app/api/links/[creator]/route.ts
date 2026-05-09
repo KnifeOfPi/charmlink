@@ -1,61 +1,107 @@
 import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { getCreatorBySlug, getCreatorLinks } from "../../../../lib/db";
-import { isBot } from "../../../../lib/bot-detect";
+import { detectBot } from "../../../../lib/bot-detect";
+import { verifyLinkToken } from "../../../../lib/link-token";
 
 export const runtime = "nodejs";
 
-// Simple in-memory rate limiter — per IP, max 30 requests per minute
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-const RATE_LIMIT = 30;
-const RATE_WINDOW_MS = 60_000;
-
-function isRateLimited(ip: string): boolean {
-  const now = Date.now();
-  const entry = rateLimitMap.get(ip);
-
-  if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
-    return false;
-  }
-
-  entry.count++;
-  if (entry.count > RATE_LIMIT) return true;
-  return false;
+// Identical-shape decoy response — same status, same structure, decoy URL
+function decoyResponse() {
+  return NextResponse.json(
+    {
+      links: [
+        {
+          id: "d1",
+          label: "Loading…",
+          url: "/api/honeypot?ref=d1",
+          icon: "circle",
+          subtitle: null,
+          badge: null,
+          sensitive: false,
+          image_url: null,
+          deeplink_enabled: false,
+          recovery_url: null,
+          redirect_url: null,
+          show_text_glow: false,
+          text_glow_color: null,
+          text_glow_intensity: null,
+          hover_animation: null,
+          border_color: null,
+          show_border: false,
+          title_color: null,
+          title_font_size: null,
+        },
+      ],
+    },
+    { status: 200 }
+  );
 }
 
-// Clean up stale entries every 5 minutes
-if (typeof globalThis !== "undefined") {
-  setInterval(() => {
-    const now = Date.now();
-    for (const [ip, entry] of rateLimitMap) {
-      if (now > entry.resetAt) rateLimitMap.delete(ip);
-    }
-  }, 300_000);
+export async function GET() {
+  return NextResponse.json({ error: "Method Not Allowed" }, { status: 405 });
 }
 
-export async function GET(
+export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ creator: string }> }
 ) {
   const { creator: slug } = await params;
-  const userAgent = request.headers.get("user-agent");
-  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
 
-  // Block bots — return empty array
-  if (isBot(userAgent)) {
-    return NextResponse.json({ links: [] });
+  // 1. Require age cookie
+  const cookieStore = await cookies();
+  const ageConfirmed = cookieStore.get("cl_age")?.value === "1";
+  if (!ageConfirmed) {
+    return decoyResponse();
   }
 
-  // Rate limit — flag IPs hitting multiple creators rapidly
-  if (isRateLimited(ip)) {
-    console.warn(`[links:ratelimit] IP ${ip} exceeded rate limit`);
-    return NextResponse.json({ links: [] });
+  // 2. Require same-origin Sec-Fetch-Site
+  const secFetchSite = request.headers.get("sec-fetch-site");
+  if (secFetchSite !== "same-origin") {
+    return decoyResponse();
   }
 
+  // 3. Origin must match host
+  const originHeader = request.headers.get("origin");
+  const hostHeader = request.headers.get("host");
+  if (!originHeader || !hostHeader) {
+    return decoyResponse();
+  }
+  try {
+    const originHostname = new URL(originHeader).hostname;
+    const hostHostname = hostHeader.split(":")[0];
+    if (originHostname !== hostHostname) {
+      return decoyResponse();
+    }
+  } catch {
+    return decoyResponse();
+  }
+
+  // 4. HMAC token validation
+  let body: { token?: string };
+  try {
+    body = (await request.json()) as { token?: string };
+  } catch {
+    return decoyResponse();
+  }
+  const token = body?.token ?? "";
+  const ip =
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "";
+  if (!verifyLinkToken(token, slug, ip, ageConfirmed)) {
+    return decoyResponse();
+  }
+
+  // 5. Bot detection (belt-and-suspenders)
+  const { isBot: botDetected } = detectBot(request);
+  if (botDetected) {
+    return decoyResponse();
+  }
+
+  // ── Serve real premium links ───────────────────────────────────────────────
   try {
     const creator = await getCreatorBySlug(slug);
     if (!creator) {
-      return NextResponse.json({ links: [] }, { status: 404 });
+      return decoyResponse();
     }
 
     const links = await getCreatorLinks(creator.id);
@@ -86,7 +132,7 @@ export async function GET(
 
     return NextResponse.json({ links: premiumLinks });
   } catch (err) {
-    console.error("[links:get] DB error", err);
-    return NextResponse.json({ links: [] }, { status: 500 });
+    console.error("[links:post] DB error", err);
+    return decoyResponse();
   }
 }
