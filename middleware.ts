@@ -57,9 +57,49 @@ function isAppHost(hostname: string): boolean {
   return false;
 }
 
+// ── Security headers ──────────────────────────────────────────────────────────
+// ipapi.co is used client-side in LocationPill; include in connect-src.
+const CSP =
+  "default-src 'self'; " +
+  "img-src 'self' data: https:; " +
+  "style-src 'self' 'unsafe-inline'; " +
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://va.vercel-scripts.com; " +
+  "connect-src 'self' https://*.supabase.co https://va.vercel-scripts.com https://ipapi.co; " +
+  "font-src 'self' data:; " +
+  "frame-ancestors 'none'";
+
+function applySecurityHeaders(response: NextResponse, isApiRoute: boolean): void {
+  response.headers.set("Content-Security-Policy", CSP);
+  response.headers.set("X-Frame-Options", "DENY");
+  response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  response.headers.set("X-Content-Type-Options", "nosniff");
+  if (isApiRoute) {
+    response.headers.set("X-Robots-Tag", "noindex, nofollow");
+  }
+}
+
+// ── Strip Vercel infrastructure headers from every response ───────────────────
+const VERCEL_HEADERS_TO_STRIP = [
+  "x-vercel-id",
+  "x-vercel-cache",
+  "x-matched-path",
+  "x-nextjs-prerender",
+  "x-nextjs-stale-time",
+  "server",
+];
+
+function stripVercelHeaders(response: NextResponse): void {
+  for (const h of VERCEL_HEADERS_TO_STRIP) {
+    response.headers.delete(h);
+  }
+  response.headers.set("server", "nginx");
+}
+
 export async function middleware(request: NextRequest) {
   const host = request.headers.get("host") ?? "";
   const hostname = host.split(":")[0]; // strip port
+  const pathname = request.nextUrl.pathname;
+  const isApiRoute = pathname.startsWith("/api/");
 
   // ── Bot detection ──────────────────────────────────────────────────────────
   const { isBot: isBotResult, reason } = detectBot(request);
@@ -70,9 +110,7 @@ export async function middleware(request: NextRequest) {
   requestHeaders.set("x-bot-reason", reason);
 
   // ── Custom domain routing ──────────────────────────────────────────────────
-  if (!isAppHost(hostname)) {
-    const pathname = request.nextUrl.pathname;
-
+  if (!isAppHost(hostname) && !isApiRoute) {
     // Only rewrite the root path to the creator page
     if (pathname === "/" || pathname === "") {
       const slug = await resolveCustomDomain(hostname, request);
@@ -81,14 +119,22 @@ export async function middleware(request: NextRequest) {
         url.pathname = `/${slug}`;
         // Pass custom domain via request headers only
         requestHeaders.set("x-custom-domain", hostname);
-        return NextResponse.rewrite(url, { request: { headers: requestHeaders } });
+        const response = NextResponse.rewrite(url, { request: { headers: requestHeaders } });
+        applySecurityHeaders(response, false);
+        stripVercelHeaders(response);
+        return response;
       }
     }
   }
 
-  return NextResponse.next({ request: { headers: requestHeaders } });
+  const response = NextResponse.next({ request: { headers: requestHeaders } });
+  applySecurityHeaders(response, isApiRoute);
+  stripVercelHeaders(response);
+  return response;
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/).*)"],
+  // Run on all routes including /api/ so we can apply security headers.
+  // Still excludes static assets and image optimizer.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };
