@@ -477,39 +477,61 @@ function handleDeepLink(url: string, recoveryUrl: string) {
 
 // ── Instagram Banner ──────────────────────────────────────────────────────────
 
+const IG_DISMISS_KEY = "cl_ig_dismiss";
+
 function InstagramBrowserBanner() {
   const [platform, setPlatform] = useState<"ios" | "android" | "unknown">("unknown");
+  const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
+    if (localStorage.getItem(IG_DISMISS_KEY) === "1") {
+      setDismissed(true);
+      return;
+    }
     const ua = navigator.userAgent;
     if (/iPhone|iPad|iPod/.test(ua)) setPlatform("ios");
     else if (/Android/.test(ua)) setPlatform("android");
   }, []);
 
+  const dismiss = () => {
+    localStorage.setItem(IG_DISMISS_KEY, "1");
+    setDismissed(true);
+  };
+
   const openInBrowser = () => {
     const url = window.location.href;
+    const bare = url.replace(/^https?:\/\//, "");
     if (platform === "ios") {
-      window.location.href = `x-safari-https://${url.replace("https://", "").replace("http://", "")}`;
+      window.location.href = `x-safari-https://${bare}`;
       setTimeout(() => window.open(url, "_blank"), 500);
     } else if (platform === "android") {
-      const intentUrl = `intent://${url.replace("https://", "").replace("http://", "")}#Intent;scheme=https;package=com.android.chrome;end`;
-      window.location.href = intentUrl;
+      window.location.href = `intent://${bare}#Intent;scheme=https;package=com.android.chrome;end`;
       setTimeout(() => window.open(url, "_blank"), 500);
     } else {
       window.open(url, "_blank");
     }
   };
 
+  if (dismissed) return null;
+
   return (
-    <div className="fixed top-0 left-0 right-0 z-50 bg-yellow-500 text-black px-4 py-3 text-center text-sm">
-      <p className="font-semibold mb-1">For the best experience, open in your browser</p>
+    <div className="fixed top-0 left-0 right-0 z-50 bg-yellow-500 text-black px-4 py-2 flex items-center justify-between text-sm">
       <button
         onClick={openInBrowser}
-        className="bg-black text-white px-4 py-1 rounded-full text-xs font-bold mr-2"
+        className="bg-black text-white px-3 py-1 rounded-full text-xs font-bold"
       >
-        Open in Browser
+        Open in Browser ↗
       </button>
-      <span className="text-xs opacity-75">or tap &#x22EF; then &quot;Open in Browser&quot;</span>
+      <span className="text-xs opacity-75 mx-2 flex-1 text-center">
+        Tap &#x22EF; → &quot;Open in Browser&quot; for best experience
+      </span>
+      <button
+        onClick={dismiss}
+        className="text-black/60 text-base font-bold px-1"
+        aria-label="Dismiss"
+      >
+        ✕
+      </button>
     </div>
   );
 }
@@ -954,6 +976,33 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
       sessionId: sessionIdRef.current,
       isInstagram,
     });
+    // In IG webview: attempt OS-level deeplink-out before navigating
+    if (isInstagram) {
+      const targetUrl = link.redirect_url ? `/api/redirect/${link.id}` : link.url;
+      const bare = targetUrl.replace(/^https?:\/\//, "");
+      const host = window.location.hostname;
+      const ua = navigator.userAgent;
+      const isIos = /iPhone|iPad|iPod/.test(ua);
+      const isAndroid = /Android/.test(ua);
+      let deeplink = "";
+      if (isIos) {
+        deeplink = `x-safari-https://${host}${bare.startsWith(host) ? bare.slice(host.length) : "/" + bare}`;
+      } else if (isAndroid) {
+        const path = bare.startsWith(host) ? bare.slice(host.length) : "/" + bare;
+        deeplink = `intent://${host}${path}#Intent;scheme=https;end`;
+      }
+      if (deeplink) {
+        const blurred = { v: false };
+        const onBlur = () => { blurred.v = true; };
+        window.addEventListener("blur", onBlur, { once: true });
+        window.location.href = deeplink;
+        setTimeout(() => {
+          window.removeEventListener("blur", onBlur);
+          if (!blurred.v) navigate(link);
+        }, 500);
+        return;
+      }
+    }
     setTimeout(() => navigate(link), 50);
   };
 
