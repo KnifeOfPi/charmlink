@@ -3,16 +3,15 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import Image from "next/image";
 import { Creator, PremiumLink, SocialLink } from "../../lib/types";
+import { resolveFontFamily } from "../../lib/fonts";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function getSessionId(): string {
+/** Generate a fresh session ID on every pageview mount. */
+function createSessionId(): string {
   if (typeof window === "undefined") return "ssr";
-  let sid = sessionStorage.getItem("charmlink_sid");
-  if (!sid) {
-    sid = crypto.randomUUID();
-    sessionStorage.setItem("charmlink_sid", sid);
-  }
+  const sid = crypto.randomUUID();
+  sessionStorage.setItem("charmlink_sid", sid);
   return sid;
 }
 
@@ -52,35 +51,6 @@ function buildBackground(creator: Creator): React.CSSProperties {
     return { background: `linear-gradient(${dir}, ${stops})` };
   }
   return { backgroundColor: c1 };
-}
-
-// ── Font Loader ───────────────────────────────────────────────────────────────
-
-const FONT_MAP: Record<string, { family: string; googleName: string }> = {
-  inter: { family: "Inter, sans-serif", googleName: "Inter" },
-  poppins: { family: "Poppins, sans-serif", googleName: "Poppins" },
-  playfair: { family: "'Playfair Display', serif", googleName: "Playfair+Display" },
-  roboto: { family: "Roboto, sans-serif", googleName: "Roboto" },
-  montserrat: { family: "Montserrat, sans-serif", googleName: "Montserrat" },
-  "dancing-script": { family: "'Dancing Script', cursive", googleName: "Dancing+Script" },
-};
-
-function useFontLoader(font: string | undefined) {
-  useEffect(() => {
-    if (!font || font === "inter") return;
-    const f = FONT_MAP[font];
-    if (!f) return;
-    const id = `charmlink-font-${font}`;
-    if (document.getElementById(id)) return;
-    const link = document.createElement("link");
-    link.id = id;
-    link.rel = "stylesheet";
-    link.href = `https://fonts.googleapis.com/css2?family=${f.googleName}:wght@400;600;700&display=swap`;
-    document.head.appendChild(link);
-  }, [font]);
-
-  const fontEntry = font ? FONT_MAP[font] : undefined;
-  return fontEntry?.family ?? "Inter, sans-serif";
 }
 
 // ── Floating Icons ────────────────────────────────────────────────────────────
@@ -304,7 +274,7 @@ function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, acce
               overflow: "hidden",
             }}
           >
-            <Image src={src} alt={name} fill className="object-cover" unoptimized />
+            <Image src={src} alt={name} fill className="object-cover" />
           </div>
           {online}
         </div>
@@ -318,7 +288,7 @@ function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, acce
         <style>{spinCss}</style>
         <div className="relative" style={{ width: 96, height: 96 }}>
           <div style={{ position: "absolute", inset: 0, borderRadius: "50%", overflow: "hidden" }}>
-            <Image src={src} alt={name} fill className="object-cover" unoptimized />
+            <Image src={src} alt={name} fill className="object-cover" />
           </div>
           {online}
         </div>
@@ -340,7 +310,7 @@ function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, acce
           }}
         />
         <div style={{ position: "absolute", inset: 0, borderRadius: "50%", overflow: "hidden" }}>
-          <Image src={src} alt={name} fill className="object-cover" unoptimized />
+          <Image src={src} alt={name} fill className="object-cover" />
         </div>
         {online}
       </div>
@@ -477,39 +447,61 @@ function handleDeepLink(url: string, recoveryUrl: string) {
 
 // ── Instagram Banner ──────────────────────────────────────────────────────────
 
+const IG_DISMISS_KEY = "cl_ig_dismiss";
+
 function InstagramBrowserBanner() {
   const [platform, setPlatform] = useState<"ios" | "android" | "unknown">("unknown");
+  const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
+    if (localStorage.getItem(IG_DISMISS_KEY) === "1") {
+      setDismissed(true);
+      return;
+    }
     const ua = navigator.userAgent;
     if (/iPhone|iPad|iPod/.test(ua)) setPlatform("ios");
     else if (/Android/.test(ua)) setPlatform("android");
   }, []);
 
+  const dismiss = () => {
+    localStorage.setItem(IG_DISMISS_KEY, "1");
+    setDismissed(true);
+  };
+
   const openInBrowser = () => {
     const url = window.location.href;
+    const bare = url.replace(/^https?:\/\//, "");
     if (platform === "ios") {
-      window.location.href = `x-safari-https://${url.replace("https://", "").replace("http://", "")}`;
+      window.location.href = `x-safari-https://${bare}`;
       setTimeout(() => window.open(url, "_blank"), 500);
     } else if (platform === "android") {
-      const intentUrl = `intent://${url.replace("https://", "").replace("http://", "")}#Intent;scheme=https;package=com.android.chrome;end`;
-      window.location.href = intentUrl;
+      window.location.href = `intent://${bare}#Intent;scheme=https;package=com.android.chrome;end`;
       setTimeout(() => window.open(url, "_blank"), 500);
     } else {
       window.open(url, "_blank");
     }
   };
 
+  if (dismissed) return null;
+
   return (
-    <div className="fixed top-0 left-0 right-0 z-50 bg-yellow-500 text-black px-4 py-3 text-center text-sm">
-      <p className="font-semibold mb-1">For the best experience, open in your browser</p>
+    <div className="fixed top-0 left-0 right-0 z-50 bg-yellow-500 text-black px-4 py-2 flex items-center justify-between text-sm">
       <button
         onClick={openInBrowser}
-        className="bg-black text-white px-4 py-1 rounded-full text-xs font-bold mr-2"
+        className="bg-black text-white px-3 py-1 rounded-full text-xs font-bold"
       >
-        Open in Browser
+        Open in Browser ↗
       </button>
-      <span className="text-xs opacity-75">or tap &#x22EF; then &quot;Open in Browser&quot;</span>
+      <span className="text-xs opacity-75 mx-2 flex-1 text-center">
+        Tap &#x22EF; → &quot;Open in Browser&quot; for best experience
+      </span>
+      <button
+        onClick={dismiss}
+        className="text-black/60 text-base font-bold px-1"
+        aria-label="Dismiss"
+      >
+        ✕
+      </button>
     </div>
   );
 }
@@ -688,7 +680,6 @@ function LinkButton({ link, isPremium, theme, isSensitive, onClick }: LinkProps)
               alt={link.label}
               fill
               className="object-cover object-center transition-transform duration-300 group-hover:scale-105"
-              unoptimized
             />
             {/* Dark overlay */}
             <div className="absolute inset-0 bg-black/40" />
@@ -846,11 +837,12 @@ interface CreatorPageProps {
 export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
   const [premiumLinks, setPremiumLinks] = useState<PremiumLink[]>([]);
   const [premiumVisible, setPremiumVisible] = useState(false);
+  const [interacted, setInteracted] = useState(false);
   const [isInstagram, setIsInstagram] = useState(false);
   const sessionIdRef = useRef<string>("");
   const trackedView = useRef(false);
 
-  const fontFamily = useFontLoader(creator.font);
+  const fontFamily = resolveFontFamily(creator.font);
 
   const fetchPremiumLinks = useCallback(async () => {
     try {
@@ -883,7 +875,8 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
     const igDetected = ua.includes("Instagram");
     setIsInstagram(igDetected);
 
-    const sid = getSessionId();
+    // Rotate session ID on every pageview mount (Item 15)
+    const sid = createSessionId();
     sessionIdRef.current = sid;
 
     if (!trackedView.current) {
@@ -901,6 +894,7 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
       const loadOnInteraction = () => {
         if (loaded) return;
         loaded = true;
+        setInteracted(true); // Item 14: explicit flag
         setTimeout(() => fetchPremiumLinks(), 500);
         for (const evt of interactionEvents) {
           window.removeEventListener(evt, loadOnInteraction);
@@ -954,6 +948,33 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
       sessionId: sessionIdRef.current,
       isInstagram,
     });
+    // In IG webview: attempt OS-level deeplink-out before navigating
+    if (isInstagram) {
+      const targetUrl = link.redirect_url ? `/api/redirect/${link.id}` : link.url;
+      const bare = targetUrl.replace(/^https?:\/\//, "");
+      const host = window.location.hostname;
+      const ua = navigator.userAgent;
+      const isIos = /iPhone|iPad|iPod/.test(ua);
+      const isAndroid = /Android/.test(ua);
+      let deeplink = "";
+      if (isIos) {
+        deeplink = `x-safari-https://${host}${bare.startsWith(host) ? bare.slice(host.length) : "/" + bare}`;
+      } else if (isAndroid) {
+        const path = bare.startsWith(host) ? bare.slice(host.length) : "/" + bare;
+        deeplink = `intent://${host}${path}#Intent;scheme=https;end`;
+      }
+      if (deeplink) {
+        const blurred = { v: false };
+        const onBlur = () => { blurred.v = true; };
+        window.addEventListener("blur", onBlur, { once: true });
+        window.location.href = deeplink;
+        setTimeout(() => {
+          window.removeEventListener("blur", onBlur);
+          if (!blurred.v) navigate(link);
+        }, 500);
+        return;
+      }
+    }
     setTimeout(() => navigate(link), 50);
   };
 
@@ -1039,8 +1060,8 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
             })}
           </div>
 
-          {/* Premium Links — client-side only, delayed, never in server HTML */}
-          {premiumLinks.length > 0 && (
+          {/* Premium Links — not mounted until first interaction (Item 14) */}
+          {interacted && premiumLinks.length > 0 && (
             <div
               className="w-full flex flex-col gap-3 transition-opacity duration-700"
               style={{ opacity: premiumVisible ? 1 : 0 }}
@@ -1075,14 +1096,14 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
             </div>
           )}
 
-          {/* Honeypot */}
+          {/* Honeypot — invisible to real users, followed only by bots */}
           <a
             href="/api/honeypot"
             tabIndex={-1}
             aria-hidden="true"
             style={{ position: "absolute", left: "-9999px", opacity: 0, width: 0, height: 0, overflow: "hidden" }}
           >
-            Premium Content
+            Site map
           </a>
         </div>
       </main>

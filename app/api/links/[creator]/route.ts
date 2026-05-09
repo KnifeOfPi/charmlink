@@ -3,8 +3,11 @@ import { cookies } from "next/headers";
 import { getCreatorBySlug, getCreatorLinks } from "../../../../lib/db";
 import { detectBot } from "../../../../lib/bot-detect";
 import { verifyLinkToken } from "../../../../lib/link-token";
+import { rateLimit } from "../../../../lib/rate-limit";
 
 export const runtime = "nodejs";
+
+const NOINDEX = { "X-Robots-Tag": "noindex" };
 
 // Identical-shape decoy response — same status, same structure, decoy URL
 function decoyResponse() {
@@ -34,7 +37,7 @@ function decoyResponse() {
         },
       ],
     },
-    { status: 200 }
+    { status: 200, headers: NOINDEX }
   );
 }
 
@@ -47,6 +50,12 @@ export async function POST(
   { params }: { params: Promise<{ creator: string }> }
 ) {
   const { creator: slug } = await params;
+
+  // 0. Rate limit: 30 requests/min per IP
+  const ip =
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const { allowed } = await rateLimit(ip, "links", 30, 60);
+  if (!allowed) return decoyResponse();
 
   // 1. Require age cookie
   const cookieStore = await cookies();
@@ -85,14 +94,12 @@ export async function POST(
     return decoyResponse();
   }
   const token = body?.token ?? "";
-  const ip =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "";
   if (!verifyLinkToken(token, slug, ip, ageConfirmed)) {
     return decoyResponse();
   }
 
   // 5. Bot detection (belt-and-suspenders)
-  const { isBot: botDetected } = detectBot(request);
+  const { isBot: botDetected } = await detectBot(request);
   if (botDetected) {
     return decoyResponse();
   }
@@ -130,7 +137,7 @@ export async function POST(
         title_font_size: l.title_font_size,
       }));
 
-    return NextResponse.json({ links: premiumLinks });
+    return NextResponse.json({ links: premiumLinks }, { headers: NOINDEX });
   } catch (err) {
     console.error("[links:post] DB error", err);
     return decoyResponse();

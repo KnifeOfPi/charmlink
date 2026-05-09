@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { isbot } from "isbot";
 import { isDatacenterAsn } from "./datacenter-asns";
+import { isIpBanned } from "./kv-ban";
 
 // Meta-2026 patterns not yet in isbot's list
 const META_2026_PATTERNS = [
@@ -21,10 +22,17 @@ function isPageRoute(pathname: string): boolean {
   );
 }
 
-export function detectBot(
+export async function detectBot(
   request: NextRequest
-): { isBot: boolean; reason: string; confidence: "low" | "high" } {
+): Promise<{ isBot: boolean; reason: string; confidence: "low" | "high" }> {
   const ua = request.headers.get("user-agent") ?? "";
+
+  // 0. KV honeypot ban list (highest priority)
+  const ip =
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "";
+  if (ip && (await isIpBanned(ip))) {
+    return { isBot: true, reason: "honeypot", confidence: "high" };
+  }
 
   // 1. isbot baseline (1700+ patterns)
   if (isbot(ua)) {

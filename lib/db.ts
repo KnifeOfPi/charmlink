@@ -633,3 +633,16 @@ export async function getRecentEvents(limit = 20): Promise<Array<{
     [limit]
   );
 }
+
+// ── Honeypot Logging ──────────────────────────────────────────────────────────
+
+export async function logHoneypotHit(
+  ip: string,
+  userAgent: string,
+  referer: string
+): Promise<void> {
+  await query(
+    `INSERT INTO honeypot_logs (ip, user_agent, referer) VALUES ($1, $2, $3)`,
+    [ip.slice(0, 100), userAgent.slice(0, 512), referer.slice(0, 512)]
+  );
+}
