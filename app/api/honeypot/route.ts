@@ -34,7 +34,9 @@ export async function GET(request: NextRequest) {
     );
     // Fire-and-forget: ban IP + log to DB (errors are non-fatal)
     void banIp(ip);
-    void logHoneypotHit(ip, ua, referer).catch(() => {});
+    void logHoneypotHit(ip, ua, referer).catch((e) => {
+      console.error("[honeypot] DB write failed:", e instanceof Error ? e.message : e);
+    });
   }
 
   return new NextResponse(LOADING_HTML, {
