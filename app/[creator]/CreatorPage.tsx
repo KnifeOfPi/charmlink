@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import Image from "next/image";
 import { Creator, PremiumLink, SocialLink } from "../../lib/types";
+import { resolveFontFamily } from "../../lib/fonts";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -52,35 +53,6 @@ function buildBackground(creator: Creator): React.CSSProperties {
     return { background: `linear-gradient(${dir}, ${stops})` };
   }
   return { backgroundColor: c1 };
-}
-
-// ── Font Loader ───────────────────────────────────────────────────────────────
-
-const FONT_MAP: Record<string, { family: string; googleName: string }> = {
-  inter: { family: "Inter, sans-serif", googleName: "Inter" },
-  poppins: { family: "Poppins, sans-serif", googleName: "Poppins" },
-  playfair: { family: "'Playfair Display', serif", googleName: "Playfair+Display" },
-  roboto: { family: "Roboto, sans-serif", googleName: "Roboto" },
-  montserrat: { family: "Montserrat, sans-serif", googleName: "Montserrat" },
-  "dancing-script": { family: "'Dancing Script', cursive", googleName: "Dancing+Script" },
-};
-
-function useFontLoader(font: string | undefined) {
-  useEffect(() => {
-    if (!font || font === "inter") return;
-    const f = FONT_MAP[font];
-    if (!f) return;
-    const id = `charmlink-font-${font}`;
-    if (document.getElementById(id)) return;
-    const link = document.createElement("link");
-    link.id = id;
-    link.rel = "stylesheet";
-    link.href = `https://fonts.googleapis.com/css2?family=${f.googleName}:wght@400;600;700&display=swap`;
-    document.head.appendChild(link);
-  }, [font]);
-
-  const fontEntry = font ? FONT_MAP[font] : undefined;
-  return fontEntry?.family ?? "Inter, sans-serif";
 }
 
 // ── Floating Icons ────────────────────────────────────────────────────────────
@@ -872,7 +844,7 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
   const sessionIdRef = useRef<string>("");
   const trackedView = useRef(false);
 
-  const fontFamily = useFontLoader(creator.font);
+  const fontFamily = resolveFontFamily(creator.font);
 
   const fetchPremiumLinks = useCallback(async () => {
     try {
