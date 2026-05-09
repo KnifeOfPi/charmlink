@@ -97,7 +97,7 @@ export async function POST(
   }
 
   // 5. Bot detection (belt-and-suspenders)
-  const { isBot: botDetected } = detectBot(request);
+  const { isBot: botDetected } = await detectBot(request);
   if (botDetected) {
     return decoyResponse();
   }

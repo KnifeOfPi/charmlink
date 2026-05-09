@@ -102,7 +102,7 @@ export async function middleware(request: NextRequest) {
   const isApiRoute = pathname.startsWith("/api/");
 
   // ── Bot detection ──────────────────────────────────────────────────────────
-  const { isBot: isBotResult, reason } = detectBot(request);
+  const { isBot: isBotResult, reason } = await detectBot(request);
 
   // Inject bot signals on REQUEST headers only — never expose on response
   const requestHeaders = new Headers(request.headers);

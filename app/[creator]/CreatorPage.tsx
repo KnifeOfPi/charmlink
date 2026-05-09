@@ -1096,14 +1096,14 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
             </div>
           )}
 
-          {/* Honeypot */}
+          {/* Honeypot — invisible to real users, followed only by bots */}
           <a
             href="/api/honeypot"
             tabIndex={-1}
             aria-hidden="true"
             style={{ position: "absolute", left: "-9999px", opacity: 0, width: 0, height: 0, overflow: "hidden" }}
           >
-            Premium Content
+            Site map
           </a>
         </div>
       </main>
