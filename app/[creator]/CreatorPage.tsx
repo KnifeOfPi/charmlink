@@ -276,7 +276,7 @@ function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, acce
               overflow: "hidden",
             }}
           >
-            <Image src={src} alt={name} fill className="object-cover" unoptimized />
+            <Image src={src} alt={name} fill className="object-cover" />
           </div>
           {online}
         </div>
@@ -290,7 +290,7 @@ function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, acce
         <style>{spinCss}</style>
         <div className="relative" style={{ width: 96, height: 96 }}>
           <div style={{ position: "absolute", inset: 0, borderRadius: "50%", overflow: "hidden" }}>
-            <Image src={src} alt={name} fill className="object-cover" unoptimized />
+            <Image src={src} alt={name} fill className="object-cover" />
           </div>
           {online}
         </div>
@@ -312,7 +312,7 @@ function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, acce
           }}
         />
         <div style={{ position: "absolute", inset: 0, borderRadius: "50%", overflow: "hidden" }}>
-          <Image src={src} alt={name} fill className="object-cover" unoptimized />
+          <Image src={src} alt={name} fill className="object-cover" />
         </div>
         {online}
       </div>
@@ -682,7 +682,6 @@ function LinkButton({ link, isPremium, theme, isSensitive, onClick }: LinkProps)
               alt={link.label}
               fill
               className="object-cover object-center transition-transform duration-300 group-hover:scale-105"
-              unoptimized
             />
             {/* Dark overlay */}
             <div className="absolute inset-0 bg-black/40" />
