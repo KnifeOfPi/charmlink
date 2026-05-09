@@ -7,6 +7,8 @@ import { rateLimit } from "../../../../lib/rate-limit";
 
 export const runtime = "nodejs";
 
+const NOINDEX = { "X-Robots-Tag": "noindex" };
+
 // Identical-shape decoy response — same status, same structure, decoy URL
 function decoyResponse() {
   return NextResponse.json(
@@ -35,7 +37,7 @@ function decoyResponse() {
         },
       ],
     },
-    { status: 200 }
+    { status: 200, headers: NOINDEX }
   );
 }
 
@@ -135,7 +137,7 @@ export async function POST(
         title_font_size: l.title_font_size,
       }));
 
-    return NextResponse.json({ links: premiumLinks });
+    return NextResponse.json({ links: premiumLinks }, { headers: NOINDEX });
   } catch (err) {
     console.error("[links:post] DB error", err);
     return decoyResponse();

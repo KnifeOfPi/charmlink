@@ -7,13 +7,11 @@ import { resolveFontFamily } from "../../lib/fonts";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function getSessionId(): string {
+/** Generate a fresh session ID on every pageview mount. */
+function createSessionId(): string {
   if (typeof window === "undefined") return "ssr";
-  let sid = sessionStorage.getItem("charmlink_sid");
-  if (!sid) {
-    sid = crypto.randomUUID();
-    sessionStorage.setItem("charmlink_sid", sid);
-  }
+  const sid = crypto.randomUUID();
+  sessionStorage.setItem("charmlink_sid", sid);
   return sid;
 }
 
@@ -839,6 +837,7 @@ interface CreatorPageProps {
 export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
   const [premiumLinks, setPremiumLinks] = useState<PremiumLink[]>([]);
   const [premiumVisible, setPremiumVisible] = useState(false);
+  const [interacted, setInteracted] = useState(false);
   const [isInstagram, setIsInstagram] = useState(false);
   const sessionIdRef = useRef<string>("");
   const trackedView = useRef(false);
@@ -876,7 +875,8 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
     const igDetected = ua.includes("Instagram");
     setIsInstagram(igDetected);
 
-    const sid = getSessionId();
+    // Rotate session ID on every pageview mount (Item 15)
+    const sid = createSessionId();
     sessionIdRef.current = sid;
 
     if (!trackedView.current) {
@@ -894,6 +894,7 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
       const loadOnInteraction = () => {
         if (loaded) return;
         loaded = true;
+        setInteracted(true); // Item 14: explicit flag
         setTimeout(() => fetchPremiumLinks(), 500);
         for (const evt of interactionEvents) {
           window.removeEventListener(evt, loadOnInteraction);
@@ -1059,8 +1060,8 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
             })}
           </div>
 
-          {/* Premium Links — client-side only, delayed, never in server HTML */}
-          {premiumLinks.length > 0 && (
+          {/* Premium Links — not mounted until first interaction (Item 14) */}
+          {interacted && premiumLinks.length > 0 && (
             <div
               className="w-full flex flex-col gap-3 transition-opacity duration-700"
               style={{ opacity: premiumVisible ? 1 : 0 }}
