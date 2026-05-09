@@ -4,35 +4,6 @@ import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import Image from "next/image";
 import { Creator, PremiumLink, SocialLink } from "../../lib/types";
 
-// ── Age Gate ─────────────────────────────────────────────────────────────────
-
-function AgeGate({ onConfirm }: { onConfirm: () => void }) {
-  return (
-    <div className="fixed inset-0 z-[100] bg-black flex items-center justify-center px-6">
-      <div className="max-w-sm w-full text-center">
-        <div className="text-5xl mb-6">🔞</div>
-        <h2 className="text-2xl font-bold text-white mb-3">Age Verification</h2>
-        <p className="text-gray-400 text-sm mb-8 leading-relaxed">
-          This page contains links to adult content. By continuing, you confirm that you are at least{" "}
-          <strong className="text-white">18 years old</strong> (or the age of majority in your jurisdiction).
-        </p>
-        <button
-          onClick={onConfirm}
-          className="w-full py-3 px-6 rounded-full bg-white text-black font-bold text-sm transition-transform hover:scale-105 active:scale-95 mb-3"
-        >
-          I am 18 or older — Enter
-        </button>
-        <a
-          href="https://google.com"
-          className="block text-gray-500 text-xs hover:text-gray-400 transition-colors"
-        >
-          I am under 18 — Leave
-        </a>
-      </div>
-    </div>
-  );
-}
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function getSessionId(): string {
@@ -873,7 +844,6 @@ interface CreatorPageProps {
 }
 
 export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
-  const [ageVerified, setAgeVerified] = useState(false);
   const [premiumLinks, setPremiumLinks] = useState<PremiumLink[]>([]);
   const [premiumVisible, setPremiumVisible] = useState(false);
   const [isInstagram, setIsInstagram] = useState(false);
@@ -884,7 +854,20 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
 
   const fetchPremiumLinks = useCallback(async () => {
     try {
-      const res = await fetch(`/api/links/${slug}`);
+      const scriptEl =
+        typeof document !== "undefined"
+          ? document.getElementById("cl-token")
+          : null;
+      const tokenData = scriptEl
+        ? (JSON.parse(scriptEl.textContent || "{}") as { token?: string })
+        : {};
+      const token = tokenData.token ?? "";
+
+      const res = await fetch(`/api/links/${slug}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
       if (res.ok) {
         const data = await res.json();
         setPremiumLinks(data.links || []);
@@ -894,17 +877,6 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
       // Silently fail
     }
   }, [slug]);
-
-  useEffect(() => {
-    if (sessionStorage.getItem("charmlink_age_verified") === "true") {
-      setAgeVerified(true);
-    }
-  }, []);
-
-  const handleAgeConfirm = () => {
-    sessionStorage.setItem("charmlink_age_verified", "true");
-    setAgeVerified(true);
-  };
 
   useEffect(() => {
     const ua = navigator.userAgent;
@@ -988,9 +960,6 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
   const { theme } = creator;
   const bgStyle = buildBackground(creator);
 
-  if (!ageVerified) {
-    return <AgeGate onConfirm={handleAgeConfirm} />;
-  }
 
   return (
     <>

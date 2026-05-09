@@ -1,0 +1,17 @@
+import { NextResponse } from "next/server";
+
+export const runtime = "nodejs";
+
+export async function POST() {
+  const isProd = process.env.NODE_ENV === "production";
+
+  const response = NextResponse.json({ ok: true });
+  response.cookies.set("cl_age", "1", {
+    httpOnly: true,
+    sameSite: "lax",
+    maxAge: 60 * 60 * 24 * 30, // 30 days
+    path: "/",
+    secure: isProd,
+  });
+  return response;
+}

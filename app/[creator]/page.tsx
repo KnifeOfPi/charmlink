@@ -1,9 +1,12 @@
 import { notFound } from "next/navigation";
-import { headers } from "next/headers";
+import { headers, cookies } from "next/headers";
 import { Metadata } from "next";
 import { getCreatorBySlug, getCreatorLinks } from "../../lib/db";
 import { Creator } from "../../lib/types";
 import { CreatorPage } from "./CreatorPage";
+import AgeGateScreen from "./AgeGateScreen";
+import { isLinkPreviewScraper } from "../../lib/scraper-detect";
+import { generateLinkToken } from "../../lib/link-token";
 
 export const dynamic = "force-dynamic";
 
@@ -11,8 +14,34 @@ interface PageProps {
   params: Promise<{ creator: string }>;
 }
 
+const GENERIC_METADATA: Metadata = {
+  title: "Creator Profile",
+  description: "Personal landing page",
+  openGraph: {
+    type: "website",
+    title: "Creator Profile",
+    description: "Personal landing page",
+  },
+  twitter: {
+    card: "summary",
+    title: "Creator Profile",
+    description: "Personal landing page",
+  },
+  robots: { index: false, follow: false },
+};
+
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { creator: slug } = await params;
+
+  const headersList = await headers();
+  const ua = headersList.get("user-agent") ?? "";
+  const cookieStore = await cookies();
+  const hasAgeCookie = cookieStore.get("cl_age")?.value === "1";
+
+  // Generic metadata for scrapers and unconfirmed visitors
+  if (isLinkPreviewScraper(ua) || !hasAgeCookie) {
+    return GENERIC_METADATA;
+  }
 
   try {
     const creator = await getCreatorBySlug(slug);
@@ -41,6 +70,15 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 export default async function CreatorPageServer({ params }: PageProps) {
   const { creator: slug } = await params;
 
+  // ── Age gate: if cookie absent, show generic screen with no creator data ──
+  const cookieStore = await cookies();
+  const hasAgeCookie = cookieStore.get("cl_age")?.value === "1";
+
+  if (!hasAgeCookie) {
+    return <AgeGateScreen />;
+  }
+
+  // ── Authenticated path: fetch creator data ────────────────────────────────
   let creator: Creator;
 
   try {
@@ -120,6 +158,20 @@ export default async function CreatorPageServer({ params }: PageProps) {
 
   const headersList = await headers();
   const isBot = headersList.get("x-is-bot") === "true";
+  const ip =
+    headersList.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "";
 
-  return <CreatorPage creator={creator} slug={slug} isBot={isBot} />;
+  // Generate HMAC token bound to slug + IP + 5-min bucket + age confirmation
+  const linkToken = generateLinkToken(slug, ip, true);
+
+  return (
+    <>
+      <script
+        id="cl-token"
+        type="application/json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify({ token: linkToken, slug }) }}
+      />
+      <CreatorPage creator={creator} slug={slug} isBot={isBot} />
+    </>
+  );
 }
