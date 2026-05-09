@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { isBot } from "./lib/bot-detect";
+import { detectBot } from "./lib/bot-detect";
 
 // ── Custom domain cache (edge-compatible, in-process) ────────────────────────
 interface DomainCacheEntry {
@@ -58,17 +58,16 @@ function isAppHost(hostname: string): boolean {
 }
 
 export async function middleware(request: NextRequest) {
-  const userAgent = request.headers.get("user-agent");
   const host = request.headers.get("host") ?? "";
   const hostname = host.split(":")[0]; // strip port
 
   // ── Bot detection ──────────────────────────────────────────────────────────
-  const response = NextResponse.next();
-  if (isBot(userAgent)) {
-    response.headers.set("x-is-bot", "true");
-  } else {
-    response.headers.set("x-is-bot", "false");
-  }
+  const { isBot: isBotResult, reason } = detectBot(request);
+
+  // Inject bot signals on REQUEST headers only — never expose on response
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-is-bot", isBotResult ? "true" : "false");
+  requestHeaders.set("x-bot-reason", reason);
 
   // ── Custom domain routing ──────────────────────────────────────────────────
   if (!isAppHost(hostname)) {
@@ -80,19 +79,14 @@ export async function middleware(request: NextRequest) {
       if (slug) {
         const url = request.nextUrl.clone();
         url.pathname = `/${slug}`;
-        const rewriteRes = NextResponse.rewrite(url);
-        if (isBot(userAgent)) {
-          rewriteRes.headers.set("x-is-bot", "true");
-        } else {
-          rewriteRes.headers.set("x-is-bot", "false");
-        }
-        rewriteRes.headers.set("x-custom-domain", hostname);
-        return rewriteRes;
+        // Pass custom domain via request headers only
+        requestHeaders.set("x-custom-domain", hostname);
+        return NextResponse.rewrite(url, { request: { headers: requestHeaders } });
       }
     }
   }
 
-  return response;
+  return NextResponse.next({ request: { headers: requestHeaders } });
 }
 
 export const config = {
