@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { getCreatorBySlug, getCreatorLinks } from "../../../../lib/db";
 import { detectBot } from "../../../../lib/bot-detect";
 import { verifyLinkToken } from "../../../../lib/link-token";
+import { rateLimit } from "../../../../lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -48,6 +49,12 @@ export async function POST(
 ) {
   const { creator: slug } = await params;
 
+  // 0. Rate limit: 30 requests/min per IP
+  const ip =
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const { allowed } = await rateLimit(ip, "links", 30, 60);
+  if (!allowed) return decoyResponse();
+
   // 1. Require age cookie
   const cookieStore = await cookies();
   const ageConfirmed = cookieStore.get("cl_age")?.value === "1";
@@ -85,8 +92,6 @@ export async function POST(
     return decoyResponse();
   }
   const token = body?.token ?? "";
-  const ip =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "";
   if (!verifyLinkToken(token, slug, ip, ageConfirmed)) {
     return decoyResponse();
   }

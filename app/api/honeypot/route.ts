@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { rateLimit } from "../../../lib/rate-limit";
 
 // Honeypot endpoint — only bots follow invisible links.
 // Real users never see or click this link.
