@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import Image from "next/image";
+import { Turnstile } from "@marsidev/react-turnstile";
 import { Creator, PremiumLink, SocialLink } from "../../lib/types";
 import { resolveFontFamily } from "../../lib/fonts";
 
@@ -839,36 +840,58 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
   const [premiumVisible, setPremiumVisible] = useState(false);
   const [interacted, setInteracted] = useState(false);
   const [isInstagram, setIsInstagram] = useState(false);
+  const [turnstileChallenge, setTurnstileChallenge] = useState<{
+    siteKey: string;
+  } | null>(null);
   const sessionIdRef = useRef<string>("");
   const trackedView = useRef(false);
 
   const fontFamily = resolveFontFamily(creator.font);
 
-  const fetchPremiumLinks = useCallback(async () => {
-    try {
-      const scriptEl =
-        typeof document !== "undefined"
-          ? document.getElementById("cl-token")
-          : null;
-      const tokenData = scriptEl
-        ? (JSON.parse(scriptEl.textContent || "{}") as { token?: string })
-        : {};
-      const token = tokenData.token ?? "";
+  const fetchPremiumLinks = useCallback(
+    async (turnstileToken?: string) => {
+      try {
+        const scriptEl =
+          typeof document !== "undefined"
+            ? document.getElementById("cl-token")
+            : null;
+        const tokenData = scriptEl
+          ? (JSON.parse(scriptEl.textContent || "{}") as { token?: string })
+          : {};
+        const token = tokenData.token ?? "";
 
-      const res = await fetch(`/api/links/${slug}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setPremiumLinks(data.links || []);
-        setTimeout(() => setPremiumVisible(true), 100);
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+        if (turnstileToken) {
+          headers["x-turnstile-token"] = turnstileToken;
+        }
+
+        const res = await fetch(`/api/links/${slug}`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ token }),
+        });
+        if (res.ok) {
+          const data = (await res.json()) as {
+            links?: PremiumLink[];
+            turnstile_required?: boolean;
+            site_key?: string | null;
+          };
+          if (data.turnstile_required && data.site_key) {
+            setTurnstileChallenge({ siteKey: data.site_key });
+            return;
+          }
+          setTurnstileChallenge(null);
+          setPremiumLinks(data.links || []);
+          setTimeout(() => setPremiumVisible(true), 100);
+        }
+      } catch {
+        // Silently fail
       }
-    } catch {
-      // Silently fail
-    }
-  }, [slug]);
+    },
+    [slug]
+  );
 
   useEffect(() => {
     const ua = navigator.userAgent;
@@ -1059,6 +1082,26 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
               );
             })}
           </div>
+
+          {/* Turnstile challenge — server escalates suspicious sessions to a CF managed challenge. */}
+          {interacted && turnstileChallenge && (
+            <div className="w-full flex flex-col items-center gap-2 my-2">
+              <p className="text-xs opacity-70">Quick check before continuing…</p>
+              <Turnstile
+                siteKey={turnstileChallenge.siteKey}
+                options={{ theme: "auto", size: "normal" }}
+                onSuccess={(token) => {
+                  void fetchPremiumLinks(token);
+                }}
+                onError={() => {
+                  // Leave the widget mounted so the user can retry.
+                }}
+                onExpire={() => {
+                  // No-op: widget will auto-refresh and emit onSuccess again.
+                }}
+              />
+            </div>
+          )}
 
           {/* Premium Links — not mounted until first interaction (Item 14) */}
           {interacted && premiumLinks.length > 0 && (

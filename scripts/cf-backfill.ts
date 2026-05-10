@@ -110,9 +110,27 @@ async function main() {
   }
 
   // 4. Provision each domain
+  const { addHostnameToWidget } = await import("../lib/turnstile-admin");
+  const tsSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+  const tsAccountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const tsSyncEnabled = !!tsSiteKey && !!tsAccountId;
+  if (!tsSyncEnabled) {
+    console.log(
+      `ℹ️  Turnstile widget sync DISABLED (missing ${
+        !tsSiteKey ? "NEXT_PUBLIC_TURNSTILE_SITE_KEY" : ""
+      }${!tsSiteKey && !tsAccountId ? " + " : ""}${
+        !tsAccountId ? "CLOUDFLARE_ACCOUNT_ID" : ""
+      })\n`
+    );
+  } else {
+    console.log(`ℹ️  Turnstile widget sync ENABLED (sitekey ${tsSiteKey!.slice(0, 12)}…)\n`);
+  }
+
   let okCount = 0;
   let zoneNotFoundCount = 0;
   let errorCount = 0;
+  let tsAddedCount = 0;
+  let tsErrorCount = 0;
 
   for (const row of rows) {
     const domain = row.custom_domain;
@@ -147,6 +165,20 @@ async function main() {
         console.log(`⚠️  partial: ${failed}`);
         errorCount++;
       }
+
+      // Defense-in-depth: sync widget allow-list. Idempotent — addHostnameToWidget
+      // fetches the widget first and only PUTs when the hostname is missing.
+      if (tsSyncEnabled) {
+        try {
+          await addHostnameToWidget(tsSiteKey!, domain);
+          process.stdout.write(`     ↳ turnstile widget: ✓ ${domain}\n`);
+          tsAddedCount++;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          process.stdout.write(`     ↳ turnstile widget: ❌ ${msg}\n`);
+          tsErrorCount++;
+        }
+      }
     } catch (err) {
       console.log(`❌  ${err instanceof Error ? err.message : err}`);
       errorCount++;
@@ -158,9 +190,13 @@ async function main() {
   if (dryRun) {
     console.log(`   Would have processed: ${rows.length} domain(s)`);
   } else {
-    console.log(`   ✅ ok:            ${okCount}`);
-    console.log(`   ⚠️  zoneNotFound:  ${zoneNotFoundCount}`);
-    console.log(`   ❌ errors:         ${errorCount}`);
+    console.log(`   ✅ ok:                ${okCount}`);
+    console.log(`   ⚠️  zoneNotFound:      ${zoneNotFoundCount}`);
+    console.log(`   ❌ errors:             ${errorCount}`);
+    if (tsSyncEnabled) {
+      console.log(`   🔐 turnstile synced:   ${tsAddedCount}`);
+      console.log(`   🔐 turnstile errors:   ${tsErrorCount}`);
+    }
   }
 
   if (zoneNotFoundCount > 0) {
