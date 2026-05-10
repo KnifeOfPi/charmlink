@@ -564,39 +564,53 @@ export async function provisionZone(domain: string): Promise<{
     });
   }
 
-  // Step 4: bot fight mode (non-fatal)
-  try {
-    const bfm = await enableBotFightMode(zone.id);
-    steps.push({
-      name: "enableBotFightMode",
-      ok: bfm.enabled,
-      detail: bfm.alreadyEnabled ? "already enabled" : bfm.error,
-    });
-  } catch (err) {
-    steps.push({
-      name: "enableBotFightMode",
-      ok: false,
-      detail: err instanceof Error ? err.message : String(err),
-    });
-  }
+  // Step 4: bot fight mode (non-fatal, OPT-IN)
+  // ⚠️ CF Free tier Bot Fight Mode is too aggressive — it blocks real Chrome
+  // browsers (and headless Chromium) with HTTP 403 "Your request was blocked."
+  // Verified breakage on hollysworld.club + hannazuki.com 2026-05-09. The
+  // targeted firewall rules (Step 6) catch the same threats with no false
+  // positives. Only enable BFM on Pro+ plans where the JS challenge actually
+  // serves correctly. Set CHARMLINK_ENABLE_BFM=1 to opt back in.
+  if (process.env.CHARMLINK_ENABLE_BFM === "1") {
+    try {
+      const bfm = await enableBotFightMode(zone.id);
+      steps.push({
+        name: "enableBotFightMode",
+        ok: bfm.enabled,
+        detail: bfm.alreadyEnabled ? "already enabled" : bfm.error,
+      });
+    } catch (err) {
+      steps.push({
+        name: "enableBotFightMode",
+        ok: false,
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    }
 
-  // Step 5: advanced bot protection (non-fatal)
-  try {
-    const adv = await enableAdvancedBotProtection(zone.id);
+    // Step 5: advanced bot protection (non-fatal, gated with BFM)
+    try {
+      const adv = await enableAdvancedBotProtection(zone.id);
+      steps.push({
+        name: "enableAdvancedBotProtection",
+        ok: adv.enabled,
+        detail: adv.alreadyEnabled
+          ? "already enabled"
+          : adv.applied
+          ? `applied: ${adv.applied.join(", ")}`
+          : adv.error,
+      });
+    } catch (err) {
+      steps.push({
+        name: "enableAdvancedBotProtection",
+        ok: false,
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    }
+  } else {
     steps.push({
-      name: "enableAdvancedBotProtection",
-      ok: adv.enabled,
-      detail: adv.alreadyEnabled
-        ? "already enabled"
-        : adv.applied
-        ? `applied: ${adv.applied.join(", ")}`
-        : adv.error,
-    });
-  } catch (err) {
-    steps.push({
-      name: "enableAdvancedBotProtection",
-      ok: false,
-      detail: err instanceof Error ? err.message : String(err),
+      name: "enableBotFightMode",
+      ok: true,
+      detail: "skipped (set CHARMLINK_ENABLE_BFM=1 to enable; Free tier blocks real browsers)",
     });
   }
 
