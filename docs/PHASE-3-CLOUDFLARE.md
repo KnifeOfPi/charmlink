@@ -8,9 +8,9 @@ data-harvesting bots that were previously able to bypass per-creator link protec
 | Area | Change | Reason |
 |---|---|---|
 | CF DNS | CNAME → `cname.vercel-dns.com`, **proxied=true** (orange cloud) | Routes traffic through CF WAF/CDN before it hits Vercel origin |
-| CF WAF | 6 custom rules (empty UA, bot flag, threat score, datacenter ASNs, bad UAs) | Blocks/challenges low-quality traffic at the edge |
-| CF Response Transform | Strips `server`, `x-vercel-*`, `x-nextjs-*` headers | Hides infrastructure fingerprints; previous proxy.ts approach didn't work (Vercel re-adds headers post-middleware) |
-| CF Bot Fight Mode | Enabled on every provisioned zone | CF's built-in bot heuristic challenge (Free plan) |
+| CF WAF | 6 custom rules (empty UA, Meta ASN, bad-UA list, datacenter ASNs, CF bot flag, Tor) via legacy `/firewall/rules` API | Blocks/challenges low-quality traffic at the edge — Free-plan compatible |
+| CF Bot Fight Mode | `fight_mode: true` + `enable_js: true` on every provisioned zone | CF's built-in bot heuristic challenge (Free plan); requires JS challenge support enabled |
+| CF Advanced Bot Protection | `ai_bots_protection: "block"` + `content_bots_protection: "block"` | Blocks GPTBot/ClaudeBot/Bytespider and content scrapers (Free plan) |
 | Turnstile escalation | `/api/links/[creator]` returns `turnstile_required` when bot confidence is low | Gives benefit-of-doubt to suspicious-but-unconfirmed visitors rather than blocking them |
 | Origin lock | `proxy.ts` returns 403 for creator slug paths on `*.vercel.app` | Forces real traffic through CF-proxied custom domain |
 
@@ -28,6 +28,20 @@ Set these in **Vercel → Settings → Environment Variables** (production + pre
 
 *Optional means the code degrades gracefully — domains still get added to Vercel, Turnstile just
 isn't shown. Set both Turnstile keys together or neither.
+
+### Cloudflare API Token Permissions
+
+Create a token at <https://dash.cloudflare.com/profile/api-tokens> with these zone-level permissions for every CharmLink zone:
+
+| Permission | Why |
+|---|---|
+| Zone:DNS:Edit | Manage proxied CNAME records |
+| Zone:Settings:Edit | Apply SSL/HTTPS/TLS standard settings |
+| Zone:Firewall Services:Edit | Create legacy `/firewall/rules` + `/filters` (WAF custom rules) |
+| Zone:Bot Management:Edit | Toggle Bot Fight Mode + AI/content bot protections |
+| Zone:Zone:Read | Look up zones by domain name |
+
+The newer **Zone:Rulesets:Edit** scope is _not_ needed and not granted on Free plan: see Free-Tier Limitations below.
 
 ---
 
@@ -67,6 +81,17 @@ The endpoint:
 
 Response includes per-step status in `cloudflare.steps` so you can see what succeeded or failed.
 
+What actually gets applied per zone (in order):
+
+1. `findZone` — zone lookup by domain.
+2. `ensureProxiedDnsRecord` — orange-cloud CNAME → `cname.vercel-dns.com` (replaces conflicting A/AAAA/CNAME records).
+3. `applyStandardSettings` — SSL=strict, always_use_https, min_tls=1.2, opportunistic_encryption, browser_check, security_level=medium, automatic_https_rewrites.
+4. `enableBotFightMode` — `{ fight_mode: true, enable_js: true }` (both required together by CF).
+5. `enableAdvancedBotProtection` — `{ ai_bots_protection: "block", content_bots_protection: "block" }` (Crawler protection is intentionally **NOT** enabled — would block Google indexing.)
+6. `applyWafRules` — 6 charmlink-tagged rules via legacy `/firewall/rules` + `/filters`.
+
+Transform Rules (response header rewriting) are intentionally not applied; see the Free-Tier Limitations section.
+
 ---
 
 ## Adding a Domain Whose Zone Isn't in Cloudflare Yet
@@ -100,7 +125,7 @@ npm run cf-backfill
 ```
 
 Output:
-- `✅ ok` — all 6 steps succeeded for this domain
+- `✅ ok` — all critical steps succeeded for this domain
 - `⚠️ zoneNotFound` — zone not in CF account (see above for fix)
 - `❌ error` — CF API error (check CF token permissions, check CF zone status)
 
@@ -132,28 +157,40 @@ After adding a domain, Vercel needs a few minutes to provision the TLS cert. Dur
   flattening
 - Wait 5–15 minutes and retry
 
-### Orange-Cloud + Vercel Headers
+### Orange-Cloud + Vercel Headers (Free-Tier Limitation)
 
-Even with CF orange-cloud, Vercel injects infrastructure headers (`x-vercel-cache`, `server`,
-etc.) at the origin layer. The CF Response Transform rule (`charmlink: strip vercel headers`)
-removes these before the response reaches the visitor. To verify:
+Vercel injects infrastructure headers (`server`, `x-vercel-cache`, `x-vercel-id`,
+`x-vercel-execution-region`, `x-nextjs-cache`, `x-nextjs-prerender`, `x-matched-path`) at the
+origin layer. Stripping them requires CF **Transform Rules**, which are written via the
+Rulesets engine (`PUT /zones/{id}/rulesets/phases/.../entrypoint`). Free-plan API tokens cannot
+write to that endpoint — CF returns `request is not authorized` regardless of declared scopes.
+
+This means the listed Vercel/Next.js headers will leak through to the client. This is a
+**known and accepted Free-tier limitation**. Mitigations if you need the headers gone:
+
+- Upgrade affected zones to CF Pro (~$20/mo) and re-introduce `applyTransformRules()`.
+- Add a CF Worker route on the zone that strips the headers (paid Worker plan typically required).
+- Note: stripping headers via `next.config.headers` or `proxy.ts` does **not** work — Vercel
+  re-adds them after middleware runs.
+
+To confirm what's leaking on a given creator domain:
 
 ```bash
-curl -sI https://yourcreator.com | grep -E "server|x-vercel|x-nextjs"
-# Should return nothing if CF transform rule is active
+curl -sI https://yourcreator.com | grep -iE "server|x-vercel|x-nextjs|x-matched-path"
 ```
 
 ---
 
 ## Free-Tier Limitations
 
-This implementation targets CF Free plan zones. The following Enterprise features are **NOT** used:
+This implementation targets CF Free plan zones. The following features are **NOT** available on
+Free and have substitutes (or are accepted limitations):
 
-| Feature | Free Limitation | Substitute |
+| Feature | Free Limitation | Substitute / Status |
 |---|---|---|
-| `cf.bot_management.ja3_hash` | Enterprise only | CF built-in bot heuristics (`cf.client.bot`) + Bot Fight Mode |
-| `ip.src.country == "T1"` (Tor flag) | Enterprise only | `cf.threat_score gt 30` (scores Tor exit nodes high) |
-| Advanced Bot Score | Enterprise only | UA pattern matching + datacenter ASN list + Bot Fight Mode |
+| Rulesets engine writes (Custom Rules + Transform Rules) | Free-plan API tokens get `request is not authorized` regardless of scope | WAF rules use the legacy `/firewall/rules` + `/filters` API. Transform Rules are skipped — Vercel headers leak (accepted limitation). |
+| `cf.bot_management.ja3_hash` | Enterprise only | CF built-in bot heuristics (`cf.client.bot`) + Bot Fight Mode + Advanced Bot Protection (AI + content bot blocking) |
+| Advanced Bot Score | Enterprise only | UA pattern matching + datacenter ASN list + Bot Fight Mode + AI/content bot protection |
 | Rate Limiting (advanced) | Paid | Server-side KV rate limiter in `lib/rate-limit.ts` |
 
 ---
@@ -195,17 +232,39 @@ a known limitation of the current plan tier.
 
 ## How WAF Rules Are Applied (Idempotency)
 
-All WAF and transform rules are prefixed with `charmlink:` in their `description` field.
+All WAF rules are prefixed with `charmlink:` in their `description` field. The rules live in CF
+Dashboard → the zone → **Security → WAF → Tools → Firewall rules** (legacy view).
 
 On each `provisionZone()` call or admin POST:
-1. GET existing ruleset for the phase
-2. Remove all rules with description starting `charmlink:`
-3. Insert the current set of charmlink rules
-4. PUT the merged ruleset back
 
-This means re-running is always safe — rules are replaced, not duplicated.
+1. `GET /zones/{id}/firewall/rules?per_page=100`
+2. Build a description→rule index from the response.
+3. For each desired rule:
+   - If a rule with the matching description already exists, **skip** (no-op).
+   - Otherwise: `POST /filters` (with the expression), then `POST /firewall/rules` (referencing
+     the new filter id and the desired action).
 
-To see current rules in CF Dashboard: Zone → Security → WAF → Custom Rules.
+This means re-running is always safe — duplicates are never created. The current rule set:
+
+| description | expression | action |
+|---|---|---|
+| `charmlink:block-empty-ua` | `(http.user_agent eq "")` | `block` |
+| `charmlink:block-meta-asn` | `(ip.geoip.asnum eq 32934)` | `managed_challenge` |
+| `charmlink:block-bad-uas` | UA-contains list (facebookexternalhit, Twitterbot, Slackbot, TelegramBot, WhatsApp, LinkedInBot, Discordbot) | `block` |
+| `charmlink:challenge-datacenter-asns` | `(ip.geoip.asnum in {16509 14618 396982 32934 13335 14061 8075 15169})` | `managed_challenge` |
+| `charmlink:challenge-cf-bot` | `(cf.client.bot)` | `managed_challenge` |
+| `charmlink:block-tor` | `(ip.geoip.country eq "T1")` | `block` |
+
+Note: ASN 32934 (Meta) is intentionally referenced in two rules — the `block-bad-uas` rule blocks
+Meta scrapers via UA, and `block-meta-asn` challenges any other Meta-originated request as
+defense-in-depth.
+
+### Rotating rule content
+
+Because idempotency is keyed on `description`, changing a rule's expression or action without
+changing its description will be **silently skipped** on the next run. To roll out a new version
+of a rule, change its description (e.g. add `-v2`) so the new rule is created — then delete the
+old one in the CF dashboard.
 
 ---
 
