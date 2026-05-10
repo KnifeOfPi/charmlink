@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { addDomain, removeDomain } from "../../../../lib/vercel-domains";
 import { provisionZone, removeProxiedDnsRecord, findZoneByDomain } from "../../../../lib/cloudflare";
+import { addHostnameToWidget, removeHostnameFromWidget } from "../../../../lib/turnstile-admin";
 
 export const runtime = "nodejs";
 
@@ -70,6 +71,22 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Step 3: Add hostname to Turnstile widget allow-list (defense-in-depth — never blocks).
+    const tsSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+    if (
+      tsSiteKey &&
+      process.env.CLOUDFLARE_API_TOKEN &&
+      process.env.CLOUDFLARE_ACCOUNT_ID
+    ) {
+      try {
+        await addHostnameToWidget(tsSiteKey, domain);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[admin/domains] Turnstile widget sync (add) failed for ${domain}: ${msg}`);
+        // Non-fatal: WAF/zone are still in place. Log and continue.
+      }
+    }
+
     const status = results.errors.length > 0 ? 207 : 201;
     return NextResponse.json(results, { status });
   } catch (err) {
@@ -109,6 +126,21 @@ export async function DELETE(request: NextRequest) {
         }
       } catch (err) {
         errors.push(`Cloudflare: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    // Step 3: Remove hostname from Turnstile widget allow-list (defense-in-depth — never blocks).
+    const tsSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+    if (
+      tsSiteKey &&
+      process.env.CLOUDFLARE_API_TOKEN &&
+      process.env.CLOUDFLARE_ACCOUNT_ID
+    ) {
+      try {
+        await removeHostnameFromWidget(tsSiteKey, domain);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[admin/domains] Turnstile widget sync (remove) failed for ${domain}: ${msg}`);
       }
     }
 

@@ -285,3 +285,73 @@ for clean visitors) but is wired and ready for when bot-detect gains lower-confi
 Frontend note: `CreatorPage.tsx` must handle `{ turnstile_required: true, site_key: "..." }` by
 rendering the CF Turnstile widget and re-POSTing with the solved token in `x-turnstile-token` header.
 This frontend wiring is a follow-up task.
+
+---
+
+## Phase 3.2 — Turnstile Widget Auto-Sync + Frontend Render
+
+Phase 3.2 closes two gaps in the Turnstile escalation path so it actually works end-to-end
+when bot-detect starts emitting low-confidence non-bot signals.
+
+### Part A — Widget hostname auto-sync
+
+Cloudflare Turnstile widgets only render on **explicitly allow-listed hostnames**
+(`domains` field on the widget config). When a creator adds a custom domain via the admin UI
+or the CF backfill script, that domain must also be added to the widget's allow-list — otherwise
+the challenge would refuse to render and the user would be silently stuck.
+
+**New module:** `lib/turnstile-admin.ts`
+
+```ts
+listTurnstileWidgets(): Promise<TurnstileWidget[]>
+getTurnstileWidget(siteKey): Promise<TurnstileWidget>
+addHostnameToWidget(siteKey, hostname): Promise<TurnstileWidget>      // idempotent
+removeHostnameFromWidget(siteKey, hostname): Promise<TurnstileWidget> // idempotent
+```
+
+Endpoints (verified working with the project's "Account: Turnstile Edit" token):
+
+```
+GET  /accounts/{acct}/challenges/widgets
+GET  /accounts/{acct}/challenges/widgets/{sitekey}
+PUT  /accounts/{acct}/challenges/widgets/{sitekey}
+```
+
+The `PUT` is a **full-document replace** — `addHostnameToWidget` and `removeHostnameFromWidget`
+fetch the widget first, mutate the `domains` array, then PUT the full body back. Idempotent
+guards short-circuit when the hostname is already present / already absent.
+
+**Wired into:**
+
+- `app/api/admin/domains/route.ts` — POST and DELETE handlers call add/remove after Vercel + CF
+  zone provisioning succeeds. Wrapped in try/catch — Turnstile sync failures are **logged but
+  do not fail the admin request** (defense-in-depth: the WAF rules are the primary protection,
+  the widget allow-list only matters if/when escalation actually fires).
+- `scripts/cf-backfill.ts` — after WAF + bot protection for each domain, calls
+  `addHostnameToWidget`. Idempotent (fetch-first-then-PUT guarantees no duplicate writes).
+
+### Part B — Frontend Turnstile widget render
+
+`/api/links/[creator]` already returns `{ turnstile_required: true, site_key: "..." }` when the
+server-side gate decides escalation is warranted. Phase 3.2 wires the frontend to actually show
+the widget when this happens.
+
+- Added dependency: **`@marsidev/react-turnstile`** (lightweight React wrapper, lazy-loads CF JS).
+- `app/[creator]/CreatorPage.tsx`:
+  - New `turnstileChallenge` state — set when the API response includes `turnstile_required`.
+  - When set, renders a `<Turnstile />` widget above the premium-links section.
+  - On `onSuccess(token)`, re-calls `fetchPremiumLinks(token)`, which re-POSTs to
+    `/api/links/[creator]` with the solved token in the `x-turnstile-token` header.
+  - Server verifies via `verifyTurnstile(token, ip)` — on success, falls through to the real payload.
+
+### Env required for sync
+
+```
+NEXT_PUBLIC_TURNSTILE_SITE_KEY  — public site key (already in Vercel)
+TURNSTILE_SECRET_KEY            — server secret (already in Vercel, encrypted)
+CLOUDFLARE_API_TOKEN            — needs Account: Turnstile Edit scope
+CLOUDFLARE_ACCOUNT_ID           — required for widget endpoints
+```
+
+If any of `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, `CLOUDFLARE_API_TOKEN`, or `CLOUDFLARE_ACCOUNT_ID`
+are unset, widget sync is silently skipped (graceful degradation).
