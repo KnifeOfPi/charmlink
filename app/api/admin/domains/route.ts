@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { addDomain, removeDomain } from "../../../../lib/vercel-domains";
-import { addVercelDnsRecord, removeVercelDnsRecord } from "../../../../lib/cloudflare-dns";
+import { provisionZone, removeProxiedDnsRecord, findZoneByDomain } from "../../../../lib/cloudflare";
 
 export const runtime = "nodejs";
 
@@ -19,7 +19,16 @@ export async function POST(request: NextRequest) {
     const { domain } = (await request.json()) as { domain: string };
     if (!domain) return NextResponse.json({ error: "domain required" }, { status: 400 });
 
-    const results: { vercel?: unknown; cloudflare?: unknown; errors: string[] } = { errors: [] };
+    const results: {
+      vercel?: unknown;
+      cloudflare?: {
+        zoneFound: boolean;
+        message?: string;
+        steps?: unknown[];
+        ok?: boolean;
+      };
+      errors: string[];
+    } = { errors: [] };
 
     // Step 1: Add domain to Vercel
     try {
@@ -28,12 +37,36 @@ export async function POST(request: NextRequest) {
       results.errors.push(`Vercel: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    // Step 2: Add DNS record on Cloudflare (if CLOUDFLARE_API_TOKEN is configured)
+    // Step 2: Provision Cloudflare zone (orange-cloud CNAME + WAF + transform rules)
     if (process.env.CLOUDFLARE_API_TOKEN) {
-      const cfResult = await addVercelDnsRecord(domain);
-      results.cloudflare = cfResult;
-      if (!cfResult.success && cfResult.error) {
-        results.errors.push(`Cloudflare: ${cfResult.error}`);
+      try {
+        const cfResult = await provisionZone(domain);
+        if (!cfResult.zoneFound) {
+          console.warn(
+            `[admin/domains] CF zone not found for ${domain} — manual setup required`
+          );
+          results.cloudflare = {
+            zoneFound: false,
+            message:
+              "Zone not in CF account — add the zone in Cloudflare first, then re-run this or use npm run cf-backfill",
+          };
+        } else {
+          results.cloudflare = {
+            zoneFound: true,
+            ok: cfResult.ok,
+            steps: cfResult.steps,
+          };
+          if (!cfResult.ok) {
+            const failedSteps = cfResult.steps
+              .filter((s) => !s.ok)
+              .map((s) => `${s.name}: ${s.detail ?? "failed"}`);
+            results.errors.push(`Cloudflare: ${failedSteps.join("; ")}`);
+          }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        results.errors.push(`Cloudflare: ${msg}`);
+        results.cloudflare = { zoneFound: false, message: msg };
       }
     }
 
@@ -62,11 +95,20 @@ export async function DELETE(request: NextRequest) {
       errors.push(`Vercel: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    // Step 2: Remove DNS record from Cloudflare
+    // Step 2: Remove proxied DNS record from Cloudflare (leave WAF/settings intact)
     if (process.env.CLOUDFLARE_API_TOKEN) {
-      const cfResult = await removeVercelDnsRecord(domain);
-      if (!cfResult.success && cfResult.error) {
-        errors.push(`Cloudflare: ${cfResult.error}`);
+      try {
+        const zone = await findZoneByDomain(domain);
+        if (zone) {
+          const removed = await removeProxiedDnsRecord(zone.id, domain);
+          if (removed.removed === 0) {
+            console.warn(`[admin/domains] No CNAME found to remove for ${domain}`);
+          }
+        } else {
+          console.warn(`[admin/domains] CF zone not found for ${domain} during DELETE`);
+        }
+      } catch (err) {
+        errors.push(`Cloudflare: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
