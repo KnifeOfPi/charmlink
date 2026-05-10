@@ -4,6 +4,7 @@ import { getCreatorBySlug, getCreatorLinks } from "../../../../lib/db";
 import { detectBot } from "../../../../lib/bot-detect";
 import { verifyLinkToken } from "../../../../lib/link-token";
 import { rateLimit } from "../../../../lib/rate-limit";
+import { verifyTurnstile } from "../../../../lib/turnstile";
 
 export const runtime = "nodejs";
 
@@ -98,11 +99,49 @@ export async function POST(
     return decoyResponse();
   }
 
-  // 5. Bot detection (belt-and-suspenders)
-  const { isBot: botDetected } = await detectBot(request);
-  if (botDetected) {
+  // 5. Bot detection + Turnstile escalation for uncertain cases
+  const { isBot, confidence } = await detectBot(request);
+  if (isBot) {
     return decoyResponse();
   }
+
+  // Turnstile escalation for suspicious-but-unconfirmed visitors.
+  // confidence reflects certainty of the isBot determination:
+  //   "high" on non-bot  = definitively clean → suspicion 0.1 (no Turnstile)
+  //   "low"  on non-bot  = uncertain verdict   → suspicion 0.7 (Turnstile)
+  // Currently bot-detect only returns {isBot:false, confidence:"high"}, so this
+  // path is inactive until bot-detect emits lower-confidence non-bot signals.
+  // If TURNSTILE_SECRET_KEY is not set, skip entirely (safe to deploy before key is provisioned).
+  const suspicionScore = confidence === "low" ? 0.7 : 0.1;
+  if (suspicionScore > 0.6) {
+    const secretKey = process.env.TURNSTILE_SECRET_KEY;
+    if (!secretKey) {
+      // Log once; treat as legit to avoid blocking users before key is provisioned.
+      console.warn("[links] TURNSTILE_SECRET_KEY not set — skipping Turnstile gate (confidence=low path)");
+    } else {
+      const turnstileToken = request.headers.get("x-turnstile-token");
+      if (!turnstileToken) {
+        // Prompt frontend to show the widget.
+        return NextResponse.json(
+          {
+            links: [],
+            turnstile_required: true,
+            site_key: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? null,
+          },
+          { status: 200, headers: { ...NOINDEX } }
+        );
+      }
+      // Verify the submitted token.
+      const tsResult = await verifyTurnstile(turnstileToken, ip);
+      if (!tsResult.success) {
+        return decoyResponse();
+      }
+      // Token verified — fall through to real payload.
+    }
+  }
+  // TODO: frontend CreatorPage.tsx should handle turnstile_required response by
+  // rendering the CF Turnstile widget (NEXT_PUBLIC_TURNSTILE_SITE_KEY) and re-POSTing
+  // with x-turnstile-token header. Wire-up is a follow-up PR.
 
   // ── Serve real premium links ───────────────────────────────────────────────
   try {

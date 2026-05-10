@@ -101,6 +101,24 @@ export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const isApiRoute = pathname.startsWith("/api/");
 
+  // ── Origin protection: block *.vercel.app for creator slug paths ──────────
+  // Real traffic must arrive via a CF-proxied custom domain or the canonical
+  // charmlink.vercel.app root. Direct hits to *.vercel.app on non-admin paths
+  // are rejected to prevent domain-shopping scrapers from bypassing CF WAF.
+  if (hostname.endsWith(".vercel.app")) {
+    const isExempt =
+      pathname.startsWith("/admin") ||
+      pathname.startsWith("/api") ||
+      pathname.startsWith("/_next") ||
+      pathname === "/" ||
+      pathname === "/robots.txt" ||
+      pathname === "/favicon.ico";
+
+    if (!isExempt) {
+      return new NextResponse("Forbidden", { status: 403 });
+    }
+  }
+
   // ── Bot detection ──────────────────────────────────────────────────────────
   const { isBot: isBotResult, reason } = await detectBot(request);
 
