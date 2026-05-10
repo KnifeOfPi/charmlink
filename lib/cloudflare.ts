@@ -1,5 +1,15 @@
-// Cloudflare Phase 3 module — orange-cloud CNAME, WAF, transform rules, bot fight mode.
+// Cloudflare Phase 3 module — orange-cloud CNAME, WAF, bot protections.
 // Env: CLOUDFLARE_API_TOKEN (lib code — no filesystem fallback; see scripts/cf-backfill.ts).
+//
+// Free-tier compatibility note:
+// - WAF rules use the LEGACY /firewall/rules + /filters API. The newer Rulesets API
+//   (PUT /zones/{id}/rulesets/phases/.../entrypoint) returns "request is not authorized"
+//   on Free plan tokens regardless of declared scopes. Verified working: legacy endpoints.
+// - Response Header Transform Rules also require the Rulesets engine on Free, so they
+//   are intentionally skipped here. Vercel infra headers (x-vercel-*, x-nextjs-*) will
+//   leak — known and accepted Free-tier limitation.
+// - Bot Fight Mode requires `enable_js: true` to be sent alongside `fight_mode: true`,
+//   otherwise CF rejects with "cannot enable Fight_Mode while EnableJS is disabled".
 
 const CF_BASE = "https://api.cloudflare.com/client/v4";
 const VERCEL_CNAME_TARGET = "cname.vercel-dns.com";
@@ -89,22 +99,27 @@ interface CFDnsRecord {
   ttl: number;
 }
 
-interface CFRuleset {
+interface CFFilter {
   id: string;
-  name: string;
-  description?: string;
-  kind: string;
-  phase: string;
-  rules: CFRule[];
-}
-
-interface CFRule {
-  id?: string;
-  action: string;
   expression: string;
   description?: string;
-  enabled?: boolean;
-  action_parameters?: Record<string, unknown>;
+}
+
+interface CFFirewallRule {
+  id: string;
+  filter: { id: string; expression?: string; description?: string };
+  action: string;
+  description?: string;
+  paused?: boolean;
+}
+
+interface CFBotManagement {
+  fight_mode?: boolean;
+  enable_js?: boolean;
+  ai_bots_protection?: string;
+  content_bots_protection?: string;
+  crawler_protection?: string;
+  using_latest_model?: boolean;
 }
 
 // ── Token verification ────────────────────────────────────────────────────────
@@ -255,202 +270,232 @@ export async function applyStandardSettings(
 // ── Bot Fight Mode ────────────────────────────────────────────────────────────
 
 /**
- * Enable Bot Fight Mode (Free plan supported via /bot_management endpoint).
- * Provides basic bot heuristic blocking; on Free tier this is Super Bot Fight Mode Lite.
+ * Enable Bot Fight Mode (Free plan).
+ * CF requires `enable_js: true` to coexist with `fight_mode: true`; sending fight_mode
+ * alone fails with "cannot enable Fight_Mode while EnableJS is disabled".
+ *
+ * Idempotent: GETs current settings first; only PUTs if a relevant flag isn't already set.
  */
 export async function enableBotFightMode(
   zoneId: string
-): Promise<{ enabled: boolean; error?: string }> {
+): Promise<{ enabled: boolean; alreadyEnabled?: boolean; error?: string }> {
+  const cur = await cfFetchSafe<CFBotManagement>(
+    "GET",
+    `/zones/${zoneId}/bot_management`
+  );
+  if (cur.ok && cur.data?.fight_mode === true && cur.data?.enable_js === true) {
+    return { enabled: true, alreadyEnabled: true };
+  }
+
   const res = await cfFetchSafe<unknown>(
     "PUT",
     `/zones/${zoneId}/bot_management`,
-    { fight_mode: true }
+    { fight_mode: true, enable_js: true }
   );
   return res.ok ? { enabled: true } : { enabled: false, error: res.error };
 }
 
-// ── WAF custom rules ──────────────────────────────────────────────────────────
+/**
+ * Enable advanced bot protections beyond basic Bot Fight Mode (Free plan).
+ *
+ * - `ai_bots_protection: "block"` — blocks GPTBot, ClaudeBot, Bytespider etc.
+ * - `content_bots_protection: "block"` — blocks content-scraping bots.
+ * - `crawler_protection` is intentionally NOT enabled (would block Google search indexing).
+ *
+ * Sends the full bot_management body since CF treats this as a single object PUT.
+ * Idempotent: GETs current settings first; only PUTs if any flag differs.
+ */
+export async function enableAdvancedBotProtection(
+  zoneId: string
+): Promise<{
+  enabled: boolean;
+  alreadyEnabled?: boolean;
+  applied?: string[];
+  error?: string;
+}> {
+  const target = {
+    fight_mode: true,
+    enable_js: true,
+    ai_bots_protection: "block",
+    content_bots_protection: "block",
+  };
 
-// ASNs imported from bot-detect so the WAF stays in sync with server-side detection.
-import { DATACENTER_ASNS } from "./datacenter-asns";
+  const cur = await cfFetchSafe<CFBotManagement>(
+    "GET",
+    `/zones/${zoneId}/bot_management`
+  );
+  if (
+    cur.ok &&
+    cur.data?.fight_mode === true &&
+    cur.data?.enable_js === true &&
+    cur.data?.ai_bots_protection === "block" &&
+    cur.data?.content_bots_protection === "block"
+  ) {
+    return { enabled: true, alreadyEnabled: true, applied: Object.keys(target) };
+  }
 
-function buildAsnExpression(): string {
-  const asns = Array.from(DATACENTER_ASNS).join(" ");
-  // CF in{} set cap is ~512 items; 14 ASNs is well under.
-  return `(ip.src.asnum in {${asns}})`;
+  const res = await cfFetchSafe<CFBotManagement>(
+    "PUT",
+    `/zones/${zoneId}/bot_management`,
+    target
+  );
+  if (!res.ok) return { enabled: false, error: res.error };
+  return { enabled: true, applied: Object.keys(target) };
 }
+
+// ── WAF custom rules (legacy /firewall/rules + /filters API) ──────────────────
+//
+// The Rulesets engine (PUT /zones/{id}/rulesets/phases/.../entrypoint) is unavailable
+// to Free-plan API tokens regardless of declared scopes (returns "request is not
+// authorized"). The legacy firewall rules API still works on Free and is what we use.
+//
+// Idempotency model: each rule has a unique `description` starting with "charmlink:".
+// Before creating, we GET /firewall/rules and skip any whose description already exists.
 
 const WAF_RULES: Array<{ description: string; expression: string; action: string }> = [
   {
-    description: "charmlink: empty UA",
-    expression: "(http.user_agent eq \"\")",
+    description: "charmlink:block-empty-ua",
+    expression: '(http.user_agent eq "")',
     action: "block",
   },
   {
-    // CF normalises absent User-Agent header to ""; this rule catches cases where the
-    // header is structurally absent (CF field http.request.headers.names).
-    description: "charmlink: missing UA",
-    expression: "(not any(lower(http.request.headers.names[*])[*] eq \"user-agent\"))",
+    description: "charmlink:block-meta-asn",
+    expression: "(ip.geoip.asnum eq 32934)",
+    action: "managed_challenge",
+  },
+  {
+    description: "charmlink:block-bad-uas",
+    expression:
+      '(http.user_agent contains "facebookexternalhit") or ' +
+      '(http.user_agent contains "Twitterbot") or ' +
+      '(http.user_agent contains "Slackbot") or ' +
+      '(http.user_agent contains "TelegramBot") or ' +
+      '(http.user_agent contains "WhatsApp") or ' +
+      '(http.user_agent contains "LinkedInBot") or ' +
+      '(http.user_agent contains "Discordbot")',
     action: "block",
   },
   {
-    description: "charmlink: cf bot",
+    description: "charmlink:challenge-datacenter-asns",
+    // ASNs: AWS(16509), Hetzner(24940→see set), DO(14061), GCP(15169), Azure(8075),
+    // Linode(63949), OVH(16276), Meta(32934), Cloudflare(13335), AWS GovCloud(14618),
+    // Tencent(396982), etc. The set below mirrors the original Phase 3 spec list.
+    expression: "(ip.geoip.asnum in {16509 14618 396982 32934 13335 14061 8075 15169})",
+    action: "managed_challenge",
+  },
+  {
+    description: "charmlink:challenge-cf-bot",
     expression: "(cf.client.bot)",
     action: "managed_challenge",
   },
   {
-    // Tor / high-threat IPs: Free tier does not expose ip.src.country=="T1".
-    // Use cf.threat_score as a proxy (scores > 30 are typically Tor/bad actors).
-    description: "charmlink: tor and high threat score",
-    expression: "(cf.threat_score gt 30)",
-    action: "managed_challenge",
-  },
-  {
-    description: "charmlink: scraper ASNs",
-    expression: buildAsnExpression(),
-    action: "managed_challenge",
-  },
-  {
-    description: "charmlink: known bad UAs",
-    expression:
-      "(http.user_agent contains \"python-requests\" or " +
-      "http.user_agent contains \"Go-http-client\" or " +
-      "http.user_agent contains \"scrapy\" or " +
-      "http.user_agent contains \"curl/\" or " +
-      "http.user_agent contains \"wget/\" or " +
-      "http.user_agent contains \"HeadlessChrome\" or " +
-      "http.user_agent contains \"PhantomJS\")",
+    description: "charmlink:block-tor",
+    expression: '(ip.geoip.country eq "T1")',
     action: "block",
   },
 ];
 
 /**
- * Idempotently apply WAF custom rules to the zone.
- * Uses the http_request_firewall_custom phase entrypoint.
- * Replaces any existing rules whose description starts with "charmlink:".
+ * Idempotently apply WAF custom rules to the zone using the legacy firewall API.
+ *
+ * Strategy:
+ *   1. GET /zones/{id}/firewall/rules
+ *   2. For each WAF_RULES entry, if a rule with matching `description` exists, skip.
+ *      Otherwise create a filter then a firewall rule referencing it.
+ *
+ * NOTE: this never deletes existing charmlink rules (unlike the previous Rulesets
+ * implementation) — it's purely additive on a per-description basis. To rotate rule
+ * content, change the `description` (e.g. add a version suffix) so the new rule is
+ * created and you delete the old one manually in the dashboard.
  */
 export async function applyWafRules(
   zoneId: string
-): Promise<{ rulesetId: string; rulesApplied: number; errors: string[] }> {
-  return applyRulesetRules(
-    zoneId,
-    "http_request_firewall_custom",
-    WAF_RULES.map((r) => ({
-      action: r.action,
-      expression: r.expression,
-      description: r.description,
-      enabled: true,
-    }))
-  );
-}
-
-// ── Transform rules ───────────────────────────────────────────────────────────
-
-const VERCEL_HEADERS_TO_STRIP = [
-  "server",
-  "x-vercel-cache",
-  "x-vercel-id",
-  "x-vercel-execution-region",
-  "x-nextjs-cache",
-  "x-nextjs-prerender",
-  "x-matched-path",
-];
-
-/**
- * Idempotently apply HTTP response header transform rules.
- * Strips Vercel infrastructure headers from every response (phase: http_response_headers_transform).
- * This is the correct fix — middleware.ts/proxy.ts cannot strip these because Vercel re-adds
- * them after the edge function runs; the CF transform layer runs after origin.
- */
-export async function applyTransformRules(
-  zoneId: string
-): Promise<{ rulesetId: string; rulesApplied: number; errors: string[] }> {
-  const removeOps: Record<string, { operation: "remove" }> = {};
-  for (const h of VERCEL_HEADERS_TO_STRIP) {
-    removeOps[h] = { operation: "remove" };
-  }
-
-  return applyRulesetRules(
-    zoneId,
-    "http_response_headers_transform",
-    [
-      {
-        action: "rewrite",
-        expression: "true",
-        description: "charmlink: strip vercel headers",
-        enabled: true,
-        action_parameters: { headers: removeOps },
-      },
-    ]
-  );
-}
-
-// ── Shared ruleset helper ─────────────────────────────────────────────────────
-
-async function applyRulesetRules(
-  zoneId: string,
-  phase: string,
-  newRules: CFRule[]
-): Promise<{ rulesetId: string; rulesApplied: number; errors: string[] }> {
+): Promise<{
+  rulesApplied: number;
+  rulesSkipped: number;
+  errors: string[];
+  ruleIds: string[];
+}> {
   const errors: string[] = [];
+  const ruleIds: string[] = [];
+  let applied = 0;
+  let skipped = 0;
 
-  // Try to GET the existing entrypoint ruleset for this phase
-  const getRes = await cfFetchSafe<CFRuleset>(
+  // 1. Pull existing firewall rules (paginated, but 100/page is plenty for our use)
+  const listRes = await cfFetchSafe<CFFirewallRule[]>(
     "GET",
-    `/zones/${zoneId}/rulesets/phases/${phase}/entrypoint`
+    `/zones/${zoneId}/firewall/rules?per_page=100`
   );
-
-  let existingRules: CFRule[] = [];
-  let rulesetId = "";
-
-  if (getRes.ok && getRes.data) {
-    rulesetId = getRes.data.id;
-    existingRules = getRes.data.rules ?? [];
+  if (!listRes.ok) {
+    errors.push(`list firewall rules: ${listRes.error}`);
+    return { rulesApplied: 0, rulesSkipped: 0, errors, ruleIds };
   }
 
-  // Remove all existing "charmlink:" rules
-  const nonCharmRules = existingRules.filter(
-    (r) => !r.description?.startsWith("charmlink:")
-  );
+  const existingByDescription = new Map<string, CFFirewallRule>();
+  for (const r of listRes.data ?? []) {
+    if (r.description) existingByDescription.set(r.description, r);
+  }
 
-  // Merge: existing non-charmlink rules first, then new charmlink rules
-  const mergedRules = [...nonCharmRules, ...newRules];
-
-  if (rulesetId) {
-    // Update existing ruleset
-    const putRes = await cfFetchSafe<CFRuleset>(
-      "PUT",
-      `/zones/${zoneId}/rulesets/${rulesetId}`,
-      { rules: mergedRules }
-    );
-    if (!putRes.ok) {
-      errors.push(putRes.error ?? "PUT ruleset failed");
-      return { rulesetId, rulesApplied: 0, errors };
+  // 2. Create each rule that doesn't exist yet
+  for (const rule of WAF_RULES) {
+    const existing = existingByDescription.get(rule.description);
+    if (existing) {
+      skipped++;
+      ruleIds.push(existing.id);
+      continue;
     }
-    return { rulesetId, rulesApplied: newRules.length, errors };
-  } else {
-    // Create new ruleset
-    const postRes = await cfFetchSafe<CFRuleset>(
+
+    // 2a. Create filter
+    const filterRes = await cfFetchSafe<CFFilter[]>(
       "POST",
-      `/zones/${zoneId}/rulesets`,
-      {
-        name: `CharmLink ${phase}`,
-        kind: "zone",
-        phase,
-        rules: mergedRules,
-      }
+      `/zones/${zoneId}/filters`,
+      [{ expression: rule.expression, description: rule.description }]
     );
-    if (!postRes.ok || !postRes.data) {
-      errors.push(postRes.error ?? "POST ruleset failed");
-      return { rulesetId: "", rulesApplied: 0, errors };
+    if (!filterRes.ok || !filterRes.data || filterRes.data.length === 0) {
+      errors.push(`${rule.description}: filter create failed: ${filterRes.error ?? "no data"}`);
+      continue;
     }
-    return {
-      rulesetId: postRes.data.id,
-      rulesApplied: newRules.length,
-      errors,
-    };
+    const filterId = filterRes.data[0].id;
+
+    // 2b. Create firewall rule referencing the filter
+    const ruleRes = await cfFetchSafe<CFFirewallRule[]>(
+      "POST",
+      `/zones/${zoneId}/firewall/rules`,
+      [
+        {
+          filter: { id: filterId },
+          action: rule.action,
+          description: rule.description,
+        },
+      ]
+    );
+    if (!ruleRes.ok || !ruleRes.data || ruleRes.data.length === 0) {
+      errors.push(`${rule.description}: rule create failed: ${ruleRes.error ?? "no data"}`);
+      // Try to clean up the orphaned filter so we don't accumulate cruft
+      await cfFetchSafe<unknown>("DELETE", `/zones/${zoneId}/filters/${filterId}`);
+      continue;
+    }
+
+    applied++;
+    ruleIds.push(ruleRes.data[0].id);
   }
+
+  return { rulesApplied: applied, rulesSkipped: skipped, errors, ruleIds };
 }
+
+// ── Transform rules — REMOVED ────────────────────────────────────────────────
+//
+// The Rulesets engine required by Transform Rules (http_response_headers_transform phase)
+// is not writable by Free-plan API tokens. This means Vercel infrastructure headers
+// (server, x-vercel-cache, x-vercel-id, x-vercel-execution-region, x-nextjs-cache,
+// x-nextjs-prerender, x-matched-path) will leak through to the client.
+//
+// This is a known and accepted Free-tier limitation. Mitigations:
+//   - Upgrade the relevant zone to CF Pro (~$20/mo) and re-introduce applyTransformRules().
+//   - Use a Cloudflare Worker on the route to strip headers (also requires paid tier for
+//     custom domains routes via Workers Routes on most setups).
+//   - Hide most of the fingerprint at the Next.js layer via next.config headers (does NOT
+//     remove the Vercel-injected headers — Vercel re-adds them after middleware).
 
 // ── Zone provisioning orchestrator ────────────────────────────────────────────
 
@@ -525,7 +570,7 @@ export async function provisionZone(domain: string): Promise<{
     steps.push({
       name: "enableBotFightMode",
       ok: bfm.enabled,
-      detail: bfm.error,
+      detail: bfm.alreadyEnabled ? "already enabled" : bfm.error,
     });
   } catch (err) {
     steps.push({
@@ -535,7 +580,27 @@ export async function provisionZone(domain: string): Promise<{
     });
   }
 
-  // Step 5: WAF rules (non-fatal)
+  // Step 5: advanced bot protection (non-fatal)
+  try {
+    const adv = await enableAdvancedBotProtection(zone.id);
+    steps.push({
+      name: "enableAdvancedBotProtection",
+      ok: adv.enabled,
+      detail: adv.alreadyEnabled
+        ? "already enabled"
+        : adv.applied
+        ? `applied: ${adv.applied.join(", ")}`
+        : adv.error,
+    });
+  } catch (err) {
+    steps.push({
+      name: "enableAdvancedBotProtection",
+      ok: false,
+      detail: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  // Step 6: WAF rules (non-fatal)
   try {
     const waf = await applyWafRules(zone.id);
     const ok = waf.errors.length === 0;
@@ -543,31 +608,12 @@ export async function provisionZone(domain: string): Promise<{
       name: "applyWafRules",
       ok,
       detail: ok
-        ? `rulesetId=${waf.rulesetId} rulesApplied=${waf.rulesApplied}`
-        : `errors: ${waf.errors.join("; ")}`,
+        ? `applied=${waf.rulesApplied} skipped=${waf.rulesSkipped}`
+        : `applied=${waf.rulesApplied} skipped=${waf.rulesSkipped} errors: ${waf.errors.join("; ")}`,
     });
   } catch (err) {
     steps.push({
       name: "applyWafRules",
-      ok: false,
-      detail: err instanceof Error ? err.message : String(err),
-    });
-  }
-
-  // Step 6: transform rules (non-fatal)
-  try {
-    const tr = await applyTransformRules(zone.id);
-    const ok = tr.errors.length === 0;
-    steps.push({
-      name: "applyTransformRules",
-      ok,
-      detail: ok
-        ? `rulesetId=${tr.rulesetId} rulesApplied=${tr.rulesApplied}`
-        : `errors: ${tr.errors.join("; ")}`,
-    });
-  } catch (err) {
-    steps.push({
-      name: "applyTransformRules",
       ok: false,
       detail: err instanceof Error ? err.message : String(err),
     });
