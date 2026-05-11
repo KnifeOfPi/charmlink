@@ -510,10 +510,10 @@ function InstagramBrowserBanner() {
   if (dismissed) return null;
 
   return (
-    <div className="fixed top-0 left-0 right-0 z-50 bg-yellow-500 text-black px-4 py-2 text-sm">
+    <div className="fixed top-0 left-0 right-0 z-50 bg-pink-500 text-white px-4 py-2 text-sm">
       <button
         onClick={dismiss}
-        className="absolute top-1 right-2 text-black/60 text-base font-bold px-1 leading-none"
+        className="absolute top-1 right-2 text-white/70 text-base font-bold px-1 leading-none"
         aria-label="Dismiss"
       >
         ✕
