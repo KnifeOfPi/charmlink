@@ -22,12 +22,24 @@ async function resolveCustomDomain(
   }
 
   try {
-    // Call internal API route to resolve domain → slug
-    const url = new URL("/api/resolve-domain", request.url);
+    // Call internal API route to resolve domain → slug.
+    // IMPORTANT: prefer the Vercel canonical hostname (VERCEL_URL) so the
+    // request stays inside the platform and skips Cloudflare → public DNS
+    // → origin (which can hang, hit Bot Fight Mode, or get blocked by the
+    // origin lock on non-root paths). request.nextUrl.origin on a custom
+    // domain points back at hannazuki.com, defeating the purpose.
+    const internalHost =
+      process.env.VERCEL_URL ?? request.nextUrl.host;
+    const internalOrigin = internalHost.startsWith("http")
+      ? internalHost
+      : `https://${internalHost}`;
+    const url = new URL("/api/resolve-domain", internalOrigin);
     url.searchParams.set("domain", hostname);
 
     const res = await fetch(url.toString(), {
       headers: { "x-internal-resolve": "1" },
+      // 3s budget: middleware must not block real users on a slow DB.
+      signal: AbortSignal.timeout(3000),
     });
 
     if (res.ok) {
@@ -120,12 +132,19 @@ export async function middleware(request: NextRequest) {
   }
 
   // ── Bot detection ──────────────────────────────────────────────────────────
-  const { isBot: isBotResult, reason } = await detectBot(request);
+  // Only flip the SSR cloaking flag (x-is-bot=true) for HIGH confidence
+  // signals. Low-confidence heuristics (e.g. missing Sec-Fetch-* on page
+  // routes) misfire on real iOS in-app WebViews (Instagram/Facebook),
+  // older mobile browsers, and any client that doesn't send those headers —
+  // which previously rendered the hidden bot-decoy page for real humans.
+  const { isBot: isBotResult, reason, confidence } = await detectBot(request);
+  const isBotFinal = isBotResult && confidence === "high";
 
   // Inject bot signals on REQUEST headers only — never expose on response
   const requestHeaders = new Headers(request.headers);
-  requestHeaders.set("x-is-bot", isBotResult ? "true" : "false");
+  requestHeaders.set("x-is-bot", isBotFinal ? "true" : "false");
   requestHeaders.set("x-bot-reason", reason);
+  requestHeaders.set("x-bot-confidence", confidence);
 
   // ── Custom domain routing ──────────────────────────────────────────────────
   if (!isAppHost(hostname) && !isApiRoute) {

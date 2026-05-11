@@ -98,9 +98,13 @@ export async function POST(
     return decoyResponse();
   }
 
-  // 5. Bot detection + Turnstile escalation for uncertain cases
+  // 5. Bot detection + Turnstile escalation for uncertain cases.
+  // Only decoy on HIGH confidence; LOW confidence (e.g. missing Sec-Fetch on
+  // page routes) misfires on iOS in-app WebViews and other legit clients
+  // and is handled below via Turnstile escalation instead of an outright
+  // decoy response.
   const { isBot, confidence } = await detectBot(request);
-  if (isBot) {
+  if (isBot && confidence === "high") {
     return decoyResponse();
   }
 
