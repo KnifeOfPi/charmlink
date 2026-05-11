@@ -453,6 +453,7 @@ const IG_DISMISS_KEY = "cl_ig_dismiss";
 function InstagramBrowserBanner() {
   const [platform, setPlatform] = useState<"ios" | "android" | "unknown">("unknown");
   const [dismissed, setDismissed] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (localStorage.getItem(IG_DISMISS_KEY) === "1") {
@@ -469,15 +470,54 @@ function InstagramBrowserBanner() {
     setDismissed(true);
   };
 
+  const copyToClipboard = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 4000);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const openInBrowser = () => {
     const url = window.location.href;
-    const bare = url.replace(/^https?:\/\//, "");
+
     if (platform === "ios") {
-      window.location.href = `x-safari-https://${bare}`;
-      setTimeout(() => window.open(url, "_blank"), 500);
+      // Apple deprecated x-safari-https:// in iOS 14.5 (2021).
+      // Strategy: try googlechrome:// scheme; if Chrome isn't installed, fall back to clipboard.
+      const chromeUrl = url.replace(/^https?:\/\//, "googlechrome://");
+      let escaped = false;
+
+      const visibilityHandler = () => {
+        if (document.hidden) escaped = true;
+      };
+      document.addEventListener("visibilitychange", visibilityHandler);
+      window.location.href = chromeUrl;
+
+      setTimeout(() => {
+        document.removeEventListener("visibilitychange", visibilityHandler);
+        if (!escaped) {
+          void copyToClipboard(url);
+        }
+      }, 800);
     } else if (platform === "android") {
+      const bare = url.replace(/^https?:\/\//, "");
+      let escaped = false;
+
+      const visibilityHandler = () => {
+        if (document.hidden) escaped = true;
+      };
+      document.addEventListener("visibilitychange", visibilityHandler);
       window.location.href = `intent://${bare}#Intent;scheme=https;package=com.android.chrome;end`;
-      setTimeout(() => window.open(url, "_blank"), 500);
+
+      setTimeout(() => {
+        document.removeEventListener("visibilitychange", visibilityHandler);
+        if (!escaped) {
+          void copyToClipboard(url);
+        }
+      }, 800);
     } else {
       window.open(url, "_blank");
     }
@@ -489,9 +529,9 @@ function InstagramBrowserBanner() {
     <div className="fixed top-0 left-0 right-0 z-50 bg-yellow-500 text-black px-4 py-2 flex items-center justify-between text-sm">
       <button
         onClick={openInBrowser}
-        className="bg-black text-white px-3 py-1 rounded-full text-xs font-bold"
+        className="bg-black text-white px-3 py-1 rounded-full text-xs font-bold whitespace-nowrap"
       >
-        Open in Browser ↗
+        {copied ? "✓ Link copied — paste in Safari" : "Open in Browser ↗"}
       </button>
       <span className="text-xs opacity-75 mx-2 flex-1 text-center">
         Tap &#x22EF; → &quot;Open in Browser&quot; for best experience
