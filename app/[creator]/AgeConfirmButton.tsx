@@ -2,7 +2,16 @@
 
 import { useState } from "react";
 
-export default function AgeConfirmButton() {
+/**
+ * Confirm-age button. Posts to /api/age-confirm to set cl_age=1, then:
+ *  - If `redirectTo` is provided (per-link interstitial flow), navigate there.
+ *  - Otherwise (legacy use), reload the current page.
+ */
+export default function AgeConfirmButton({
+  redirectTo,
+}: {
+  redirectTo?: string;
+}) {
   const [loading, setLoading] = useState(false);
 
   async function handleConfirm() {
@@ -10,9 +19,13 @@ export default function AgeConfirmButton() {
     try {
       await fetch("/api/age-confirm", { method: "POST" });
     } catch {
-      // Ignore — cookie may not have been set, but we reload anyway
+      // Best effort — cookie may not have been set, but we'll continue anyway.
     }
-    window.location.reload();
+    if (redirectTo) {
+      window.location.replace(redirectTo);
+    } else {
+      window.location.reload();
+    }
   }
 
   return (
