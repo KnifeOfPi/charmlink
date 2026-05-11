@@ -4,7 +4,6 @@ import { Metadata } from "next";
 import { getCreatorBySlug, getCreatorLinks } from "../../lib/db";
 import { Creator } from "../../lib/types";
 import { CreatorPage } from "./CreatorPage";
-import AgeGateScreen from "./AgeGateScreen";
 import { isLinkPreviewScraper } from "../../lib/scraper-detect";
 import { generateLinkToken } from "../../lib/link-token";
 
@@ -70,15 +69,14 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 export default async function CreatorPageServer({ params }: PageProps) {
   const { creator: slug } = await params;
 
-  // ── Age gate: if cookie absent, show generic screen with no creator data ──
+  // Per-link age gate (Phase 4): the site-wide age gate has been removed.
+  // Anyone (including non-age-confirmed visitors) can view the creator page.
+  // Sensitive links route through `/r/[linkId]` interstitial, which enforces
+  // the age confirmation before revealing the real URL.
   const cookieStore = await cookies();
   const hasAgeCookie = cookieStore.get("cl_age")?.value === "1";
 
-  if (!hasAgeCookie) {
-    return <AgeGateScreen />;
-  }
-
-  // ── Authenticated path: fetch creator data ────────────────────────────────
+  // ── Fetch creator data ────────────────────────────────────────────────────
   let creator: Creator;
 
   try {
@@ -161,8 +159,10 @@ export default async function CreatorPageServer({ params }: PageProps) {
   const ip =
     headersList.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "";
 
-  // Generate HMAC token bound to slug + IP + 5-min bucket + age confirmation
-  const linkToken = generateLinkToken(slug, ip, true);
+  // Generate HMAC token bound to slug + IP + 5-min bucket + age confirmation.
+  // Token is bound to the visitor's current age-confirmation state so that the
+  // links API can serve the appropriate (sanitized vs full) payload.
+  const linkToken = generateLinkToken(slug, ip, hasAgeCookie);
 
   return (
     <>
