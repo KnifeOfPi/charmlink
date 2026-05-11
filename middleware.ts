@@ -95,7 +95,7 @@ function stripVercelHeaders(response: NextResponse): void {
   response.headers.set("server", "nginx");
 }
 
-export async function proxy(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const host = request.headers.get("host") ?? "";
   const hostname = host.split(":")[0]; // strip port
   const pathname = request.nextUrl.pathname;
