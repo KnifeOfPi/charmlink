@@ -937,13 +937,21 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
 
   // ── Click Handlers ──────────────────────────────────────────────────────────
 
+  function isSensitiveLink(link: SocialLink | PremiumLink): boolean {
+    return Boolean(link.sensitive ?? creator.sensitive_default ?? false);
+  }
+
   function getNavigationUrl(link: SocialLink | PremiumLink): string {
+    // Phase 4: sensitive links always route through the per-link interstitial,
+    // which enforces the 18+ confirmation before revealing the real URL.
+    if (isSensitiveLink(link) && link.id) return `/r/${link.id}`;
     if (link.redirect_url) return `/api/redirect/${link.id}`;
     return link.url;
   }
 
   function navigate(link: SocialLink | PremiumLink) {
-    if (link.deeplink_enabled) {
+    // Sensitive links: skip OS-deeplink, always go through the interstitial.
+    if (link.deeplink_enabled && !isSensitiveLink(link)) {
       handleDeepLink(link.url, link.recovery_url || link.url);
       return;
     }
@@ -971,8 +979,10 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
       sessionId: sessionIdRef.current,
       isInstagram,
     });
-    // In IG webview: attempt OS-level deeplink-out before navigating
-    if (isInstagram) {
+    // In IG webview: attempt OS-level deeplink-out before navigating.
+    // Sensitive links bypass the IG-deeplink flow — they must go through the
+    // /r/[linkId] interstitial so the age confirmation isn't lost.
+    if (isInstagram && !isSensitiveLink(link)) {
       const targetUrl = link.redirect_url ? `/api/redirect/${link.id}` : link.url;
       const bare = targetUrl.replace(/^https?:\/\//, "");
       const host = window.location.hostname;
