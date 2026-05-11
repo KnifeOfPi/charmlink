@@ -953,25 +953,18 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
     }
 
     if (!isBot) {
-      let loaded = false;
-      const loadOnInteraction = () => {
-        if (loaded) return;
-        loaded = true;
-        setInteracted(true); // Item 14: explicit flag
-        setTimeout(() => fetchPremiumLinks(), 500);
-        for (const evt of interactionEvents) {
-          window.removeEventListener(evt, loadOnInteraction);
-        }
-      };
-      const interactionEvents = ["scroll", "touchstart", "click", "mousemove", "keydown"];
-      for (const evt of interactionEvents) {
-        window.addEventListener(evt, loadOnInteraction, { once: true, passive: true });
-      }
-      return () => {
-        for (const evt of interactionEvents) {
-          window.removeEventListener(evt, loadOnInteraction);
-        }
-      };
+      // Phase 4.x: fetch premium links immediately on mount.
+      // The previous interaction-gate (scroll/touch/click) was anti-scraping defense-in-depth
+      // but caused empty-state UX for real users — they saw avatar + name with no links
+      // and assumed the page was broken. Anti-scraping is now layered via:
+      //   - HMAC link token (IP-bound, 5-min)
+      //   - Same-origin + Origin/Host validation in /api/links
+      //   - detectBot() with HIGH-confidence decoy
+      //   - Turnstile escalation on LOW confidence
+      //   - Rate limit (30 req/min per IP)
+      // Losing the interaction gate is a small recall hit, worth it to fix breakage.
+      setInteracted(true);
+      void fetchPremiumLinks();
     }
   }, [isBot, fetchPremiumLinks, slug]);
 
