@@ -58,12 +58,11 @@ export async function POST(
   const { allowed } = await rateLimit(ip, "links", 30, 60);
   if (!allowed) return decoyResponse();
 
-  // 1. Require age cookie
+  // 1. Read age confirmation state (Phase 4: no longer a hard gate).
+  //    We still bind the link-token HMAC to ageConfirmed so an attacker can't
+  //    reuse a non-age token to fetch the age-confirmed payload (or vice versa).
   const cookieStore = await cookies();
   const ageConfirmed = cookieStore.get("cl_age")?.value === "1";
-  if (!ageConfirmed) {
-    return decoyResponse();
-  }
 
   // 2. Require same-origin Sec-Fetch-Site
   const secFetchSite = request.headers.get("sec-fetch-site");
@@ -151,30 +150,48 @@ export async function POST(
     }
 
     const links = await getCreatorLinks(creator.id);
+    // Resolve per-link sensitivity, honoring the creator's `sensitive_default`.
+    const creatorSensitiveDefault = Boolean(creator.sensitive_default);
+
     const premiumLinks = links
       .filter((l) => l.link_type === "premium")
-      .map((l) => ({
-        id: l.id,
-        label: l.label,
-        url: l.url,
-        icon: l.icon,
-        subtitle: l.subtitle,
-        badge: l.badge,
-        sensitive: l.sensitive,
-        image_url: l.image_url,
-        deeplink_enabled: l.deeplink_enabled,
-        recovery_url: l.recovery_url,
-        redirect_url: l.redirect_url,
-        // v3
-        show_text_glow: l.show_text_glow,
-        text_glow_color: l.text_glow_color,
-        text_glow_intensity: l.text_glow_intensity,
-        hover_animation: l.hover_animation,
-        border_color: l.border_color,
-        show_border: l.show_border,
-        title_color: l.title_color,
-        title_font_size: l.title_font_size,
-      }));
+      .map((l) => {
+        const isSensitive = Boolean(l.sensitive) || creatorSensitiveDefault;
+        // Sensitive links: never expose the real destination URL until the
+        // visitor has confirmed age. Even with age confirmed we route through
+        // the `/r/[linkId]` interstitial so the redirect is uniform and
+        // server-side (the click never lands the URL in client HTML).
+        //
+        // Special-case: "countdown:..." entries are not URLs, they're a UI
+        // hint for the CountdownTimer component. Leave them untouched.
+        const isCountdown = typeof l.url === "string" && l.url.startsWith("countdown:");
+        let outboundUrl = l.url;
+        if (isSensitive && !isCountdown) {
+          outboundUrl = `/r/${l.id}`;
+        }
+        return {
+          id: l.id,
+          label: l.label,
+          url: outboundUrl,
+          icon: l.icon,
+          subtitle: l.subtitle,
+          badge: l.badge,
+          sensitive: isSensitive,
+          image_url: l.image_url,
+          deeplink_enabled: l.deeplink_enabled,
+          recovery_url: l.recovery_url,
+          redirect_url: l.redirect_url,
+          // v3
+          show_text_glow: l.show_text_glow,
+          text_glow_color: l.text_glow_color,
+          text_glow_intensity: l.text_glow_intensity,
+          hover_animation: l.hover_animation,
+          border_color: l.border_color,
+          show_border: l.show_border,
+          title_color: l.title_color,
+          title_font_size: l.title_font_size,
+        };
+      });
 
     return NextResponse.json({ links: premiumLinks }, { headers: NOINDEX });
   } catch (err) {
