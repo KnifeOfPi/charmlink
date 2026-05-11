@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { detectBot } from "./lib/bot-detect";
+import { isLinkPreviewScraper } from "./lib/scraper-detect";
+import { decoyHtml } from "./lib/decoy/themes";
+import { getCreatorMeta } from "./lib/decoy/cloak";
 
 // ── Custom domain cache (edge-compatible, in-process) ────────────────────────
 interface DomainCacheEntry {
@@ -97,6 +100,7 @@ const VERCEL_HEADERS_TO_STRIP = [
   "x-matched-path",
   "x-nextjs-prerender",
   "x-nextjs-stale-time",
+  "x-powered-by",
   "server",
 ];
 
@@ -105,6 +109,65 @@ function stripVercelHeaders(response: NextResponse): void {
     response.headers.delete(h);
   }
   response.headers.set("server", "nginx");
+}
+
+// ── Decoy response builder (bot-only) ─────────────────────────────────────────
+// Returns an inline HTML response with NO Charmlink/Vercel/Next.js fingerprints.
+// Caller is responsible for deciding whether to invoke this; we just build the
+// response and scrub every header we can.
+function buildDecoyResponse(slug: string): Response {
+  const html = decoyHtml(slug);
+  const res = new Response(html, {
+    status: 200,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      "x-robots-tag": "noindex, nofollow, noarchive",
+      "referrer-policy": "no-referrer",
+      "x-content-type-options": "nosniff",
+      "server": "nginx",
+    },
+  });
+  // Best-effort: remove any framework headers the runtime may have attached.
+  for (const h of VERCEL_HEADERS_TO_STRIP) {
+    res.headers.delete(h);
+  }
+  res.headers.set("server", "nginx");
+  return res;
+}
+
+// ── Page-route detection for decoy bypass ─────────────────────────────────────
+// We only serve the decoy on top-level creator page routes. Static assets, API
+// endpoints, admin, the /r/[linkId] interstitial, and root-level utility paths
+// stay on the normal pipeline.
+function extractDecoyCandidateSlug(
+  hostname: string,
+  pathname: string,
+  customDomainSlug: string | null
+): string | null {
+  if (pathname.startsWith("/api/")) return null;
+  if (pathname.startsWith("/_next/")) return null;
+  if (pathname.startsWith("/admin")) return null;
+  if (pathname.startsWith("/r/")) return null;
+  if (pathname === "/favicon.ico") return null;
+  if (pathname === "/robots.txt") return null;
+  if (pathname === "/sitemap.xml") return null;
+
+  // Custom domain root → slug already resolved.
+  if (!isAppHost(hostname) && (pathname === "/" || pathname === "")) {
+    return customDomainSlug;
+  }
+
+  // /[slug] on the app host: slug is the first path segment, only if there's
+  // exactly one segment (no nested /admin, /api etc., already filtered above).
+  if (pathname === "/" || pathname === "") return null;
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts.length !== 1) return null;
+  const slug = parts[0];
+  // Slug shape: lowercase alphanumeric + dashes/underscores. Anything else is
+  // probably a Next.js system path we don't want to cloak.
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(slug)) return null;
+  return slug;
 }
 
 export async function middleware(request: NextRequest) {
@@ -137,8 +200,14 @@ export async function middleware(request: NextRequest) {
   // routes) misfire on real iOS in-app WebViews (Instagram/Facebook),
   // older mobile browsers, and any client that doesn't send those headers —
   // which previously rendered the hidden bot-decoy page for real humans.
+  const ua = request.headers.get("user-agent") ?? "";
   const { isBot: isBotResult, reason, confidence } = await detectBot(request);
   const isBotFinal = isBotResult && confidence === "high";
+  // Explicit link-preview scrapers (FB, Twitter, Slack, Telegram, Discord, ...)
+  // always get the decoy regardless of detectBot() confidence — these are the
+  // exact UAs Meta uses for the OG fingerprint sweep.
+  const isLinkPreview = isLinkPreviewScraper(ua);
+  const shouldCloak = isBotFinal || isLinkPreview;
 
   // Inject bot signals on REQUEST headers only — never expose on response
   const requestHeaders = new Headers(request.headers);
@@ -146,14 +215,41 @@ export async function middleware(request: NextRequest) {
   requestHeaders.set("x-bot-reason", reason);
   requestHeaders.set("x-bot-confidence", confidence);
 
+  // ── Custom domain resolution (needed for both decoy + normal routing) ─────
+  let customDomainSlug: string | null = null;
+  if (!isAppHost(hostname) && !isApiRoute) {
+    if (pathname === "/" || pathname === "") {
+      customDomainSlug = await resolveCustomDomain(hostname, request);
+    }
+  }
+
+  // ── Bot decoy bypass ──────────────────────────────────────────────────────
+  // For confirmed scrapers/bots, short-circuit with an inline HTML response
+  // that has none of the Next.js/Vercel/Charmlink fingerprints. Per-creator
+  // kill switch: `cloak_enabled = false` falls through to normal rendering.
+  if (shouldCloak) {
+    const candidateSlug = extractDecoyCandidateSlug(
+      hostname,
+      pathname,
+      customDomainSlug
+    );
+    if (candidateSlug) {
+      const meta = await getCreatorMeta("slug", candidateSlug, request);
+      // Serve decoy only when the creator exists AND cloak_enabled is true.
+      // If lookup fails (meta === null) we fall through to normal rendering
+      // rather than risk decoying a real user.
+      if (meta && meta.exists && meta.cloakEnabled) {
+        return buildDecoyResponse(meta.slug ?? candidateSlug);
+      }
+    }
+  }
+
   // ── Custom domain routing ──────────────────────────────────────────────────
   if (!isAppHost(hostname) && !isApiRoute) {
-    // Only rewrite the root path to the creator page
     if (pathname === "/" || pathname === "") {
-      const slug = await resolveCustomDomain(hostname, request);
-      if (slug) {
+      if (customDomainSlug) {
         const url = request.nextUrl.clone();
-        url.pathname = `/${slug}`;
+        url.pathname = `/${customDomainSlug}`;
         // Pass custom domain via request headers only
         requestHeaders.set("x-custom-domain", hostname);
         const response = NextResponse.rewrite(url, { request: { headers: requestHeaders } });

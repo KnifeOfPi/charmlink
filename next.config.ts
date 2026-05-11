@@ -12,6 +12,10 @@ function supabaseHostname(): string {
 }
 
 const nextConfig: NextConfig = {
+  // Suppress the `x-powered-by: Next.js` header on every response. Combined
+  // with middleware-side stripping of x-vercel-* headers and the bot-decoy
+  // bypass, this removes the most obvious cross-domain framework fingerprint.
+  poweredByHeader: false,
   images: {
     remotePatterns: [
       {
