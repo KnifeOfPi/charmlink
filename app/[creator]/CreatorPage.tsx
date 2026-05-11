@@ -948,6 +948,70 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
     const igDetected = ua.includes("Instagram");
     setIsInstagram(igDetected);
 
+    // ── IG WebView auto-escape (mimics slt.bio behavior) ──────────────────────
+    // When loaded inside Instagram's in-app browser, fire the undocumented
+    // `instagram://extbrowser/?url=<current>` scheme. IG intercepts it and
+    // triggers its native "Open in External Browser" handoff to the user's
+    // default browser (Safari on iOS, Chrome on Android). Chains Chrome/
+    // Firefox/Brave fallbacks with 1.5s delays for users without IG's handler.
+    //
+    // Guards:
+    //   - Only fires when UA contains "Instagram" (skip TG/FB/Safari/Chrome)
+    //   - Skip on bot UAs (defense in depth — bots get decoy anyway)
+    //   - sessionStorage flag prevents re-firing if user closes Safari and
+    //     returns to IG (would be obnoxious otherwise)
+    //   - Manual banner chooser remains as visible fallback either way
+    if (igDetected && !isBot) {
+      try {
+        if (!sessionStorage.getItem("cl_escape_fired")) {
+          sessionStorage.setItem("cl_escape_fired", "1");
+          const full = window.location.href;
+          const bare = full.replace(/^https?:\/\//, "");
+          const fire = () => {
+            try {
+              window.location.href =
+                "instagram://extbrowser/?url=" + encodeURIComponent(full);
+            } catch {
+              /* noop */
+            }
+            // Chained fallbacks for users whose IG client doesn't honor
+            // extbrowser/ (older builds, some Android variants).
+            setTimeout(() => {
+              try {
+                window.location.href = "googlechromes://" + bare;
+              } catch {
+                /* noop */
+              }
+            }, 1500);
+            setTimeout(() => {
+              try {
+                window.location.href =
+                  "firefox://open-url?url=" + encodeURIComponent(full);
+              } catch {
+                /* noop */
+              }
+            }, 3000);
+            setTimeout(() => {
+              try {
+                window.location.href =
+                  "brave://open-url?url=" + encodeURIComponent(full);
+              } catch {
+                /* noop */
+              }
+            }, 4500);
+          };
+          if (typeof requestAnimationFrame === "function") {
+            requestAnimationFrame(() => setTimeout(fire, 0));
+          } else {
+            setTimeout(fire, 50);
+          }
+        }
+      } catch {
+        // sessionStorage blocked (private mode, etc.) — silently skip auto-fire,
+        // user can still use the manual chooser banner.
+      }
+    }
+
     // Rotate session ID on every pageview mount (Item 15)
     const sid = createSessionId();
     sessionIdRef.current = sid;
