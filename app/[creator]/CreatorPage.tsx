@@ -454,6 +454,8 @@ function InstagramBrowserBanner() {
   const [platform, setPlatform] = useState<"ios" | "android" | "unknown">("unknown");
   const [dismissed, setDismissed] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
+  const [chromeNotInstalled, setChromeNotInstalled] = useState(false);
 
   useEffect(() => {
     if (localStorage.getItem(IG_DISMISS_KEY) === "1") {
@@ -470,79 +472,87 @@ function InstagramBrowserBanner() {
     setDismissed(true);
   };
 
-  const copyToClipboard = async (url: string) => {
+  const openInChrome = () => {
+    const url = window.location.href;
+
+    if (platform === "ios") {
+      // iOS: googlechrome:// scheme launches Chrome if installed.
+      // If user is still here after 1.5s, Chrome isn't installed → surface hint.
+      const chromeUrl = url.replace(/^https?:\/\//, "googlechrome://");
+      window.location.href = chromeUrl;
+      setTimeout(() => {
+        if (!document.hidden) {
+          setChromeNotInstalled(true);
+          setTimeout(() => setChromeNotInstalled(false), 4000);
+        }
+      }, 1500);
+    } else if (platform === "android") {
+      // Android: intent:// with package=com.android.chrome forces Chrome.
+      const bare = url.replace(/^https?:\/\//, "");
+      window.location.href = `intent://${bare}#Intent;scheme=https;package=com.android.chrome;end`;
+    } else {
+      window.open(url, "_blank");
+    }
+  };
+
+  const copyForSafari = async () => {
+    const url = window.location.href;
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
       setTimeout(() => setCopied(false), 4000);
-      return true;
     } catch {
-      return false;
-    }
-  };
-
-  const openInBrowser = () => {
-    const url = window.location.href;
-
-    if (platform === "ios") {
-      // Apple deprecated x-safari-https:// in iOS 14.5 (2021).
-      // Strategy: try googlechrome:// scheme; if Chrome isn't installed, fall back to clipboard.
-      const chromeUrl = url.replace(/^https?:\/\//, "googlechrome://");
-      let escaped = false;
-
-      const visibilityHandler = () => {
-        if (document.hidden) escaped = true;
-      };
-      document.addEventListener("visibilitychange", visibilityHandler);
-      window.location.href = chromeUrl;
-
-      setTimeout(() => {
-        document.removeEventListener("visibilitychange", visibilityHandler);
-        if (!escaped) {
-          void copyToClipboard(url);
-        }
-      }, 800);
-    } else if (platform === "android") {
-      const bare = url.replace(/^https?:\/\//, "");
-      let escaped = false;
-
-      const visibilityHandler = () => {
-        if (document.hidden) escaped = true;
-      };
-      document.addEventListener("visibilitychange", visibilityHandler);
-      window.location.href = `intent://${bare}#Intent;scheme=https;package=com.android.chrome;end`;
-
-      setTimeout(() => {
-        document.removeEventListener("visibilitychange", visibilityHandler);
-        if (!escaped) {
-          void copyToClipboard(url);
-        }
-      }, 800);
-    } else {
-      window.open(url, "_blank");
+      setCopyFailed(true);
+      setTimeout(() => setCopyFailed(false), 4000);
     }
   };
 
   if (dismissed) return null;
 
   return (
-    <div className="fixed top-0 left-0 right-0 z-50 bg-yellow-500 text-black px-4 py-2 flex items-center justify-between text-sm">
-      <button
-        onClick={openInBrowser}
-        className="bg-black text-white px-3 py-1 rounded-full text-xs font-bold whitespace-nowrap"
-      >
-        {copied ? "✓ Link copied — paste in Safari" : "Open in Browser ↗"}
-      </button>
-      <span className="text-xs opacity-75 mx-2 flex-1 text-center">
-        Tap &#x22EF; → &quot;Open in Browser&quot; for best experience
-      </span>
+    <div className="fixed top-0 left-0 right-0 z-50 bg-yellow-500 text-black px-4 py-2 text-sm">
       <button
         onClick={dismiss}
-        className="text-black/60 text-base font-bold px-1"
+        className="absolute top-1 right-2 text-black/60 text-base font-bold px-1 leading-none"
         aria-label="Dismiss"
       >
         ✕
       </button>
+      <p className="text-xs font-semibold pr-6">
+        Tap below to open this page outside Instagram:
+      </p>
+      <div className="flex gap-2 mt-1.5">
+        <button
+          onClick={openInChrome}
+          className="flex-1 bg-black text-white px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap"
+        >
+          Open in Chrome
+        </button>
+        <button
+          onClick={copyForSafari}
+          className="flex-1 bg-black text-white px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap"
+        >
+          {copied ? "✓ Copied" : "Copy for Safari"}
+        </button>
+      </div>
+      {copied && (
+        <p className="text-[11px] mt-1 opacity-80">
+          ✓ Copied — paste in Safari address bar
+        </p>
+      )}
+      {copyFailed && (
+        <p className="text-[11px] mt-1 opacity-80">
+          Copy blocked — long-press the URL bar to copy
+        </p>
+      )}
+      {chromeNotInstalled && (
+        <p className="text-[11px] mt-1 opacity-80">
+          Chrome not installed — try Copy for Safari
+        </p>
+      )}
+      <p className="text-[11px] mt-1.5 opacity-70">
+        Or tap &#x22EF; at the top → &quot;Open in External Browser&quot;
+      </p>
     </div>
   );
 }
@@ -1073,7 +1083,7 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
         style={{
           ...bgStyle,
           color: theme.textColor,
-          paddingTop: isInstagram ? "5rem" : "3rem",
+          paddingTop: isInstagram ? "8rem" : "3rem",
           fontFamily,
           zIndex: 1,
         }}
