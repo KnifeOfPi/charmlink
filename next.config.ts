@@ -29,6 +29,24 @@ const nextConfig: NextConfig = {
         hostname: "*.supabase.co",
         pathname: "/storage/v1/object/public/**",
       },
+      // OnlyFans public CDN — creators often paste their OF avatar URL
+      // directly into the avatar_url field instead of uploading.
+      {
+        protocol: "https",
+        hostname: "public.onlyfans.com",
+        pathname: "/files/**",
+      },
+      // Imgur — some creators host avatar/banners on imgur.
+      {
+        protocol: "https",
+        hostname: "i.imgur.com",
+        pathname: "/**",
+      },
+      {
+        protocol: "https",
+        hostname: "imgur.com",
+        pathname: "/**",
+      },
     ],
   },
 };
