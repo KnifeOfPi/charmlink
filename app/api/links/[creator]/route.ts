@@ -64,9 +64,22 @@ export async function POST(
   const cookieStore = await cookies();
   const ageConfirmed = cookieStore.get("cl_age")?.value === "1";
 
-  // 2. Require same-origin Sec-Fetch-Site
+  // 2. Sec-Fetch-Site check.
+  //   - "same-origin"  → normal browser XHR from same page (allow)
+  //   - "none"         → top-level navigation, address bar, or app-launched
+  //                       fresh tab (allow — happens on iOS Safari opened via
+  //                       instagram://extbrowser/ handoff)
+  //   - missing         → Safari/older browsers, also allow
+  //   - "cross-site" / "same-site" → reject (real cross-origin scrape)
+  // We require Origin === Host below at step 3 anyway, which is the stronger
+  // anti-CSRF check; sec-fetch-site adds defense in depth without nuking
+  // legit iOS handoff flows.
   const secFetchSite = request.headers.get("sec-fetch-site");
-  if (secFetchSite !== "same-origin") {
+  if (
+    secFetchSite !== null &&
+    secFetchSite !== "same-origin" &&
+    secFetchSite !== "none"
+  ) {
     return decoyResponse();
   }
 
