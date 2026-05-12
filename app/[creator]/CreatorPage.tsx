@@ -967,6 +967,14 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
           sessionStorage.setItem("cl_escape_fired", "1");
           const full = window.location.href;
           const bare = full.replace(/^https?:\/\//, "");
+          // Platform detection — chained Chrome/Firefox/Brave fallbacks
+          // only make sense on Android. On iOS, `instagram://extbrowser/`
+          // hands off to Safari natively and the JS timer queue stays
+          // alive in the IG tab during the brief handoff window — chained
+          // setTimeouts then fire `googlechromes://` which iOS resolves
+          // to Chrome AFTER the Safari handoff, hijacking the user out
+          // of their default browser. iOS gets the IG scheme only.
+          const isIOS = /iPad|iPhone|iPod/.test(ua) && !(window as unknown as { MSStream?: unknown }).MSStream;
           const fire = () => {
             try {
               window.location.href =
@@ -974,8 +982,12 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
             } catch {
               /* noop */
             }
-            // Chained fallbacks for users whose IG client doesn't honor
-            // extbrowser/ (older builds, some Android variants).
+            if (isIOS) {
+              // iOS: stop here. Safari handoff is reliable, no chain needed.
+              return;
+            }
+            // Android-only chained fallbacks for users whose IG client
+            // doesn't honor extbrowser/ (older builds, some variants).
             setTimeout(() => {
               try {
                 window.location.href = "googlechromes://" + bare;
