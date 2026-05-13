@@ -625,11 +625,24 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
         const data = await res.json();
         setForm((p) => ({ ...p, avatar_url: data.url }));
       } else {
-        const err = await res.json();
-        setAvatarError((err as { error?: string }).error ?? "Upload failed");
+        let message = `Upload failed (HTTP ${res.status})`;
+        try {
+          const err = (await res.json()) as { error?: string; details?: string };
+          if (err?.error) {
+            message = err.error;
+            if (err.details && process.env.NODE_ENV !== "production") {
+              message += ` — ${err.details}`;
+            }
+          }
+        } catch {
+          // body was not JSON; keep the HTTP status message
+        }
+        setAvatarError(message);
       }
-    } catch {
-      setAvatarError("Upload failed");
+    } catch (err) {
+      setAvatarError(
+        err instanceof Error ? `Upload failed: ${err.message}` : "Upload failed",
+      );
     } finally {
       setAvatarUploading(false);
     }
@@ -886,7 +899,7 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
                           <input
                             ref={fileInputRef}
                             type="file"
-                            accept="image/jpeg,image/png,image/webp,image/gif"
+                            accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,.heic,.heif"
                             className="hidden"
                             onChange={(e) => {
                               const file = e.target.files?.[0];
@@ -902,7 +915,7 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
                                 {dragOver ? "Drop image here" : "Click or drag image to upload"}
                               </p>
                               <p className="text-xs text-muted-foreground/60 mt-1">
-                                JPG, PNG, WebP, GIF · Max 2 MB
+                                JPEG, PNG, WebP, GIF, HEIC · Max 10 MB
                               </p>
                             </>
                           )}

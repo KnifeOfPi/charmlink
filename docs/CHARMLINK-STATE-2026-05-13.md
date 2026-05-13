@@ -162,6 +162,7 @@ When a request hits `hannazuki.com/waifuzukii`:
 | `TURNSTILE_SECRET_KEY` | Server-side Turnstile verify | optional (gracefully skipped) |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Public widget key (`Charmlink` widget) | optional (gracefully skipped) |
 | `CHARMLINK_ENABLE_BFM` | Set `1` to flip CF Bot Fight Mode on — **leave unset** | no |
+| `BLOB_READ_WRITE_TOKEN` | Auto-injected by Vercel when Vercel Blob is enabled on the project. Required at runtime for `/api/admin/avatar` uploads. Don’t set manually — enable Blob via the Vercel dashboard (Storage → Create → Blob) and Vercel adds the var across all envs. | yes (prod) |
 
 Token / secret storage off-repo:
 - CF token: `~/.openclaw/cloudflare-token` (currently `cfat_sUuTw...` — **lacks

@@ -47,6 +47,14 @@ const nextConfig: NextConfig = {
         hostname: "imgur.com",
         pathname: "/**",
       },
+      // Vercel Blob — admin-uploaded creator avatars live here.
+      // Each Blob store gets a unique subdomain like
+      // <hash>.public.blob.vercel-storage.com.
+      {
+        protocol: "https",
+        hostname: "*.public.blob.vercel-storage.com",
+        pathname: "/**",
+      },
     ],
   },
 };
