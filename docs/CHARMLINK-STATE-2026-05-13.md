@@ -2,7 +2,7 @@
 
 This is the "pick it up cold weeks later" doc. Reads top-to-bottom and assumes
 no prior context. For deep history per phase, see `memory/` daily logs
-referenced inline.
+referenced inline. **Last updated:** 2026-05-13 15:20 PDT (post-Blob migration).
 
 ---
 
@@ -162,7 +162,7 @@ When a request hits `hannazuki.com/waifuzukii`:
 | `TURNSTILE_SECRET_KEY` | Server-side Turnstile verify | optional (gracefully skipped) |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Public widget key (`Charmlink` widget) | optional (gracefully skipped) |
 | `CHARMLINK_ENABLE_BFM` | Set `1` to flip CF Bot Fight Mode on — **leave unset** | no |
-| `BLOB_READ_WRITE_TOKEN` | Auto-injected by Vercel when Vercel Blob is enabled on the project. Required at runtime for `/api/admin/avatar` uploads. Don’t set manually — enable Blob via the Vercel dashboard (Storage → Create → Blob) and Vercel adds the var across all envs. | yes (prod) |
+| `BLOB_READ_WRITE_TOKEN` | Auto-injected by Vercel when a Blob store is connected to the project. Required at runtime for `/api/admin/avatar` uploads. **Currently enabled** — store `charmlink-blob` (id `store_fmeJquaTvcKmJHZU`, public, iad1) connected 2026-05-13 via API. If you ever add Blob to a fresh project, **force a redeploy afterwards** — builds that completed before the env var was injected won't have access to the token. | yes (prod) |
 
 Token / secret storage off-repo:
 - CF token: `~/.openclaw/cloudflare-token` (currently `cfat_sUuTw...` — **lacks
@@ -225,6 +225,28 @@ These cost us hours; future-me should not re-learn them.
 - Has to happen in Next.js middleware (`fa23217`)
 - Path-stripping IG sometimes does made this user-visible
 
+### 7.4 Vercel storage integrations need a forced redeploy
+- When you add a Blob/KV/Postgres store to a Vercel project AFTER its latest
+  build, the env var (e.g. `BLOB_READ_WRITE_TOKEN`) is injected but the
+  already-built deployment doesn't have it. Routes that read it will throw at
+  runtime.
+- **Fix:** force a fresh redeploy via
+  `POST /v13/deployments?forceNew=1` with `deploymentId` of the last good build,
+  OR push an empty commit, OR click "Redeploy" in the dashboard.
+- Confirmed 2026-05-13 with the avatar Blob migration — commit `3cd5ce3`
+  initially built without the token, redeploy `dpl_DiYmsvx6CJyiLA7nKJk2gXZgg2bX`
+  baked it in.
+
+### 7.5 Don't delegate engineering work to ACP subagent loops
+- ACP subagent runs that loop tsc/eslint/build hit context overflow and time
+  out (~4 min, ~46k tokens). Vela has timed out this way twice on the same task.
+- **Fix:** for any engineering delegation, use a single fat
+  `claude -p --dangerously-skip-permissions` CLI call inside `exec`. Sub-tool
+  output stays in the CLI's own context, not the orchestrator's. See CODING.md
+  in the agent root.
+- This is an OpenClaw orchestration rule, not a Charmlink rule, but it bit us
+  on the Blob migration so worth noting.
+
 ---
 
 ## 8. Recent Commit Sequence (2026-05-11 → 2026-05-13)
@@ -232,6 +254,8 @@ These cost us hours; future-me should not re-learn them.
 In reverse chronological order. All on `main`.
 
 ```
+3cd5ce3 feat(admin): Vercel Blob storage for avatar uploads (drop data-URL hack)   ← Avatar upload fix
+57a7c19 docs: comprehensive state-of-repo doc for cold resume
 910f445 fix(images): whitelist public.onlyfans.com + imgur for Next.js image optimizer
 f2aaac9 fix(links-api): allow sec-fetch-site=none for iOS extbrowser handoff
 85c17dc fix(ig-escape): iOS-only IG scheme, skip Chrome/Firefox/Brave chain
@@ -255,7 +279,7 @@ b6605a7 Hardening Phase 1: kill cloaking signals (5 changes) (#1)
 
 ---
 
-## 9. Verified Working (last checked 2026-05-11 ~21:00 PDT)
+## 9. Verified Working (last checked 2026-05-13 ~15:15 PDT)
 
 - `curl -A facebookexternalhit hannazuki.com/waifuzukii` → 200, decoy title
   "Composting in a small flat: a slightly tedious how-to"
@@ -268,6 +292,8 @@ b6605a7 Hardening Phase 1: kill cloaking signals (5 changes) (#1)
   fingerprints
 - IG iOS WebView → page paints, auto extbrowser handoff to Safari, premium
   links load (sec-fetch-site `none` allowance is what made this work)
+- `https://charmlink.vercel.app` HTTP 200 after Blob redeploy `dpl_DiYmsvx6CJyiLA7nKJk2gXZgg2bX`
+- Avatar upload endpoint live on commit `3cd5ce3` with `BLOB_READ_WRITE_TOKEN` injected
 
 ---
 
@@ -283,6 +309,10 @@ These were on the radar but not done. Pick up as needed.
 - **Decoy themes expansion** — currently 8–10 wholesome blogs in
   `lib/decoy/themes.ts`. Could add more variety to reduce repeat patterns
   across creators.
+- **Avatar data-URL migration** — existing creators may still have
+  `data:image/...` URLs in `avatar_url`. They render fine but bloat DB rows.
+  Not blocking. Will age out organically as creators re-upload. Could write a
+  one-shot migration to extract + push to Blob if it becomes a problem.
 - **Phase 6 candidate ideas (not spec'd):**
   - Per-link click telemetry rollup in admin
   - Auto-detect IG-blocked domains via Charmlink's own analytics → flag for
