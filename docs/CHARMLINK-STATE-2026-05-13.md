@@ -2,7 +2,7 @@
 
 This is the "pick it up cold weeks later" doc. Reads top-to-bottom and assumes
 no prior context. For deep history per phase, see `memory/` daily logs
-referenced inline. **Last updated:** 2026-05-13 15:20 PDT (post-Blob migration).
+referenced inline. **Last updated:** 2026-05-14 11:15 PDT (post-gray→orange CF flip fix).
 
 ---
 
@@ -78,7 +78,7 @@ charmlink/
 │  ├─ decoy/
 │  │  ├─ themes.ts                ← 8–10 wholesome decoy themes (Phase 5)
 │  │  └─ cloak.ts                 ← scraper bypass renderer
-│  ├─ themes.ts                   ← 12 visual themes for real creators
+│  ├─ themes.ts                   ← 13 visual themes for real creators
 │  ├─ fonts.ts                    ← Google Fonts dynamic loader
 │  └─ db.ts, analytics.ts, types.ts, utils.ts
 ├─ middleware.ts                  ← host → creator rewrite, scraper decoy injection, isbot UA check
@@ -87,7 +87,8 @@ charmlink/
 │  ├─ migrate.ts, migrate-v2.ts, migrate-v3.ts ← schema migrations
 │  └─ cf-backfill.ts              ← provision/repair CF state across all creators
 ├─ supabase/migrations/
-│  └─ 20260511000000_add_cloak_enabled.sql ← Phase 5 toggle column
+│  ├─ 20260508000000_create_honeypot_logs.sql ← Phase 2 honeypot logging
+│  └─ 20260511000000_add_cloak_enabled.sql   ← Phase 5 toggle column
 └─ docs/
    ├─ PHASE-3-CLOUDFLARE.md       ← CF wiring deep-dive (canonical)
    ├─ CharmLink-Admin-SOP.pdf     ← admin SOP for KOPi
@@ -102,14 +103,14 @@ charmlink/
 When a request hits `hannazuki.com/waifuzukii`:
 
 1. **Cloudflare edge** (Phase 3) — orange-cloud proxies through:
-   - **Active WAF rules per zone (5-cap on Free plan):**
-     - Empty UA block
-     - Bad-UA list block (curl/python-requests/etc.)
-     - Datacenter ASN managed-challenge (AWS 16509, GCP 15169, Azure 8075,
-       CF 13335, Linode 63949, DO 14061, OVH 16276, Hetzner 24940, Vultr
-       20473, Choopa 16276 — full list in `lib/datacenter-asns.ts`)
-     - Meta ASN managed-challenge (Facebook 32934)
-     - Empty UA OR Tor exit nodes
+   - **Active WAF rules per zone (6 rules via legacy `/firewall/rules` — Free-plan compatible):**
+     - `charmlink:block-empty-ua` — empty UA → block
+     - `charmlink:block-meta-asn` — Meta ASN 32934 → managed-challenge
+     - `charmlink:block-bad-uas` — bad UA list (curl/python-requests/wget/etc.) → block
+     - `charmlink:challenge-datacenter-asns` — 8 hosting ASNs `{16509, 14618, 396982, 32934, 13335, 14061, 8075, 15169}` (AWS, AWS-GovCloud, Tencent, Meta, CF, DO, Azure, GCP) → managed-challenge
+     - `charmlink:challenge-cf-bot` — CF's own `cf.client.bot` flag → managed-challenge
+     - `charmlink:block-tor` — Tor exit nodes (country `T1`) → block
+   - **Note:** `lib/datacenter-asns.ts` carries a wider 15-ASN list (used for app-side scoring in `lib/bot-detect.ts`), but only the 8 above are blocked at the CF edge — Free-plan rule expression length limits us.
    - **Bot Fight Mode:** OFF by default (`CHARMLINK_ENABLE_BFM` flag) — Free
      tier BFM nukes real Chrome users
    - **AI Bots + Content Bots:** blocked (GPTBot, ClaudeBot, Bytespider)
@@ -185,13 +186,14 @@ Shared instance with CharmaSutra. Tables:
   dashboard)
 - `kv_*` (Vercel KV) — rate limit counters, ban list
 
-Migrations live in `supabase/migrations/`. Most recent:
-`20260511000000_add_cloak_enabled.sql`. Run via Vercel-deployed migration
+Migrations live in `supabase/migrations/`. Two so far: honeypot logs
+(`20260508000000_create_honeypot_logs.sql`) and Phase-5 cloak toggle
+(`20260511000000_add_cloak_enabled.sql`, most recent). Run via Vercel-deployed migration
 script or feed SQL to Nate (no local DATABASE_URL on Cepheus machine).
 
 ---
 
-## 7. The Three Hard-Earned Lessons (lock these in)
+## 7. The Hard-Earned Lessons (lock these in)
 
 These cost us hours; future-me should not re-learn them.
 
@@ -237,7 +239,18 @@ These cost us hours; future-me should not re-learn them.
   initially built without the token, redeploy `dpl_DiYmsvx6CJyiLA7nKJk2gXZgg2bX`
   baked it in.
 
-### 7.5 Don't delegate engineering work to ACP subagent loops
+### 7.5 CF orange-cloud during cert issuance kills new domains (gray→orange flip required)
+- Symptom: visiting a freshly-added custom domain returns `SSL handshake failed` (or CF `525`) for the first ~3 minutes.
+- Root cause: chicken-and-egg between Vercel's ACME challenge and CF's edge cert
+  - `addDomain()` triggers Vercel → Let's Encrypt HTTP-01 challenge
+  - If CF CNAME is already proxied (orange) when the challenge fires, CF intercepts the validation request and answers with its own edge cert — which doesn't exist for this hostname yet → handshake fails
+  - Vercel never finishes issuance, browser sees a TLS error forever
+- **Fix (shipped `757569d` on 2026-05-14):** provisioning now creates CNAME `proxied=false` (gray) first, polls Vercel `/v10/projects/.../domains/<d>` until `verified=true` and no pending verification challenges (max 180s), then `setRecordProxied(zone, domain, true)` flips it to orange.
+- New `provisionZone` step order: findZone → ensureProxiedDnsRecord(`proxied=false`) → settings → BFM (gated) → ABP → WAF → **waitForVercelCert** → **flipToProxied**.
+- `scripts/cf-backfill.ts` also repairs existing gray-stuck zones — re-run if a domain was added during the broken-flow window.
+- Manual rescue (if waitForVercelCert times out): in CF dashboard, set the CNAME to DNS-only, wait ~30s for `curl -sI https://<domain>` to return 200 with a valid LE cert, then flip back to proxied. Or: `curl -X PATCH "https://api.cloudflare.com/client/v4/zones/<zone>/dns_records/<rec>" -H "Authorization: Bearer $CF_TOKEN" -d '{"proxied":true}'`.
+
+### 7.6 Don't delegate engineering work to ACP subagent loops
 - ACP subagent runs that loop tsc/eslint/build hit context overflow and time
   out (~4 min, ~46k tokens). Vela has timed out this way twice on the same task.
 - **Fix:** for any engineering delegation, use a single fat
@@ -254,6 +267,7 @@ These cost us hours; future-me should not re-learn them.
 In reverse chronological order. All on `main`.
 
 ```
+757569d fix(domains): gray→orange CF flip after Vercel cert issues (fixes SSL handshake on new domains)
 3cd5ce3 feat(admin): Vercel Blob storage for avatar uploads (drop data-URL hack)   ← Avatar upload fix
 57a7c19 docs: comprehensive state-of-repo doc for cold resume
 910f445 fix(images): whitelist public.onlyfans.com + imgur for Next.js image optimizer
