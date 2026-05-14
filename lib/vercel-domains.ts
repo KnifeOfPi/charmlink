@@ -88,6 +88,34 @@ export async function getDomainStatus(domain: string): Promise<VercelDomainStatu
   return vercelFetch("GET", `/v10/projects/${projectId}/domains/${domain}`) as Promise<VercelDomainStatus>;
 }
 
+/**
+ * Poll until the Vercel domain is verified and has no pending ACME challenges.
+ * Resolves with { ready: true } when the cert is issued, or { ready: false, reason } on timeout.
+ */
+export async function waitForDomainReady(
+  domain: string,
+  timeoutMs = 180000,
+  pollMs = 5000
+): Promise<{ ready: true } | { ready: false; reason: string }> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const status = await getDomainStatus(domain);
+      const hasPendingChallenges = status.verification && status.verification.length > 0;
+      if (status.verified && !hasPendingChallenges) {
+        return { ready: true };
+      }
+    } catch {
+      // Ignore transient errors during polling; retry until deadline
+    }
+    await new Promise<void>((r) => setTimeout(r, pollMs));
+  }
+  return {
+    ready: false,
+    reason: `timed out after ${timeoutMs / 1000}s waiting for Vercel cert`,
+  };
+}
+
 export async function listDomains(): Promise<VercelDomainStatus[]> {
   const { projectId } = getConfig();
   const data = await vercelFetch("GET", `/v10/projects/${projectId}/domains`) as VercelDomainList;

@@ -11,6 +11,8 @@
 // - Bot Fight Mode requires `enable_js: true` to be sent alongside `fight_mode: true`,
 //   otherwise CF rejects with "cannot enable Fight_Mode while EnableJS is disabled".
 
+import { waitForDomainReady } from "./vercel-domains";
+
 const CF_BASE = "https://api.cloudflare.com/client/v4";
 const VERCEL_CNAME_TARGET = "cname.vercel-dns.com";
 
@@ -164,13 +166,23 @@ export async function findZoneByDomain(domain: string): Promise<ZoneInfo | null>
 // ── DNS record management ─────────────────────────────────────────────────────
 
 /**
- * Ensure an orange-cloud proxied CNAME → cname.vercel-dns.com exists for the domain.
+ * Ensure a CNAME → cname.vercel-dns.com exists for the domain.
  * For apex domains (name == zone apex), CF uses CNAME flattening automatically.
  * Removes conflicting A/AAAA/CNAME records first.
+ *
+ * The optional `proxied` parameter (default true) controls whether the CNAME is
+ * orange-cloud (proxied) or gray-cloud (DNS-only). Pass false during initial
+ * provisioning so Vercel can complete the ACME HTTP-01 challenge before CF
+ * starts proxying; flip to true afterward via setRecordProxied / goOrangeAfterCertReady.
+ *
+ * If an existing CNAME to the right target is already orange-cloud, it is treated
+ * as "already correct or better" regardless of the requested proxied value — we
+ * never downgrade a working domain on re-provision.
  */
 export async function ensureProxiedDnsRecord(
   zoneId: string,
-  domain: string
+  domain: string,
+  proxied = true
 ): Promise<{ created: boolean; updated: boolean; recordId: string }> {
   // Fetch existing records for this name
   const listRes = await cfFetch<CFDnsRecord[]>(
@@ -179,9 +191,13 @@ export async function ensureProxiedDnsRecord(
   );
   const existing = listRes.result;
 
-  // Check if already correctly set
+  // Check if already correctly set. Orange-cloud is treated as "≥ gray" so we
+  // never downgrade an already-working domain when provisionZone is re-run.
   const existing_cname = existing.find(
-    (r) => r.type === "CNAME" && r.content === VERCEL_CNAME_TARGET && r.proxied
+    (r) =>
+      r.type === "CNAME" &&
+      r.content === VERCEL_CNAME_TARGET &&
+      (r.proxied === proxied || r.proxied)
   );
   if (existing_cname) {
     return { created: false, updated: false, recordId: existing_cname.id };
@@ -194,7 +210,7 @@ export async function ensureProxiedDnsRecord(
     }
   }
 
-  // Create proxied CNAME
+  // Create CNAME with the requested proxied state
   const createRes = await cfFetch<CFDnsRecord>(
     "POST",
     `/zones/${zoneId}/dns_records`,
@@ -203,7 +219,7 @@ export async function ensureProxiedDnsRecord(
       name: domain,
       content: VERCEL_CNAME_TARGET,
       ttl: 1, // Auto TTL
-      proxied: true,
+      proxied,
     }
   );
 
@@ -213,6 +229,37 @@ export async function ensureProxiedDnsRecord(
     updated: wasExisting,
     recordId: createRes.result.id,
   };
+}
+
+/**
+ * Flip the proxied flag on the existing CNAME record for a domain.
+ * Looks up the record by name, then PATCHes /zones/$zoneId/dns_records/$recordId.
+ * Returns { updated: false } if the record is already in the desired state.
+ */
+export async function setRecordProxied(
+  zoneId: string,
+  domain: string,
+  proxied: boolean
+): Promise<{ updated: boolean; recordId?: string; error?: string }> {
+  const listRes = await cfFetchSafe<CFDnsRecord[]>(
+    "GET",
+    `/zones/${zoneId}/dns_records?name=${encodeURIComponent(domain)}&per_page=100`
+  );
+  if (!listRes.ok) return { updated: false, error: listRes.error };
+
+  const cname = listRes.data?.find(
+    (r) => r.type === "CNAME" && r.content === VERCEL_CNAME_TARGET
+  );
+  if (!cname) return { updated: false, error: "CNAME record not found" };
+  if (cname.proxied === proxied) return { updated: false, recordId: cname.id };
+
+  const patchRes = await cfFetchSafe<CFDnsRecord>(
+    "PATCH",
+    `/zones/${zoneId}/dns_records/${cname.id}`,
+    { proxied }
+  );
+  if (!patchRes.ok) return { updated: false, error: patchRes.error };
+  return { updated: true, recordId: cname.id };
 }
 
 /** Remove our CNAME record for a domain. Leaves zone settings and WAF intact. */
@@ -505,6 +552,42 @@ interface ProvisionStep {
   detail?: string;
 }
 
+/**
+ * Wait for the Vercel cert to be issued (via gray-cloud CNAME), then flip the
+ * CNAME to orange-cloud. Called at the end of provisionZone after all other
+ * steps so the ACME challenge has an unproxied path.
+ *
+ * On timeout (180s default) leaves the record gray-cloud and pushes a failed
+ * waitForVercelCert step — does NOT abort the overall provision.
+ */
+async function goOrangeAfterCertReady(
+  zoneId: string,
+  domain: string,
+  steps: ProvisionStep[]
+): Promise<void> {
+  const certResult = await waitForDomainReady(domain);
+
+  if (!certResult.ready) {
+    steps.push({
+      name: "waitForVercelCert",
+      ok: false,
+      detail: `${certResult.reason}; CNAME left gray-cloud — flip to orange manually when cert is ready`,
+    });
+    return;
+  }
+
+  steps.push({ name: "waitForVercelCert", ok: true, detail: "Vercel cert verified" });
+
+  const flip = await setRecordProxied(zoneId, domain, true);
+  steps.push({
+    name: "flipToProxied",
+    ok: flip.updated || (!flip.error && flip.recordId !== undefined),
+    detail: flip.updated
+      ? `record ${flip.recordId} flipped to proxied=true`
+      : flip.error ?? "already proxied",
+  });
+}
+
 export async function provisionZone(domain: string): Promise<{
   ok: boolean;
   zoneFound: boolean;
@@ -529,13 +612,15 @@ export async function provisionZone(domain: string): Promise<{
 
   steps.push({ name: "findZone", ok: true, detail: `zone ${zone.id} (${zone.name})` });
 
-  // Step 2: DNS record
+  // Step 2: DNS record — create gray-cloud (DNS-only) initially so Vercel can
+  // complete the ACME HTTP-01 challenge before CF starts proxying.
+  // goOrangeAfterCertReady (below) waits for the cert and flips to orange.
   try {
-    const dns = await ensureProxiedDnsRecord(zone.id, domain);
+    const dns = await ensureProxiedDnsRecord(zone.id, domain, false);
     steps.push({
       name: "ensureProxiedDnsRecord",
       ok: true,
-      detail: `recordId=${dns.recordId} created=${dns.created} updated=${dns.updated}`,
+      detail: `recordId=${dns.recordId} created=${dns.created} updated=${dns.updated} proxied=false (gray-cloud)`,
     });
   } catch (err) {
     steps.push({
@@ -632,6 +717,11 @@ export async function provisionZone(domain: string): Promise<{
       detail: err instanceof Error ? err.message : String(err),
     });
   }
+
+  // Step 7+8: wait for Vercel cert (gray-cloud allows ACME challenge through),
+  // then flip CNAME to orange-cloud. Non-fatal: on timeout, leaves gray-cloud
+  // and records ok=false on waitForVercelCert so the caller can surface it.
+  await goOrangeAfterCertReady(zone.id, domain, steps);
 
   const criticalSteps = steps.filter((s) =>
     ["findZone", "ensureProxiedDnsRecord"].includes(s.name)

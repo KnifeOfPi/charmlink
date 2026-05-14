@@ -60,7 +60,8 @@ async function main() {
 
   // 2. Verify token with CF API
   // Import after token is set so env var is available
-  const { verifyToken, provisionZone } = await import("../lib/cloudflare");
+  const { verifyToken, provisionZone, setRecordProxied } = await import("../lib/cloudflare");
+  const { waitForDomainReady } = await import("../lib/vercel-domains");
 
   console.log("Verifying Cloudflare token...");
   const verify = await verifyToken();
@@ -164,6 +165,32 @@ async function main() {
           .join("; ");
         console.log(`⚠️  partial: ${failed}`);
         errorCount++;
+      }
+
+      // Gray→orange repair: if the cert-wait timed out (or domain was provisioned
+      // before this fix), check cert readiness again and flip to orange if ready.
+      // If flipToProxied already succeeded, setRecordProxied will no-op.
+      if (result.zoneFound && result.zone) {
+        const flipOk = result.steps.find((s) => s.name === "flipToProxied")?.ok === true;
+        if (!flipOk) {
+          try {
+            const certCheck = await waitForDomainReady(domain, 30_000, 5000);
+            if (certCheck.ready) {
+              const flip = await setRecordProxied(result.zone.id, domain, true);
+              if (flip.updated) {
+                process.stdout.write(`     ↳ orange-cloud flip: ✓\n`);
+              } else if (!flip.error) {
+                process.stdout.write(`     ↳ orange-cloud: already proxied\n`);
+              } else {
+                process.stdout.write(`     ↳ orange-cloud flip error: ${flip.error}\n`);
+              }
+            } else {
+              process.stdout.write(`     ↳ orange-cloud: cert not ready yet — re-run backfill later\n`);
+            }
+          } catch (err) {
+            process.stdout.write(`     ↳ orange-cloud flip skipped: ${err instanceof Error ? err.message : String(err)}\n`);
+          }
+        }
       }
 
       // Defense-in-depth: sync widget allow-list. Idempotent — addHostnameToWidget

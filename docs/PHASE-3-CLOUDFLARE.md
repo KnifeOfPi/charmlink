@@ -73,24 +73,35 @@ The endpoint:
 1. Adds the domain to the Vercel project (triggers SSL cert provisioning)
 2. Calls `provisionZone(domain)` which:
    - Finds the CF zone for the domain
-   - Creates/updates a proxied CNAME → `cname.vercel-dns.com` (orange cloud)
+   - Creates a **gray-cloud** (DNS-only) CNAME → `cname.vercel-dns.com` initially
    - Applies standard security settings (SSL strict, HTTPS-always, TLS 1.2+, etc.)
-   - Enables Bot Fight Mode
+   - Enables Bot Fight Mode and advanced bot protections
    - Applies 6 WAF custom rules (tagged `charmlink:`)
-   - Applies response header transform rule (strips Vercel headers)
+   - **Waits up to 180s** for Vercel to verify the domain and issue the TLS cert
+   - Once verified, **flips the CNAME to orange-cloud** (proxied=true)
 
 Response includes per-step status in `cloudflare.steps` so you can see what succeeded or failed.
 
 What actually gets applied per zone (in order):
 
 1. `findZone` — zone lookup by domain.
-2. `ensureProxiedDnsRecord` — orange-cloud CNAME → `cname.vercel-dns.com` (replaces conflicting A/AAAA/CNAME records).
+2. `ensureProxiedDnsRecord` — gray-cloud (DNS-only) CNAME → `cname.vercel-dns.com` initially (replaces conflicting A/AAAA/CNAME records). If an orange-cloud CNAME already exists (re-provision), it is left unchanged.
 3. `applyStandardSettings` — SSL=strict, always_use_https, min_tls=1.2, opportunistic_encryption, browser_check, security_level=medium, automatic_https_rewrites.
 4. `enableBotFightMode` — `{ fight_mode: true, enable_js: true }` (both required together by CF).
 5. `enableAdvancedBotProtection` — `{ ai_bots_protection: "block", content_bots_protection: "block" }` (Crawler protection is intentionally **NOT** enabled — would block Google indexing.)
 6. `applyWafRules` — 6 charmlink-tagged rules via legacy `/firewall/rules` + `/filters`.
+7. `waitForVercelCert` — polls `GET /v10/projects/$projectId/domains/$domain` every 5s up to 180s until `verified === true` and no ACME challenges are pending. Gray-cloud lets the ACME HTTP-01 challenge reach Vercel unproxied.
+8. `flipToProxied` — PATCHes the CNAME record to `proxied=true` (orange-cloud) once the cert is confirmed. If step 7 times out, this step is skipped and the CNAME is left gray-cloud (see Troubleshooting below).
 
 Transform Rules (response header rewriting) are intentionally not applied; see the Free-Tier Limitations section.
+
+#### Why gray-cloud first?
+
+Cloudflare's orange-cloud proxy intercepts all HTTP traffic — including Vercel's ACME HTTP-01
+challenge used to issue the Let's Encrypt cert. If CF is proxying before the cert exists, Vercel
+can't complete the challenge and the domain stays unverified, causing a 525/526 SSL handshake
+error. Starting gray-cloud lets the ACME challenge flow through directly to Vercel, then flipping
+to orange-cloud after the cert is issued avoids the chicken-and-egg problem entirely.
 
 ---
 
@@ -149,13 +160,17 @@ failure, DB failure).
 Vercel tops out around **100 SANs per cert**. If you have >100 custom domains, you'll need to split
 them across multiple Vercel projects. Contact Vercel support if approaching this limit.
 
-### SSL Provisioning Lag
+### SSL Provisioning Lag / Stuck Gray-Cloud
 
-After adding a domain, Vercel needs a few minutes to provision the TLS cert. During this window:
-- CF may show a 525/526 error — this is expected
-- The CNAME must be proxied (orange cloud) for Vercel cert provisioning to work via CNAME
-  flattening
-- Wait 5–15 minutes and retry
+`provisionZone` waits up to 180s for Vercel to verify the cert before flipping to orange-cloud.
+If the cert takes longer (unusual but possible), the `waitForVercelCert` step will show `ok: false`
+and the CNAME is left gray-cloud. Fix options:
+
+1. **Re-run provisioning** — re-POST to `/api/admin/domains` or run `npm run cf-backfill`. Both
+   will attempt the cert-wait + orange-flip again. The backfill also does a quick 30s re-check
+   after `provisionZone` returns, so a second run usually recovers.
+2. **Manual flip** — once `verified: true` appears in Vercel dashboard, flip the CNAME to
+   orange-cloud via CF Dashboard → DNS, or call `setRecordProxied(zoneId, domain, true)` directly.
 
 ### Orange-Cloud + Vercel Headers (Free-Tier Limitation)
 
