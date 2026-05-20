@@ -104,6 +104,14 @@ interface AnalyticsSummary {
   ctr: number;
 }
 
+interface CreatorDomain {
+  id: string;
+  creator_id: string;
+  domain: string;
+  is_primary: boolean;
+  created_at: string;
+}
+
 // ── Color Input ───────────────────────────────────────────────────────────────
 
 function ColorInput({
@@ -598,8 +606,12 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [saveSuccess, setSaveSuccess] = useState(false);
-  const [domainStatus, setDomainStatus] = useState<string>("");
+
+  // Domains state
+  const [domains, setDomains] = useState<CreatorDomain[]>([]);
+  const [newDomain, setNewDomain] = useState("");
   const [addingDomain, setAddingDomain] = useState(false);
+  const [domainStatus, setDomainStatus] = useState<string>("");
 
   const [form, setForm] = useState<Partial<DBCreator>>({});
   const [avatarUploading, setAvatarUploading] = useState(false);
@@ -659,9 +671,10 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
     setLoading(true);
     try {
       const headers = authHeaders();
-      const [creatorRes, linksRes] = await Promise.all([
+      const [creatorRes, linksRes, domainsRes] = await Promise.all([
         fetch(`/api/admin/creators/${id}`, { headers }),
         fetch(`/api/admin/creators/${id}/links`, { headers }),
+        fetch(`/api/admin/creators/${id}/domains`, { headers }),
       ]);
 
       if (creatorRes.ok) {
@@ -678,6 +691,9 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
       if (linksRes.ok) {
         setLinks(await linksRes.json());
       }
+      if (domainsRes.ok) {
+        setDomains(await domainsRes.json());
+      }
     } finally {
       setLoading(false);
     }
@@ -689,7 +705,10 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
     setSaveError("");
     setSaveSuccess(false);
     try {
-      const payload = { ...form, custom_domain: form.custom_domain || null };
+      // custom_domain is managed via the domains sub-resource (trigger keeps it in sync)
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { custom_domain: _cd, ...formWithoutDomain } = form;
+      const payload = formWithoutDomain;
       const res = await fetch(`/api/admin/creators/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -728,25 +747,58 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
     loadAll();
   }
 
-  async function handleAddToVercel() {
-    const domain = form.custom_domain;
-    if (!domain) return;
+  async function handleAddDomain(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newDomain.trim()) return;
     setAddingDomain(true);
     setDomainStatus("");
     try {
-      const res = await fetch("/api/admin/domains", {
+      const res = await fetch(`/api/admin/creators/${id}/domains`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ domain }),
+        body: JSON.stringify({ domain: newDomain.trim() }),
       });
       const data = await res.json();
-      if (res.ok) {
-        setDomainStatus((data as { verified?: boolean }).verified ? "✅ Verified" : "⏳ Added — awaiting DNS");
+      if (res.ok || res.status === 207) {
+        setNewDomain("");
+        const provisionErrors = (data as { provision?: { errors: string[] } }).provision?.errors ?? [];
+        if (provisionErrors.length > 0) {
+          setDomainStatus(`⚠️ Added to DB but provisioning had issues: ${provisionErrors.join("; ")}`);
+        } else {
+          setDomainStatus("✅ Domain added and provisioned");
+        }
+        loadAll();
       } else {
-        setDomainStatus(`❌ ${(data as { error?: string }).error}`);
+        setDomainStatus(`❌ ${(data as { error?: string }).error ?? "Failed"}`);
       }
     } finally {
       setAddingDomain(false);
+    }
+  }
+
+  async function handleRemoveDomain(domainId: string, domainName: string) {
+    if (!confirm(`Remove ${domainName}? This will also deprovision it from Vercel/Cloudflare.`)) return;
+    try {
+      await fetch(`/api/admin/creators/${id}/domains/${domainId}`, {
+        method: "DELETE",
+        headers: authHeaders(),
+      });
+      loadAll();
+    } catch (err) {
+      console.error("Remove domain error", err);
+    }
+  }
+
+  async function handleMakePrimary(domainId: string) {
+    try {
+      await fetch(`/api/admin/creators/${id}/domains/${domainId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ is_primary: true }),
+      });
+      loadAll();
+    } catch (err) {
+      console.error("Make primary error", err);
     }
   }
 
@@ -932,24 +984,56 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
                           />
                         </div>
                       </div>
-                      <div className="space-y-1">
-                        <Label>Custom Domain</Label>
-                        <div className="flex gap-2">
+                      <div className="space-y-2">
+                        <Label>Domains</Label>
+                        {/* Existing domains list */}
+                        {domains.length > 0 && (
+                          <div className="space-y-1.5">
+                            {domains.map((d) => (
+                              <div key={d.id} className="flex items-center gap-2 text-sm">
+                                <span className="flex-1 font-mono text-xs truncate">{d.domain}</span>
+                                {d.is_primary && (
+                                  <Badge className="text-[10px] px-1.5 py-0 bg-blue-600 text-white flex-shrink-0">PRIMARY</Badge>
+                                )}
+                                {!d.is_primary && (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    className="h-6 text-[10px] px-2 flex-shrink-0"
+                                    onClick={() => handleMakePrimary(d.id)}
+                                  >
+                                    Make Primary
+                                  </Button>
+                                )}
+                                <Button
+                                  type="button"
+                                  variant="destructive"
+                                  className="h-6 text-[10px] px-2 flex-shrink-0"
+                                  onClick={() => handleRemoveDomain(d.id, d.domain)}
+                                >
+                                  Remove
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {/* Add domain form */}
+                        <form onSubmit={handleAddDomain} className="flex gap-2">
                           <Input
-                            value={form.custom_domain ?? ""}
-                            onChange={(e) => setField("custom_domain", e.target.value || null)}
+                            value={newDomain}
+                            onChange={(e) => setNewDomain(e.target.value)}
                             placeholder="holly.example.com"
+                            className="text-sm"
                           />
                           <Button
-                            type="button"
+                            type="submit"
                             variant="outline"
-                            onClick={handleAddToVercel}
-                            disabled={!form.custom_domain || addingDomain}
+                            disabled={!newDomain.trim() || addingDomain}
                             className="flex-shrink-0 text-xs"
                           >
-                            {addingDomain ? "..." : "Add to Vercel"}
+                            {addingDomain ? "..." : "Add"}
                           </Button>
-                        </div>
+                        </form>
                         {domainStatus && <p className="text-xs mt-1 text-muted-foreground">{domainStatus}</p>}
                       </div>
 
