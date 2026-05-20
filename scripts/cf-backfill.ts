@@ -88,15 +88,17 @@ async function main() {
     connectionTimeoutMillis: 15000,
   });
 
-  let rows: Array<{ slug: string; custom_domain: string }>;
+  let rows: Array<{ slug: string; domain: string }>;
   try {
-    const result = await pool.query<{ slug: string; custom_domain: string }>(
-      `SELECT slug, custom_domain FROM charmlink_creators
-       WHERE custom_domain IS NOT NULL AND custom_domain <> ''
-       ORDER BY slug`
+    const result = await pool.query<{ slug: string; domain: string }>(
+      `SELECT c.slug, d.domain
+       FROM charmlink_creator_domains d
+       JOIN charmlink_creators c ON c.id = d.creator_id
+       WHERE c.is_active = true
+       ORDER BY c.slug, d.is_primary DESC`
     );
     rows = result.rows;
-    console.log(`📋 Found ${rows.length} creator(s) with custom domains\n`);
+    console.log(`📋 Found ${rows.length} domain(s) across all active creators\n`);
   } catch (err) {
     console.error(`❌ DB query failed: ${err instanceof Error ? err.message : err}`);
     await pool.end();
@@ -134,7 +136,7 @@ async function main() {
   let tsErrorCount = 0;
 
   for (const row of rows) {
-    const domain = row.custom_domain;
+    const domain = row.domain;
     const slug = row.slug;
     process.stdout.write(`  ${slug} → ${domain} ... `);
 

@@ -37,6 +37,14 @@ async function query<T = Record<string, unknown>>(
 
 // ── DB Types ──────────────────────────────────────────────────────────────────
 
+export interface CreatorDomain {
+  id: string;
+  creator_id: string;
+  domain: string;
+  is_primary: boolean;
+  created_at: string;
+}
+
 export interface DBCreator {
   id: string;
   slug: string;
@@ -192,7 +200,9 @@ export async function getCreatorBySlug(slug: string): Promise<DBCreator | null> 
 
 export async function getCreatorByDomain(domain: string): Promise<DBCreator | null> {
   const rows = await query<DBCreator>(
-    "SELECT * FROM charmlink_creators WHERE custom_domain = $1 AND is_active = true",
+    `SELECT c.* FROM charmlink_creators c
+     JOIN charmlink_creator_domains d ON d.creator_id = c.id
+     WHERE d.domain = $1 AND c.is_active = true`,
     [domain]
   );
   return rows[0] ?? null;
@@ -213,34 +223,55 @@ export async function getAllCreators(): Promise<DBCreator[]> {
 }
 
 export async function createCreator(input: CreateCreatorInput): Promise<DBCreator> {
-  const rows = await query<DBCreator>(
-    `INSERT INTO charmlink_creators
-      (slug, name, tagline, avatar_url, custom_domain, theme_bg, theme_accent, theme_text, is_active,
-       show_location, location_type, sensitive_default)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-     RETURNING *`,
-    [
-      input.slug,
-      input.name,
-      input.tagline ?? "",
-      input.avatar_url ?? "",
-      input.custom_domain ?? null,
-      input.theme_bg ?? "#0a0a0a",
-      input.theme_accent ?? "#e91e8a",
-      input.theme_text ?? "#ffffff",
-      input.is_active ?? true,
-      input.show_location ?? false,
-      input.location_type ?? "ip_auto",
-      input.sensitive_default ?? false,
-    ]
-  );
-  return rows[0];
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const res = await client.query<DBCreator>(
+      `INSERT INTO charmlink_creators
+        (slug, name, tagline, avatar_url, custom_domain, theme_bg, theme_accent, theme_text, is_active,
+         show_location, location_type, sensitive_default)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       RETURNING *`,
+      [
+        input.slug,
+        input.name,
+        input.tagline ?? "",
+        input.avatar_url ?? "",
+        input.custom_domain ?? null,
+        input.theme_bg ?? "#0a0a0a",
+        input.theme_accent ?? "#e91e8a",
+        input.theme_text ?? "#ffffff",
+        input.is_active ?? true,
+        input.show_location ?? false,
+        input.location_type ?? "ip_auto",
+        input.sensitive_default ?? false,
+      ]
+    );
+    const creator = res.rows[0];
+
+    if (input.custom_domain) {
+      await client.query(
+        `INSERT INTO charmlink_creator_domains (creator_id, domain, is_primary)
+         VALUES ($1, $2, true)
+         ON CONFLICT (domain) DO NOTHING`,
+        [creator.id, input.custom_domain]
+      );
+    }
+
+    await client.query("COMMIT");
+    return creator;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function updateCreator(input: UpdateCreatorInput): Promise<DBCreator | null> {
   const { id, ...fields } = input;
   const allowed = [
-    "slug", "name", "tagline", "avatar_url", "custom_domain",
+    "slug", "name", "tagline", "avatar_url",
     "theme_bg", "theme_accent", "theme_text", "is_active",
     "show_location", "location_type", "sensitive_default",
     // v3
@@ -280,6 +311,111 @@ export async function deleteCreator(id: string): Promise<boolean> {
     [id]
   );
   return rows.length > 0;
+}
+
+// ── Creator Domain Helpers ────────────────────────────────────────────────────
+
+export async function getCreatorDomains(creatorId: string): Promise<CreatorDomain[]> {
+  return query<CreatorDomain>(
+    `SELECT * FROM charmlink_creator_domains
+     WHERE creator_id = $1
+     ORDER BY is_primary DESC, created_at ASC`,
+    [creatorId]
+  );
+}
+
+export async function addCreatorDomain(
+  creatorId: string,
+  domain: string,
+  isPrimary?: boolean
+): Promise<CreatorDomain> {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+
+    // If caller didn't specify isPrimary, default to true when no rows exist yet
+    let makePrimary = isPrimary ?? false;
+    if (!makePrimary) {
+      const existing = await client.query<{ count: string }>(
+        "SELECT COUNT(*) AS count FROM charmlink_creator_domains WHERE creator_id = $1",
+        [creatorId]
+      );
+      if (parseInt(existing.rows[0].count) === 0) {
+        makePrimary = true;
+      }
+    }
+
+    // Demote existing primaries if this one is becoming primary
+    if (makePrimary) {
+      await client.query(
+        "UPDATE charmlink_creator_domains SET is_primary = false WHERE creator_id = $1 AND is_primary",
+        [creatorId]
+      );
+    }
+
+    const res = await client.query<CreatorDomain>(
+      `INSERT INTO charmlink_creator_domains (creator_id, domain, is_primary)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      [creatorId, domain, makePrimary]
+    );
+
+    await client.query("COMMIT");
+    return res.rows[0];
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function removeCreatorDomain(domainId: string): Promise<void> {
+  await query(
+    "DELETE FROM charmlink_creator_domains WHERE id = $1",
+    [domainId]
+  );
+}
+
+export async function setPrimaryDomain(
+  creatorId: string,
+  domainId: string
+): Promise<void> {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    // Demote all
+    await client.query(
+      "UPDATE charmlink_creator_domains SET is_primary = false WHERE creator_id = $1",
+      [creatorId]
+    );
+    // Promote the target
+    await client.query(
+      "UPDATE charmlink_creator_domains SET is_primary = true WHERE id = $1 AND creator_id = $2",
+      [domainId, creatorId]
+    );
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getAllDomainsWithCreator(): Promise<Array<{
+  domain: string;
+  is_primary: boolean;
+  creator_id: string;
+  creator_slug: string;
+  creator_name: string;
+}>> {
+  return query(
+    `SELECT d.domain, d.is_primary, d.creator_id, c.slug AS creator_slug, c.name AS creator_name
+     FROM charmlink_creator_domains d
+     JOIN charmlink_creators c ON c.id = d.creator_id
+     ORDER BY c.name ASC, d.is_primary DESC, d.created_at ASC`
+  );
 }
 
 // ── Link CRUD ─────────────────────────────────────────────────────────────────

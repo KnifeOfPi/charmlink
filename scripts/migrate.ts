@@ -119,6 +119,21 @@ CREATE INDEX IF NOT EXISTS idx_charmlink_events_creator ON charmlink_events(crea
 CREATE INDEX IF NOT EXISTS idx_charmlink_events_created ON charmlink_events(created_at);
 CREATE INDEX IF NOT EXISTS idx_charmlink_creators_domain ON charmlink_creators(custom_domain);
 CREATE INDEX IF NOT EXISTS idx_charmlink_creators_slug ON charmlink_creators(slug);
+
+-- Multi-domain support
+CREATE TABLE IF NOT EXISTS charmlink_creator_domains (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  creator_id  UUID NOT NULL REFERENCES charmlink_creators(id) ON DELETE CASCADE,
+  domain      TEXT NOT NULL UNIQUE,
+  is_primary  BOOLEAN NOT NULL DEFAULT false,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_creator_domains_creator_id
+  ON charmlink_creator_domains(creator_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_creator_domains_one_primary
+  ON charmlink_creator_domains(creator_id) WHERE is_primary;
 `;
 
 interface JsonCreator {
