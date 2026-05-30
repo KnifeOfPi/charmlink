@@ -7,14 +7,20 @@
  *   npm run cf-backfill -- --dry-run
  *
  * Requires:
- *   - DATABASE_URL env var (pull from Vercel: `vercel env pull .env.local`)
+ *   - DATABASE_URL env var (or source ~/.openclaw/charmasutra-db)
  *   - CLOUDFLARE_API_TOKEN env var (or ~/.openclaw/cloudflare-token fallback for local use)
+ *   - VERCEL_API_TOKEN env var (or ~/.openclaw/vercel-token fallback) — needed for cert issuance
+ *   - VERCEL_TEAM_ID env var — required for /v4/certs; without it the API silently 403s
  */
 
 import { Pool } from "pg";
 import path from "path";
 import fs from "fs";
 import os from "os";
+import { execFile } from "child_process";
+import { promisify } from "util";
+
+const execFileAsync = promisify(execFile);
 
 // ── Token resolution (script-only: env first, then local file) ────────────────
 
@@ -38,6 +44,43 @@ function resolveCloudflareToken(): string {
   );
 }
 
+function resolveVercelToken(): string | null {
+  if (process.env.VERCEL_API_TOKEN) {
+    return process.env.VERCEL_API_TOKEN;
+  }
+  const filePath = path.join(os.homedir(), ".openclaw", "vercel-token");
+  try {
+    const token = fs.readFileSync(filePath, "utf-8").trim();
+    if (token) {
+      process.env.VERCEL_API_TOKEN = token;
+      return token;
+    }
+  } catch {
+    // File not found or unreadable
+  }
+  return null;
+}
+
+// ── Chrome UA for verify step ─────────────────────────────────────────────────
+
+const CHROME_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+async function verifyDomain(domain: string): Promise<{ ok: boolean; status?: number; error?: string }> {
+  try {
+    const { stdout } = await execFileAsync("curl", [
+      "-s", "-o", "/dev/null", "-w", "%{http_code}",
+      "--max-time", "15",
+      "-A", CHROME_UA,
+      `https://${domain}/`,
+    ]);
+    const status = parseInt(stdout.trim(), 10);
+    return { ok: status === 200, status };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -48,7 +91,7 @@ async function main() {
     console.log("🔍 DRY RUN — no writes will be made to Cloudflare\n");
   }
 
-  // 1. Set up token
+  // 1. Set up CF token
   let token: string;
   try {
     token = resolveCloudflareToken();
@@ -58,10 +101,24 @@ async function main() {
     process.exit(1);
   }
 
-  // 2. Verify token with CF API
+  // 2. Set up Vercel token (needed for cert issuance inside provisionZone)
+  const vercelToken = resolveVercelToken();
+  if (vercelToken) {
+    console.log(`✅ Vercel token resolved (${vercelToken.slice(0, 8)}...)`);
+  } else {
+    console.log("ℹ️  VERCEL_API_TOKEN not set — cert issuance will be skipped in provisionZone");
+  }
+
+  // 3. Ensure VERCEL_TEAM_ID is set — required for /v4/certs (account-scoped calls silently 403)
+  if (!process.env.VERCEL_TEAM_ID) {
+    console.log("⚠️  VERCEL_TEAM_ID not set — cert issuance may silently 403. Set it in your .env.local.");
+  } else {
+    console.log(`✅ VERCEL_TEAM_ID set (${process.env.VERCEL_TEAM_ID.slice(0, 10)}...)\n`);
+  }
+
+  // 4. Verify CF token with API
   // Import after token is set so env var is available
   const { verifyToken, provisionZone, setRecordProxied } = await import("../lib/cloudflare");
-  const { waitForDomainReady } = await import("../lib/vercel-domains");
 
   console.log("Verifying Cloudflare token...");
   const verify = await verifyToken();
@@ -71,13 +128,11 @@ async function main() {
   }
   console.log(`✅ Token OK — ${verify.zonesAccessible} zone(s) accessible\n`);
 
-  // 3. Connect to DB
+  // 5. Connect to DB
   const dbUrl = process.env.DATABASE_URL;
   if (!dbUrl) {
     console.error("❌ DATABASE_URL is not set");
-    console.error(
-      "   Pull from Vercel with: vercel env pull .env.local && source .env.local"
-    );
+    console.error("   Source it with: export DATABASE_URL=$(cat ~/.openclaw/charmasutra-db)");
     process.exit(1);
   }
 
@@ -88,15 +143,17 @@ async function main() {
     connectionTimeoutMillis: 15000,
   });
 
-  let rows: Array<{ slug: string; custom_domain: string }>;
+  // Query charmlink_creator_domains (Phase 6 join table — authoritative source)
+  let rows: Array<{ slug: string; domain: string }>;
   try {
-    const result = await pool.query<{ slug: string; custom_domain: string }>(
-      `SELECT slug, custom_domain FROM charmlink_creators
-       WHERE custom_domain IS NOT NULL AND custom_domain <> ''
-       ORDER BY slug`
+    const result = await pool.query<{ slug: string; domain: string }>(
+      `SELECT c.slug, d.domain
+       FROM charmlink_creator_domains d
+       JOIN charmlink_creators c ON c.id = d.creator_id
+       ORDER BY c.slug, d.domain`
     );
     rows = result.rows;
-    console.log(`📋 Found ${rows.length} creator(s) with custom domains\n`);
+    console.log(`📋 Found ${rows.length} domain(s) in charmlink_creator_domains\n`);
   } catch (err) {
     console.error(`❌ DB query failed: ${err instanceof Error ? err.message : err}`);
     await pool.end();
@@ -110,7 +167,7 @@ async function main() {
     process.exit(0);
   }
 
-  // 4. Provision each domain
+  // 6. Provision each domain
   const { addHostnameToWidget } = await import("../lib/turnstile-admin");
   const tsSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
   const tsAccountId = process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -132,9 +189,11 @@ async function main() {
   let errorCount = 0;
   let tsAddedCount = 0;
   let tsErrorCount = 0;
+  let verifyPassCount = 0;
+  let verifyFailCount = 0;
 
   for (const row of rows) {
-    const domain = row.custom_domain;
+    const domain = row.domain;
     const slug = row.slug;
     process.stdout.write(`  ${slug} → ${domain} ... `);
 
@@ -167,34 +226,31 @@ async function main() {
         errorCount++;
       }
 
-      // Gray→orange repair: if the cert-wait timed out (or domain was provisioned
-      // before this fix), check cert readiness again and flip to orange if ready.
-      // If flipToProxied already succeeded, setRecordProxied will no-op.
+      // Gray→orange repair: if flipToProxied didn't succeed during provisionZone
+      // (e.g. cert wasn't ready in time), try once more with a short wait.
       if (result.zoneFound && result.zone) {
         const flipOk = result.steps.find((s) => s.name === "flipToProxied")?.ok === true;
-        if (!flipOk) {
+        if (!flipOk && vercelToken) {
+          const { issueCert } = await import("../lib/vercel-domains");
           try {
-            const certCheck = await waitForDomainReady(domain, 30_000, 5000);
-            if (certCheck.ready) {
-              const flip = await setRecordProxied(result.zone.id, domain, true);
-              if (flip.updated) {
-                process.stdout.write(`     ↳ orange-cloud flip: ✓\n`);
-              } else if (!flip.error) {
-                process.stdout.write(`     ↳ orange-cloud: already proxied\n`);
-              } else {
-                process.stdout.write(`     ↳ orange-cloud flip error: ${flip.error}\n`);
-              }
+            await issueCert(domain);
+            const flip = await setRecordProxied(result.zone.id, domain, true);
+            if (flip.updated) {
+              process.stdout.write(`     ↳ orange-cloud flip (repair): ✓\n`);
+            } else if (!flip.error) {
+              process.stdout.write(`     ↳ orange-cloud: already proxied\n`);
             } else {
-              process.stdout.write(`     ↳ orange-cloud: cert not ready yet — re-run backfill later\n`);
+              process.stdout.write(`     ↳ orange-cloud flip error: ${flip.error}\n`);
             }
           } catch (err) {
-            process.stdout.write(`     ↳ orange-cloud flip skipped: ${err instanceof Error ? err.message : String(err)}\n`);
+            process.stdout.write(
+              `     ↳ orange-cloud flip skipped: ${err instanceof Error ? err.message : String(err)}\n`
+            );
           }
         }
       }
 
-      // Defense-in-depth: sync widget allow-list. Idempotent — addHostnameToWidget
-      // fetches the widget first and only PUTs when the hostname is missing.
+      // Turnstile widget allow-list sync (idempotent)
       if (tsSyncEnabled) {
         try {
           await addHostnameToWidget(tsSiteKey!, domain);
@@ -206,13 +262,26 @@ async function main() {
           tsErrorCount++;
         }
       }
+
+      // Verify step: Chrome UA HEAD — confirm the domain serves HTTP 200
+      process.stdout.write(`     ↳ verify (Chrome UA): `);
+      const verifyResult = await verifyDomain(domain);
+      if (verifyResult.ok) {
+        process.stdout.write(`✅ HTTP ${verifyResult.status}\n`);
+        verifyPassCount++;
+      } else {
+        process.stdout.write(
+          `❌ HTTP ${verifyResult.status ?? "err"} ${verifyResult.error ?? ""}\n`
+        );
+        verifyFailCount++;
+      }
     } catch (err) {
       console.log(`❌  ${err instanceof Error ? err.message : err}`);
       errorCount++;
     }
   }
 
-  // 5. Summary
+  // 7. Summary
   console.log("\n── Summary ──────────────────────────────────────────");
   if (dryRun) {
     console.log(`   Would have processed: ${rows.length} domain(s)`);
@@ -224,6 +293,8 @@ async function main() {
       console.log(`   🔐 turnstile synced:   ${tsAddedCount}`);
       console.log(`   🔐 turnstile errors:   ${tsErrorCount}`);
     }
+    console.log(`   🌐 verify pass:        ${verifyPassCount}`);
+    console.log(`   🌐 verify fail:        ${verifyFailCount}`);
   }
 
   if (zoneNotFoundCount > 0) {
