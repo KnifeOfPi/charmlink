@@ -11,7 +11,11 @@
 // - Bot Fight Mode requires `enable_js: true` to be sent alongside `fight_mode: true`,
 //   otherwise CF rejects with "cannot enable Fight_Mode while EnableJS is disabled".
 
-import { waitForDomainReady } from "./vercel-domains";
+import { execFile } from "child_process";
+import { promisify } from "util";
+import { issueCert } from "./vercel-domains";
+
+const execFileAsync = promisify(execFile);
 
 const CF_BASE = "https://api.cloudflare.com/client/v4";
 const VERCEL_CNAME_TARGET = "cname.vercel-dns.com";
@@ -552,40 +556,85 @@ interface ProvisionStep {
   detail?: string;
 }
 
+// ── Cert + health helpers (used by provisionZone and cf-heal) ─────────────────
+
 /**
- * Wait for the Vercel cert to be issued (via gray-cloud CNAME), then flip the
- * CNAME to orange-cloud. Called at the end of provisionZone after all other
- * steps so the ACME challenge has an unproxied path.
- *
- * On timeout (180s default) leaves the record gray-cloud and pushes a failed
- * waitForVercelCert step — does NOT abort the overall provision.
+ * HEAD https://${domain}/ — returns true if the domain responds with HTTP < 500.
+ * Used for idempotency checks: if already healthy, skip the gray→cert→orange ceremony.
  */
-async function goOrangeAfterCertReady(
-  zoneId: string,
-  domain: string,
-  steps: ProvisionStep[]
-): Promise<void> {
-  const certResult = await waitForDomainReady(domain);
-
-  if (!certResult.ready) {
-    steps.push({
-      name: "waitForVercelCert",
-      ok: false,
-      detail: `${certResult.reason}; CNAME left gray-cloud — flip to orange manually when cert is ready`,
-    });
-    return;
+async function checkDomainHealthy(domain: string): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync("curl", [
+      "-s", "-o", "/dev/null", "-w", "%{http_code}",
+      "--max-time", "10",
+      "--location",
+      `https://${domain}/`,
+    ]);
+    const status = parseInt(stdout.trim(), 10);
+    return status > 0 && status < 500;
+  } catch {
+    return false;
   }
+}
 
-  steps.push({ name: "waitForVercelCert", ok: true, detail: "Vercel cert verified" });
+/**
+ * HEAD https://${domain}/ pinned to Vercel's canonical IP (76.76.21.21).
+ * Belt-and-suspenders check before flipping orange: verifies Vercel is actually
+ * serving the domain correctly (TLS + HTTP) before we let CF start proxying.
+ * Retries up to maxAttempts with intervalMs between attempts.
+ */
+async function headCheckViaVercelIP(
+  domain: string,
+  maxAttempts = 5,
+  intervalMs = 5000
+): Promise<{ ok: boolean; status?: number; error?: string }> {
+  const VERCEL_IP = "76.76.21.21";
+  for (let i = 0; i < maxAttempts; i++) {
+    if (i > 0) await new Promise<void>((r) => setTimeout(r, intervalMs));
+    try {
+      const { stdout } = await execFileAsync("curl", [
+        "-s", "-o", "/dev/null", "-w", "%{http_code}",
+        "--max-time", "10",
+        "--resolve", `${domain}:443:${VERCEL_IP}`,
+        `https://${domain}/`,
+      ]);
+      const status = parseInt(stdout.trim(), 10);
+      if (status > 0 && status < 500) {
+        return { ok: true, status };
+      }
+      console.log(`[cloudflare] headCheckViaVercelIP ${domain} attempt ${i + 1}/${maxAttempts}: HTTP ${status}`);
+    } catch (err) {
+      console.log(`[cloudflare] headCheckViaVercelIP ${domain} attempt ${i + 1}/${maxAttempts}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return { ok: false, error: `Vercel origin check failed after ${maxAttempts} attempts` };
+}
 
-  const flip = await setRecordProxied(zoneId, domain, true);
-  steps.push({
-    name: "flipToProxied",
-    ok: flip.updated || (!flip.error && flip.recordId !== undefined),
-    detail: flip.updated
-      ? `record ${flip.recordId} flipped to proxied=true`
-      : flip.error ?? "already proxied",
-  });
+/**
+ * Trigger Vercel cert issuance for a domain, retrying with exponential backoff.
+ * Delays: 5s, 10s, 20s, 40s, 60s, 90s (6 attempts, worst case ~3.5 min).
+ * HTTP 409 "already exists" counts as success.
+ *
+ * Throws if VERCEL_API_TOKEN is unset (cert issuance is only possible with Vercel creds).
+ * Returns uid on success, null after all retries exhausted.
+ */
+async function issueCertWithRetry(domain: string): Promise<string | null> {
+  const DELAYS = [5000, 10000, 20000, 40000, 60000, 90000];
+  for (let i = 0; i < 6; i++) {
+    console.log(`[provisionZone ${domain}] cert issuance attempt ${i + 1}/6`);
+    try {
+      const result = await issueCert(domain);
+      console.log(`[provisionZone ${domain}] cert issued: uid=${result.uid}`);
+      return result.uid;
+    } catch (err) {
+      console.log(`[provisionZone ${domain}] cert attempt ${i + 1}/6 failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (i < 5) {
+      console.log(`[provisionZone ${domain}] waiting ${DELAYS[i] / 1000}s before retry...`);
+      await new Promise<void>((r) => setTimeout(r, DELAYS[i]));
+    }
+  }
+  return null;
 }
 
 export async function provisionZone(domain: string): Promise<{
@@ -595,6 +644,7 @@ export async function provisionZone(domain: string): Promise<{
   steps: ProvisionStep[];
 }> {
   const steps: ProvisionStep[] = [];
+  const log = (msg: string) => console.log(`[provisionZone ${domain}] ${msg}`);
 
   // Step 1: find zone
   let zone: ZoneInfo | null = null;
@@ -612,25 +662,130 @@ export async function provisionZone(domain: string): Promise<{
 
   steps.push({ name: "findZone", ok: true, detail: `zone ${zone.id} (${zone.name})` });
 
-  // Step 2: DNS record — create gray-cloud (DNS-only) initially so Vercel can
-  // complete the ACME HTTP-01 challenge before CF starts proxying.
-  // goOrangeAfterCertReady (below) waits for the cert and flips to orange.
-  try {
-    const dns = await ensureProxiedDnsRecord(zone.id, domain, false);
+  // Step 2: Idempotency check — if the domain is already serving HTTPS, skip
+  // the gray→cert→orange ceremony entirely (no downtime risk).
+  log("Checking if domain is already healthy...");
+  const alreadyHealthy = await checkDomainHealthy(domain);
+
+  if (alreadyHealthy) {
+    log("Domain already healthy, skipping gray flip.");
     steps.push({
-      name: "ensureProxiedDnsRecord",
+      name: "idempotencyCheck",
       ok: true,
-      detail: `recordId=${dns.recordId} created=${dns.created} updated=${dns.updated} proxied=false (gray-cloud)`,
+      detail: "Domain already healthy, skipping gray flip",
     });
-  } catch (err) {
+  } else {
     steps.push({
-      name: "ensureProxiedDnsRecord",
-      ok: false,
-      detail: err instanceof Error ? err.message : String(err),
+      name: "idempotencyCheck",
+      ok: true,
+      detail: "Domain unhealthy (likely 525 or no response), proceeding with gray→cert→orange",
     });
+
+    // Step 3: Ensure CNAME is gray-cloud so Vercel ACME HTTP-01 challenge can reach origin.
+    // If a record exists as orange (proxied=true), patch it to gray first.
+    log("Ensuring CNAME is gray-cloud (proxied=false)...");
+    try {
+      const grayFlip = await setRecordProxied(zone.id, domain, false);
+      if (grayFlip.error === "CNAME record not found") {
+        // No CNAME at all — create it as gray
+        const dns = await ensureProxiedDnsRecord(zone.id, domain, false);
+        steps.push({
+          name: "ensureProxiedDnsRecord",
+          ok: true,
+          detail: `recordId=${dns.recordId} created=${dns.created} updated=${dns.updated} proxied=false (gray-cloud, created)`,
+        });
+      } else if (grayFlip.error) {
+        steps.push({
+          name: "ensureProxiedDnsRecord",
+          ok: false,
+          detail: `setRecordProxied(false) failed: ${grayFlip.error}`,
+        });
+      } else {
+        steps.push({
+          name: "ensureProxiedDnsRecord",
+          ok: true,
+          detail: `recordId=${grayFlip.recordId} proxied=false (gray-cloud${grayFlip.updated ? ", patched from orange" : ", already gray"})`,
+        });
+      }
+    } catch (err) {
+      steps.push({
+        name: "ensureProxiedDnsRecord",
+        ok: false,
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    // Step 4: Trigger Vercel cert issuance (POST /v4/certs?teamId=...).
+    // Account-scoped token silently 403s on /v4/certs without teamId — must pass it.
+    // Retry 6× with exponential backoff; 409 = already issued = success.
+    if (process.env.VERCEL_API_TOKEN) {
+      log("Triggering Vercel cert issuance...");
+      const certUid = await issueCertWithRetry(domain);
+      if (certUid) {
+        steps.push({
+          name: "issueCert",
+          ok: true,
+          detail: `cert uid=${certUid}`,
+        });
+
+        // Step 5: Belt-and-suspenders: HEAD the domain via Vercel canonical IP before
+        // flipping orange, so we know Vercel is actually serving it over TLS.
+        log("HEAD check via Vercel canonical IP (76.76.21.21)...");
+        const headCheck = await headCheckViaVercelIP(domain);
+        steps.push({
+          name: "headCheckViaVercelIP",
+          ok: headCheck.ok,
+          detail: headCheck.ok
+            ? `HTTP ${headCheck.status} via Vercel IP — origin healthy`
+            : headCheck.error ?? `HTTP ${headCheck.status} — origin not ready`,
+        });
+
+        if (headCheck.ok) {
+          // Step 6: Flip to orange-cloud now that cert is valid and origin is serving.
+          log("Flipping CNAME to orange-cloud (proxied=true)...");
+          const flip = await setRecordProxied(zone.id, domain, true);
+          steps.push({
+            name: "flipToProxied",
+            ok: flip.updated || (!flip.error && flip.recordId !== undefined),
+            detail: flip.updated
+              ? `record ${flip.recordId} flipped to proxied=true`
+              : flip.error ?? "already proxied",
+          });
+        } else {
+          steps.push({
+            name: "flipToProxied",
+            ok: false,
+            detail: "skipped — Vercel origin HEAD check failed; CNAME left gray-cloud",
+          });
+        }
+      } else {
+        steps.push({
+          name: "issueCert",
+          ok: false,
+          detail: "Cert issuance failed after 6 attempts",
+        });
+        steps.push({
+          name: "flipToProxied",
+          ok: false,
+          detail: `skipped — cert issuance failed. Run: npm run cf-heal -- ${domain}`,
+        });
+        throw new Error(
+          `Cert issuance failed for ${domain} after 6 attempts. Run: npm run cf-heal -- ${domain}`
+        );
+      }
+    } else {
+      log("VERCEL_API_TOKEN not set — skipping cert issuance and orange flip");
+      steps.push({
+        name: "issueCert",
+        ok: false,
+        detail: "skipped — VERCEL_API_TOKEN not set",
+      });
+    }
   }
 
-  // Step 3: standard settings (non-fatal)
+  // Steps 7–9: zone settings + BFM + WAF (always applied; idempotent zone-level config).
+
+  // Step 7: standard settings (non-fatal)
   try {
     const settings = await applyStandardSettings(zone.id);
     const ok = settings.errors.length === 0;
@@ -649,11 +804,11 @@ export async function provisionZone(domain: string): Promise<{
     });
   }
 
-  // Step 4: bot fight mode (non-fatal, OPT-IN)
+  // Step 8: bot fight mode (non-fatal, OPT-IN)
   // ⚠️ CF Free tier Bot Fight Mode is too aggressive — it blocks real Chrome
   // browsers (and headless Chromium) with HTTP 403 "Your request was blocked."
   // Verified breakage on hollysworld.club + hannazuki.com 2026-05-09. The
-  // targeted firewall rules (Step 6) catch the same threats with no false
+  // targeted firewall rules (Step 9) catch the same threats with no false
   // positives. Only enable BFM on Pro+ plans where the JS challenge actually
   // serves correctly. Set CHARMLINK_ENABLE_BFM=1 to opt back in.
   if (process.env.CHARMLINK_ENABLE_BFM === "1") {
@@ -672,7 +827,6 @@ export async function provisionZone(domain: string): Promise<{
       });
     }
 
-    // Step 5: advanced bot protection (non-fatal, gated with BFM)
     try {
       const adv = await enableAdvancedBotProtection(zone.id);
       steps.push({
@@ -699,7 +853,7 @@ export async function provisionZone(domain: string): Promise<{
     });
   }
 
-  // Step 6: WAF rules (non-fatal)
+  // Step 9: WAF rules (non-fatal)
   try {
     const waf = await applyWafRules(zone.id);
     const ok = waf.errors.length === 0;
@@ -717,11 +871,6 @@ export async function provisionZone(domain: string): Promise<{
       detail: err instanceof Error ? err.message : String(err),
     });
   }
-
-  // Step 7+8: wait for Vercel cert (gray-cloud allows ACME challenge through),
-  // then flip CNAME to orange-cloud. Non-fatal: on timeout, leaves gray-cloud
-  // and records ok=false on waitForVercelCert so the caller can surface it.
-  await goOrangeAfterCertReady(zone.id, domain, steps);
 
   const criticalSteps = steps.filter((s) =>
     ["findZone", "ensureProxiedDnsRecord"].includes(s.name)

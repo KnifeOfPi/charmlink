@@ -2,7 +2,7 @@
 
 This is the "pick it up cold weeks later" doc. Reads top-to-bottom and assumes
 no prior context. For deep history per phase, see `memory/` daily logs
-referenced inline. **Last updated:** 2026-05-14 11:15 PDT (post-gray→orange CF flip fix).
+referenced inline. **Last updated:** 2026-05-29 (Phase 7 — 525 SSL race fix + cf-heal + cert teamId).
 
 ---
 
@@ -42,6 +42,7 @@ Branch `main` clean, no pending PRs.
 | 4 hotfixes | Bare custom-domain root rewrite + dropped CF `x-is-bot` cloaking false-positive + IG WebView escape rewrites + load-on-mount fix | `fa23217`, `d7c1b0`, `7570c09`, `1458de8` |
 | 5 | Per-creator themed decoy cloaking — link-preview scrapers get a wholesome themed blog HTML with **zero** Next/Vercel/Charmlink fingerprints | `452b572` |
 | 5 polish | IG-banner color, chooser UI, iOS-only IG extbrowser scheme, Sec-Fetch-Site `none` allowance, `next.config` image whitelist | `947e009`, `faaff0c`, `9706029`, `85c17dc`, `f2aaac9`, `910f445` |
+| 7 | **2026-05-29** Gray→cert→orange race fix: `provisionZone` now triggers `POST /v4/certs?teamId=` with 6× backoff + HEAD via Vercel IP before flipping orange; idempotency check skips ceremony for healthy domains. `cf-heal` CLI added. Admin route uses `charmlink_creator_domains` join table. `cf-backfill` iterates join table + adds verify step. | PR `fix/domains-525-ssl-race-heal-teamid` |
 
 See `memory/archive-2026-05-10.md` for Phase 1–3 ship-day notes and
 `memory/2026-05-11.md` for everything Phase 4 + 5 day-of.

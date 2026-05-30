@@ -121,3 +121,43 @@ export async function listDomains(): Promise<VercelDomainStatus[]> {
   const data = await vercelFetch("GET", `/v10/projects/${projectId}/domains`) as VercelDomainList;
   return data.domains ?? [];
 }
+
+/**
+ * Trigger Vercel cert issuance for a domain via POST /v4/certs?teamId=...
+ *
+ * Requires VERCEL_API_TOKEN env var. VERCEL_TEAM_ID is strongly recommended —
+ * account-scoped token calls to /v4/certs silently 403 without it (2026-05-29 incident).
+ *
+ * Returns { uid } on success, or throws on unexpected errors.
+ * HTTP 409 ("cert already exists") is treated as success and returns { uid: "already-exists" }.
+ */
+export async function issueCert(domain: string): Promise<{ uid: string }> {
+  const token = process.env.VERCEL_API_TOKEN;
+  if (!token) throw new Error("VERCEL_API_TOKEN is not set");
+  const teamId = process.env.VERCEL_TEAM_ID;
+  const url = `https://api.vercel.com/v4/certs${teamId ? `?teamId=${encodeURIComponent(teamId)}` : ""}`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ domains: [domain] }),
+  });
+
+  if (res.status === 409) {
+    return { uid: "already-exists" };
+  }
+
+  const data = (await res.json()) as { uid?: string; error?: { message?: string } };
+  if (!res.ok) {
+    throw new Error(
+      `Vercel cert API ${res.status}: ${data?.error?.message ?? res.statusText}`
+    );
+  }
+  if (!data.uid) {
+    throw new Error(`Vercel cert API: response missing uid (status ${res.status})`);
+  }
+  return { uid: data.uid };
+}
