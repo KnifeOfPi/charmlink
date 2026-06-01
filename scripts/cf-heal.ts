@@ -16,7 +16,10 @@
  * Requires:
  *   - CLOUDFLARE_API_TOKEN (or ~/.openclaw/cloudflare-token)
  *   - VERCEL_API_TOKEN (or ~/.openclaw/vercel-token)
- *   - VERCEL_TEAM_ID — required for /v4/certs; without it cert issuance 403s
+ *   - VERCEL_TEAM_ID — required for /v4/certs. Auto-resolved in order:
+ *       1. env var
+ *       2. ~/.openclaw/vercel-team-id file
+ *       3. Auto-discovered via Vercel /v2/teams (single-team accounts only)
  *   - DATABASE_URL (only needed for --all mode)
  */
 
@@ -135,8 +138,38 @@ async function main() {
     console.log("⚠️  VERCEL_API_TOKEN not set — cert issuance will be skipped");
   }
 
+  // VERCEL_TEAM_ID is required by /v4/certs. Resolve in order:
+  //   1. env var (already set)
+  //   2. ~/.openclaw/vercel-team-id file
+  //   3. Auto-discover via Vercel API /v2/teams (uses first team if only one)
   if (!process.env.VERCEL_TEAM_ID) {
-    console.log("⚠️  VERCEL_TEAM_ID not set — cert issuance may silently 403");
+    const fromFile = resolveToken("VERCEL_TEAM_ID", "vercel-team-id");
+    if (fromFile) {
+      console.log(`✅ Vercel team id resolved from file (${fromFile.slice(0, 12)}...)`);
+    } else if (vercelToken) {
+      try {
+        const { stdout } = await execFileAsync("curl", [
+          "-s", "--max-time", "10",
+          "-H", `Authorization: Bearer ${vercelToken}`,
+          "https://api.vercel.com/v2/teams",
+        ]);
+        const data = JSON.parse(stdout) as { teams?: Array<{ id: string }> };
+        if (data.teams && data.teams.length === 1) {
+          process.env.VERCEL_TEAM_ID = data.teams[0].id;
+          console.log(`✅ Vercel team id auto-discovered (${data.teams[0].id.slice(0, 12)}...)`);
+        } else if (data.teams && data.teams.length > 1) {
+          console.log(`⚠️  Multiple Vercel teams found (${data.teams.length}). Set VERCEL_TEAM_ID env var or write ~/.openclaw/vercel-team-id explicitly.`);
+        } else {
+          console.log("⚠️  No Vercel teams returned by API — cert issuance may silently 403");
+        }
+      } catch (err) {
+        console.log(`⚠️  Vercel team auto-discovery failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    } else {
+      console.log("⚠️  VERCEL_TEAM_ID not set and no Vercel token to auto-discover — cert issuance may silently 403");
+    }
+  } else {
+    console.log(`✅ Vercel team id resolved from env (${process.env.VERCEL_TEAM_ID.slice(0, 12)}...)`);
   }
 
   // Import provisioning after env vars are set
