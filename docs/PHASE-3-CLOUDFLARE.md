@@ -147,6 +147,8 @@ failure, DB failure).
 
 ## Troubleshooting
 
+> **⚠️ For the recurring "new domain stuck on CF 525" symptom** (Kayla's report 2026-06-01), the one-command fix and full diagnostic flow live in **[NEW-DOMAIN-TROUBLESHOOTING.md](./NEW-DOMAIN-TROUBLESHOOTING.md)**. The rest of this section covers other failure modes.
+
 ### SSL/TLS Errors
 
 | CF Error Code | Meaning | Fix |

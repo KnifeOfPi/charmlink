@@ -1,0 +1,219 @@
+# CharmLink New-Domain Troubleshooting
+
+*Last reviewed: 2026-06-01*
+
+## TL;DR for non-engineers (Kayla)
+
+When you add a new domain and the link page **errors with "SSL handshake failed", CF 525, or "We can't connect to the server"** for more than ~15 minutes:
+
+1. **Wait until the **error has persisted ≥15 minutes** from when you first hit the page.** Anything sooner is normal cert-provisioning lag.
+2. **Tell the engineer on call**: paste the **domain name** + a screenshot of the CF 525 error page (matches the one in this doc). Don't worry about codes / details.
+3. The engineer runs one command (`npm run cf-heal -- yourdomain.com`) and the domain is fixed within 2–3 minutes.
+
+That's it. You don't need to do anything else. **The fix is well-known, automated, and idempotent** — re-running can never break a working domain.
+
+---
+
+## What's actually happening (engineer-level)
+
+### The error
+
+![CF 525 SSL handshake failed](https://developers.cloudflare.com/_astro/error-525.123.png)
+*Cloudflare 525 — "SSL handshake failed" between Cloudflare and the Vercel origin.*
+
+### Why it happens
+
+CharmLink provisions each new domain in this order (see [PHASE-3-CLOUDFLARE.md](./PHASE-3-CLOUDFLARE.md) §"Adding a New Creator Domain"):
+
+```
+Vercel.addDomain(domain)
+  → CF.findZone
+  → CF.ensureProxiedDnsRecord (gray-cloud / DNS-only initially)
+  → CF.applyStandardSettings (SSL=strict, always_use_https, …)
+  → CF.enableBotFightMode
+  → CF.enableAdvancedBotProtection
+  → CF.applyWafRules (6 rules)
+  → CF.waitForVercelCert (≤180s polling)
+  → CF.flipToProxied (gray → orange-cloud)
+```
+
+The 525 hits when **one** of three things races:
+
+| Race | What's happening | How `cf-heal` fixes it |
+|---|---|---|
+| **A. Cert race** | `waitForVercelCert` timed out at 180s but Vercel issued the cert at ~190s. CNAME stayed gray, OR was flipped orange while Vercel was still presenting a stale SAN. | Re-runs full `gray → cert-issuance retry (6× backoff) → HEAD via Vercel IP → orange flip`. |
+| **B. SSL=strict pre-cert** | Standard settings get applied (SSL=Full Strict) *before* Vercel's cert is live for that hostname. CF tries to TLS-handshake with origin, fails, returns 525. | Skips re-applying settings if zone is already configured (idempotent); waits for cert; flips orange. |
+| **C. Already-orange stuck** | A previous provision attempt flipped to orange but the cert never validated. Subsequent ACME challenges can't reach Vercel through CF proxy → cert stays unverified forever. | Detects unhealthy domain via HEAD probe, **flips orange→gray**, re-triggers cert, then **flips back to orange**. |
+
+`provisionZone()` is **idempotent** — running it again is always safe.
+
+---
+
+## Step-by-step fix (engineer)
+
+### 0. Confirm the symptom
+
+```bash
+curl -sI https://yourdomain.com/ -o /dev/null -w "%{http_code}\n"
+```
+
+- `200`, `307`, `308` → already healthy, no-op
+- `525`, `526`, `1016`, `522`, no response → unhealthy, proceed
+
+### 1. Run cf-heal
+
+From the `charmlink` repo:
+
+```bash
+npm run cf-heal -- yourdomain.com
+```
+
+The script will:
+1. HEAD the domain. If healthy (<500), log "no-op" and exit 0.
+2. If unhealthy: full `gray → cert-issuance (with 6× backoff) → orange` cycle.
+3. Log every step to stdout so you can see what happened.
+
+**Exit codes**:
+- `0` — domain is healthy at end (either was, or was healed)
+- `1` — heal attempted but final HEAD still failed (see "When `cf-heal` fails" below)
+
+### 2. Verify
+
+Wait 60s after the script finishes, then:
+
+```bash
+curl -sI https://yourdomain.com/ -o /dev/null -w "%{http_code}\n"
+```
+
+Should be 200/307/308. If you want the full handshake info:
+
+```bash
+curl -sI https://yourdomain.com/ | head -20
+```
+
+You should see `cf-ray:` and `server: cloudflare` in the headers (= orange-cloud is active).
+
+### 3. Heal ALL stuck domains at once
+
+If multiple domains are stuck (e.g. after a CF API outage):
+
+```bash
+npm run cf-heal -- --all
+```
+
+Iterates every row in `charmlink_creator_domains`, HEADs each, heals only the unhealthy ones. Healthy domains are skipped fast.
+
+---
+
+## When `cf-heal` fails
+
+If `cf-heal` exits 1, check the script log output (it shows every step). Most common root causes:
+
+| Symptom in log | Real cause | Fix |
+|---|---|---|
+| `findZone failed: no zone matched` | Domain's nameservers don't point to Cloudflare yet | Have the registrar update NS records to CF, wait for propagation (up to 24h, usually <1h), retry. |
+| `cert attempt 6/6 failed: domain not verified` | Vercel's ACME challenge can't reach origin. Usually the CNAME is wrong, or CF is intercepting the challenge. | Manually verify CF Dashboard → DNS → record for domain points to `cname.vercel-dns.com`, **proxied=DNS-only (gray)**. Then re-run heal. |
+| `cert attempt N/6 failed: too many certificates` | Vercel rate limit (Let's Encrypt) — usually 50 certs/week/domain | Wait 1 hour; the rate limit slides off. Then retry. |
+| `setRecordProxied(true) failed: insufficient permissions` | Stale `CLOUDFLARE_API_TOKEN` env | Rotate token; redeploy worker / re-export env. |
+| `SAN limit exceeded` from Vercel | Vercel cert tops out around 100 SANs | Add domain to a 2nd Vercel project, or contact Vercel support. |
+
+If none of those match, screenshot the log + tell Cepheus / Vela. Don't keep retrying — one or two heal attempts is enough to surface any non-race cause.
+
+---
+
+## Required environment for cf-heal
+
+These are normally already set on the dev machine — listed here as the on-call cheatsheet.
+
+| Var | Source |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | `~/.openclaw/cloudflare-token` (or env) |
+| `VERCEL_API_TOKEN` | `~/.openclaw/vercel-token` |
+| `VERCEL_TEAM_ID` | Vercel dashboard → team settings → general → "Team ID" |
+| `DATABASE_URL` | `.env.local` (only needed for `--all` mode) |
+
+---
+
+## Why you shouldn't manually toggle the orange cloud in CF dashboard
+
+It's tempting to fix this by logging into Cloudflare and toggling the cloud icon. **Don't** — here's why:
+
+- If you flip orange → gray *while a real visitor is on the page*, they get a redirect loop until DNS propagates (~30s).
+- If you flip gray → orange *before* the Vercel cert is verified, you re-trigger the 525.
+- The CF dashboard **doesn't run the cert-issuance retry** — only `cf-heal` does that via Vercel's `/v4/certs` API with backoff.
+
+`cf-heal` orchestrates the ordering correctly every time.
+
+---
+
+## Why this keeps happening (root cause)
+
+The 525 race exists because:
+
+1. **Vercel cert issuance is non-deterministic** — typically 30–60s, but P95 is 3–8min and P99 can hit 15min.
+2. **`waitForVercelCert` has a 180s timeout** — chosen to keep the admin POST under HTTP/Vercel's response budget. Raising it just shifts the failure to "admin POST times out".
+3. **Vercel + CF talk on different schedules** — there's no webhook from Vercel saying "cert is live for hostname X". We poll.
+
+**Permanent fixes that would eliminate the race**:
+
+- Move provisioning to a background job (BullMQ / Vercel Cron) so it can wait 15min without timing out → planned, [issue TBD].
+- Push a "Heal Domain" button into `/admin/domains` so Kayla can re-run heal herself without engineer involvement → **planned next** ([see TODO below](#planned-self-serve-fix)).
+- Subscribe to Vercel deployment hook + ACME success events → out of scope for current Vercel plan.
+
+Until then: **heal-on-symptom is the workflow**.
+
+---
+
+## Planned self-serve fix
+
+Add a button to `/admin/domains` next to each unhealthy domain row:
+
+```
+⚠️  yourdomain.com — SSL handshake failed   [ Heal domain ]
+```
+
+Clicking it:
+1. POSTs to `/api/admin/domains/heal` with `{ domain }`
+2. Server invokes the same `provisionZone()` that `cf-heal` does
+3. Streams step-by-step status back (or polls)
+4. Row goes green ✅ on success
+
+When this ships, Kayla won't need to ping the team for 525s.
+
+**Tracked**: open issue on the charmlink repo (TBD link). Until merged, Slack the engineer.
+
+---
+
+## Quick reference card
+
+```
+Symptom: new CharmLink domain shows 525 SSL handshake failed for >15min
+
+  Engineer:
+  ┌──────────────────────────────────────────┐
+  │  cd ~/.openclaw/workspace/agents/vela/   │
+  │     charmlink                            │
+  │  npm run cf-heal -- yourdomain.com       │
+  │                                          │
+  │  # then verify:                          │
+  │  curl -sI https://yourdomain.com/        │
+  └──────────────────────────────────────────┘
+
+  Non-engineer (Kayla, KOPi):
+  ┌──────────────────────────────────────────┐
+  │  Wait 15min from first 525.              │
+  │  Slack: "domain X is stuck on 525, can   │
+  │  someone run cf-heal?"                   │
+  │  Done in ~3 min.                         │
+  └──────────────────────────────────────────┘
+```
+
+---
+
+## See also
+
+- [PHASE-3-CLOUDFLARE.md](./PHASE-3-CLOUDFLARE.md) — full Phase 3 architecture (gray→orange flow, WAF rules, Turnstile escalation).
+- [CHARMLINK-STATE-2026-05-13.md](./CHARMLINK-STATE-2026-05-13.md) — phase history; Phase 7 (2026-05-29) introduced the `cf-heal` CLI.
+- `lib/cloudflare.ts` — `provisionZone()`, `setRecordProxied()`, `ensureProxiedDnsRecord()`.
+- `scripts/cf-heal.ts` — the heal CLI.
+- `scripts/cf-backfill.ts` — bulk re-provision (more aggressive than heal; rewrites WAF + settings).
