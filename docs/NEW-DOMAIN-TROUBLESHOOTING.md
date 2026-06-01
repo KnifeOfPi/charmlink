@@ -123,14 +123,16 @@ If none of those match, screenshot the log + tell Cepheus / Vela. Don't keep ret
 
 ## Required environment for cf-heal
 
-These are normally already set on the dev machine — listed here as the on-call cheatsheet.
+All auto-resolved on the dev machine — listed here as the on-call cheatsheet.
 
-| Var | Source |
+| Var | Resolution order |
 |---|---|
-| `CLOUDFLARE_API_TOKEN` | `~/.openclaw/cloudflare-token` (or env) |
-| `VERCEL_API_TOKEN` | `~/.openclaw/vercel-token` |
-| `VERCEL_TEAM_ID` | Vercel dashboard → team settings → general → "Team ID" |
+| `CLOUDFLARE_API_TOKEN` | env → `~/.openclaw/cloudflare-token` |
+| `VERCEL_API_TOKEN` | env → `~/.openclaw/vercel-token` |
+| `VERCEL_TEAM_ID` | env → `~/.openclaw/vercel-team-id` → auto-discovered via Vercel `/v2/teams` (single-team accounts) |
 | `DATABASE_URL` | `.env.local` (only needed for `--all` mode) |
+
+> **Historical note (2026-06-01):** Missing `VERCEL_TEAM_ID` was the silent root cause of most "525 stuck forever" reports. The cert issuance API returns 403 "You don't have permissions to access X" without the team id, the script logged a warning that was easy to miss, and the heal silently failed. Now the script resolves it from file or auto-discovers — no manual export required.
 
 ---
 
