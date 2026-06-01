@@ -419,6 +419,12 @@ Access at `/admin` with your `CHARMLINK_ADMIN_KEY`.
 
 One Vercel deployment handles all domains. There's no per-domain cost from Vercel. You only pay for the domains themselves ($8-12/year each from a registrar).
 
+### Troubleshooting a stuck new domain
+
+If a freshly-added domain shows **"SSL handshake failed"** / **Cloudflare 525** for more than ~15 minutes, see **[docs/NEW-DOMAIN-TROUBLESHOOTING.md](./docs/NEW-DOMAIN-TROUBLESHOOTING.md)** for the one-command fix (`npm run cf-heal -- yourdomain.com`).
+
+Full Cloudflare provisioning architecture: **[docs/PHASE-3-CLOUDFLARE.md](./docs/PHASE-3-CLOUDFLARE.md)**.
+
 Tested architecture supports 100+ creators with custom domains from a single deployment.
 
 ## Analytics & Tracking
