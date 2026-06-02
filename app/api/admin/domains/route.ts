@@ -5,6 +5,84 @@ import { provisionZone, removeProxiedDnsRecord, findZoneByDomain } from "../../.
 import { addHostnameToWidget, removeHostnameFromWidget } from "../../../../lib/turnstile-admin";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
+
+/**
+ * HEAD-probe a domain to check end-to-end TLS + HTTP health.
+ * Returns healthy=true on any sub-500 response (incl. 3xx/4xx).
+ * 525 / TLS errors / network errors => unhealthy.
+ */
+async function probeHealth(domain: string): Promise<{ status: number | null; healthy: boolean }> {
+  try {
+    const res = await fetch(`https://${domain}/`, {
+      method: "HEAD",
+      redirect: "manual",
+      signal: AbortSignal.timeout(15_000),
+      headers: { "User-Agent": "Mozilla/5.0 charmlink-autoheal-probe" },
+    });
+    return { status: res.status, healthy: res.status < 500 };
+  } catch {
+    return { status: null, healthy: false };
+  }
+}
+
+async function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * After provisionZone succeeds, poll the public hostname for healthy TLS.
+ * If still broken after the initial backoff window, run a second provisionZone
+ * pass (same idempotent recovery the Heal button does) and re-probe.
+ *
+ * This is what prevents the bouncedat.club regression: even when the initial
+ * provisioning returns ok=true, the CF proxy + Vercel cert sometimes settle
+ * into a 525 stuck state. One re-run of provisionZone fixes it.
+ */
+async function verifyAndAutoHeal(
+  domain: string,
+  initial: Awaited<ReturnType<typeof provisionZone>>
+): Promise<{
+  healthy: boolean;
+  finalStatus: number | null;
+  attempts: Array<{ at: number; status: number | null }>;
+  reheal: { ran: boolean; ok?: boolean };
+}> {
+  const attempts: Array<{ at: number; status: number | null }> = [];
+  const probeSchedule = [10_000, 15_000, 20_000, 30_000, 30_000]; // ~105s total wait
+  const reheal = { ran: false, ok: undefined as boolean | undefined };
+
+  let lastProbe: { status: number | null; healthy: boolean } = { status: null, healthy: false };
+
+  for (const delay of probeSchedule) {
+    await sleep(delay);
+    lastProbe = await probeHealth(domain);
+    attempts.push({ at: Date.now(), status: lastProbe.status });
+    if (lastProbe.healthy) break;
+  }
+
+  // Still broken after ~105s of polling + initial provision -> run one more pass
+  if (!lastProbe.healthy && initial.zoneFound) {
+    reheal.ran = true;
+    try {
+      const second = await provisionZone(domain);
+      reheal.ok = second.ok;
+      // Probe once more after re-heal
+      await sleep(15_000);
+      lastProbe = await probeHealth(domain);
+      attempts.push({ at: Date.now(), status: lastProbe.status });
+    } catch {
+      reheal.ok = false;
+    }
+  }
+
+  return {
+    healthy: lastProbe.healthy,
+    finalStatus: lastProbe.status,
+    attempts,
+    reheal,
+  };
+}
 
 function checkAuth(request: NextRequest): boolean {
   const adminKey = process.env.CHARMLINK_ADMIN_KEY;
@@ -105,6 +183,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Step 3: Provision Cloudflare zone (gray-cloud → cert → orange + WAF)
+    //         then auto-verify health and re-run provisionZone if still broken.
+    //         This is what eliminates the bouncedat.club-style stuck-525 cases.
     if (process.env.CLOUDFLARE_API_TOKEN) {
       try {
         const cfResult = await provisionZone(domain);
@@ -118,16 +198,34 @@ export async function POST(request: NextRequest) {
               "Zone not in CF account — add the zone in Cloudflare first, then re-run this or use npm run cf-backfill",
           };
         } else {
-          results.cloudflare = {
+          // Auto-verify + auto-heal loop (fire-and-poll, blocks up to ~2.5 min)
+          const verify = await verifyAndAutoHeal(domain, cfResult);
+
+          const cfBlock: NonNullable<typeof results.cloudflare> = {
             zoneFound: true,
-            ok: cfResult.ok,
+            ok: cfResult.ok && verify.healthy,
             steps: cfResult.steps,
           };
+          // Add verification trace so the admin UI / curl can see what happened
+          (cfBlock as unknown as Record<string, unknown>).verification = {
+            healthy: verify.healthy,
+            finalStatus: verify.finalStatus,
+            probeAttempts: verify.attempts.length,
+            autoHealRan: verify.reheal.ran,
+            autoHealOk: verify.reheal.ok,
+          };
+          results.cloudflare = cfBlock;
+
           if (!cfResult.ok) {
             const failedSteps = cfResult.steps
               .filter((s) => !s.ok)
               .map((s) => `${s.name}: ${s.detail ?? "failed"}`);
             results.errors.push(`Cloudflare: ${failedSteps.join("; ")}`);
+          }
+          if (!verify.healthy) {
+            results.errors.push(
+              `Verification: domain still unhealthy after auto-heal (HTTP ${verify.finalStatus ?? "?"})`
+            );
           }
         }
       } catch (err) {
