@@ -15,6 +15,23 @@ interface VercelDomain {
     reason: string;
   }>;
   createdAt?: number;
+  // UI-only health state (probed client-side after load)
+  health?: "unknown" | "healthy" | "broken" | "probing";
+  healthStatus?: number | null;
+  healing?: boolean;
+  healMessage?: string;
+}
+
+interface HealResponse {
+  domain: string;
+  ok: boolean;
+  noop?: boolean;
+  preStatus?: number | null;
+  postStatus?: number | null;
+  healthy?: boolean;
+  message?: string;
+  error?: string;
+  steps?: Array<{ name: string; ok: boolean; detail?: string }>;
 }
 
 export default function DomainsPage() {
@@ -25,6 +42,40 @@ export default function DomainsPage() {
   const [newDomain, setNewDomain] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+
+  // Probe domain health after load so we can show the Heal button on broken rows.
+  // Uses the public site directly (HEAD) — no admin auth needed, no extra route.
+  async function probeDomainHealth(name: string): Promise<{ healthy: boolean; status: number | null }> {
+    try {
+      const res = await fetch(`https://${name}/`, {
+        method: "HEAD",
+        mode: "no-cors",
+        cache: "no-store",
+        redirect: "manual",
+        signal: AbortSignal.timeout(12_000),
+      });
+      // no-cors gives us an opaque response — status is always 0. Falling through
+      // to the catch below means the request errored (network/TLS/525). Reaching
+      // here means the fetch resolved, which means TLS handshake + HTTP completed.
+      return { healthy: true, status: res.status || 200 };
+    } catch {
+      return { healthy: false, status: null };
+    }
+  }
+
+  async function probeAllDomains(items: VercelDomain[]) {
+    const results = await Promise.all(
+      items.map(async (d) => {
+        const probe = await probeDomainHealth(d.name);
+        return {
+          ...d,
+          health: probe.healthy ? ("healthy" as const) : ("broken" as const),
+          healthStatus: probe.status,
+        };
+      })
+    );
+    setDomains(results);
+  }
 
   useEffect(() => {
     if (!ready) return;
@@ -38,10 +89,96 @@ export default function DomainsPage() {
       const res = await fetch("/api/admin/domains/status", { headers: authHeaders() });
       if (res.ok) {
         const data = await res.json();
-        setDomains(Array.isArray(data) ? data : []);
+        const items: VercelDomain[] = Array.isArray(data)
+          ? data.map((d: VercelDomain) => ({ ...d, health: "probing" as const }))
+          : [];
+        setDomains(items);
+        // Kick off health probes in the background — don't block the UI.
+        if (items.length > 0) {
+          probeAllDomains(items);
+        }
       }
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleHeal(domain: string) {
+    // Optimistic UI — mark as healing immediately
+    setDomains((prev) =>
+      prev.map((d) =>
+        d.name === domain ? { ...d, healing: true, healMessage: "Healing… (up to 3 min)" } : d
+      )
+    );
+    setError("");
+    setSuccess("");
+
+    try {
+      const res = await fetch("/api/admin/domains/heal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ domain }),
+      });
+      const data: HealResponse = await res.json();
+
+      if (!res.ok) {
+        setDomains((prev) =>
+          prev.map((d) =>
+            d.name === domain
+              ? {
+                  ...d,
+                  healing: false,
+                  healMessage: `❌ ${data.error ?? "heal failed"}`,
+                }
+              : d
+          )
+        );
+        setError(`${domain}: ${data.error ?? "heal failed"}`);
+        return;
+      }
+
+      if (data.noop) {
+        setDomains((prev) =>
+          prev.map((d) =>
+            d.name === domain
+              ? { ...d, healing: false, health: "healthy", healMessage: "✅ already healthy" }
+              : d
+          )
+        );
+        setSuccess(`${domain} was already healthy`);
+        return;
+      }
+
+      // Re-probe to confirm
+      const probe = await probeDomainHealth(domain);
+      setDomains((prev) =>
+        prev.map((d) =>
+          d.name === domain
+            ? {
+                ...d,
+                healing: false,
+                health: probe.healthy ? "healthy" : "broken",
+                healthStatus: probe.status ?? data.postStatus ?? null,
+                healMessage: data.ok
+                  ? "✅ healed"
+                  : `⚠️ partial heal — HTTP ${data.postStatus ?? "?"}`,
+              }
+            : d
+        )
+      );
+      if (data.ok) {
+        setSuccess(`✅ ${domain} healed`);
+      } else {
+        setError(`${domain}: still broken after heal (HTTP ${data.postStatus ?? "?"})`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Network error";
+      setDomains((prev) =>
+        prev.map((d) =>
+          d.name === domain ? { ...d, healing: false, healMessage: `❌ ${msg}` } : d
+        )
+      );
+      setError(`${domain}: ${msg}`);
     }
   }
 
@@ -186,6 +323,21 @@ export default function DomainsPage() {
                     <span className={`text-xs px-2 py-0.5 rounded-full ${domain.verified ? "bg-green-900 text-green-300" : "bg-yellow-900 text-yellow-300"}`}>
                       {domain.verified ? "Verified" : "Pending"}
                     </span>
+                    {domain.health === "broken" && (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-red-900 text-red-300">
+                        SSL broken
+                      </span>
+                    )}
+                    {domain.health === "broken" && (
+                      <button
+                        onClick={() => handleHeal(domain.name)}
+                        disabled={domain.healing}
+                        className="bg-[#e91e8a] hover:bg-[#d01577] disabled:opacity-50 text-white font-semibold text-xs px-3 py-1 rounded-lg transition-colors"
+                        title="Re-run the cf-heal flow: unproxy → wait for Vercel cert → re-proxy"
+                      >
+                        {domain.healing ? "Healing…" : "🩹 Heal"}
+                      </button>
+                    )}
                     <button
                       onClick={() => checkStatus(domain.name)}
                       className="text-gray-500 hover:text-white text-xs transition-colors px-2"
@@ -221,6 +373,22 @@ export default function DomainsPage() {
                       </div>
                     ))}
                   </div>
+                )}
+
+                {domain.healMessage && (
+                  <p
+                    className={`text-xs mt-2 ${
+                      domain.healMessage.startsWith("✅")
+                        ? "text-green-400"
+                        : domain.healMessage.startsWith("⚠️")
+                          ? "text-yellow-400"
+                          : domain.healMessage.startsWith("❌")
+                            ? "text-red-400"
+                            : "text-gray-400"
+                    }`}
+                  >
+                    {domain.healMessage}
+                  </p>
                 )}
 
                 {domain.createdAt && (

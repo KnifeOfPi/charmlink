@@ -2,7 +2,7 @@
 
 This is the "pick it up cold weeks later" doc. Reads top-to-bottom and assumes
 no prior context. For deep history per phase, see `memory/` daily logs
-referenced inline. **Last updated:** 2026-05-29 (Phase 7 — 525 SSL race fix + cf-heal + cert teamId).
+referenced inline. **Last updated:** 2026-06-02 (Phase 7.x — 11 live domains; ops note re: cf-heal adoption).
 
 ---
 
@@ -17,10 +17,19 @@ in-app WebView.
 - **Work dir (local):** `/Users/cepheus/.openclaw/workspace/agents/vela/charmlink`
 - **Stack:** Next.js 16 (App Router) · TypeScript · Tailwind v4 · shadcn/ui ·
   Supabase (Postgres) · Vercel · Cloudflare (orange-cloud + Turnstile)
-- **Live domains (verified):**
+- **Live domains (verified, as of 2026-06-02):** 11 total. Source of truth = `charmlink_creator_domains` join table.
   - `https://charmlink.vercel.app` (canonical, but origin-locked for slug paths)
-  - `https://hannazuki.com` → creator `waifuzukii`
-  - `https://hollysworld.club` → creator slug for Holly
+  - `https://hollysworld.club` → `holly`
+  - `https://hannazuki.com` → `waifuzukii`
+  - `https://getmysocials.club` → `lookhere`
+  - `https://sweetlinks.club` → `righthere`
+  - `https://hiddensecret.me` → `hereitis`
+  - `https://peekhere.club` → `myplatforms`
+  - `https://sweetstuff.club` → `mysocials`
+  - `https://sweet-site.com` → `lookheree`
+  - `https://only-links.com` → `getmysocialss`
+  - `https://its-here.com` → `foryou`
+  - `https://bouncedat.club` → `kai`  *(added 2026-06-02; 525 stuck → healed manually because operator forgot `cf-heal`; see Phase 7.6 below)*
 - **Built by:** Vela (engineering) + Cepheus (ops/CF) + Aquila (sec review).
   Commits authored as `KnifeOfPi <nate@mindstar.space>`; real authorship lives
   in `Co-authored-by:` trailers.
@@ -260,6 +269,17 @@ These cost us hours; future-me should not re-learn them.
   in the agent root.
 - This is an OpenClaw orchestration rule, not a Charmlink rule, but it bit us
   on the Blob migration so worth noting.
+
+---
+
+### 7.6 Operator skipped `cf-heal` on bouncedat.club regression (2026-06-02)
+
+- **What happened:** Domain `bouncedat.club` (creator `kai`) sat at CF 525 for hours. Operator (Cepheus) manually unproxied → removed from Vercel project → re-added → waited for cert → re-proxied. Took ~12 min wallclock plus loop confusion with the human.
+- **Should have been:** `cd ~/.openclaw/workspace/agents/vela/charmlink && npm run cf-heal -- bouncedat.club` — ~3 min, idempotent, already documented in `NEW-DOMAIN-TROUBLESHOOTING.md`.
+- **Why it was skipped:** Cepheus's MEMORY.md + AGENTS.md didn't mention `cf-heal`. The runbook only lives in the charmlink repo. When the domain monitor alerts, the on-call session doesn't naturally land on the runbook.
+- **Lesson locked in:** Added pointer in `cepheus/MEMORY.md` under "Key Infrastructure". Next CharmLink domain alert MUST start with `cf-heal --` before any manual CF/Vercel API calls.
+- **Secondary lesson:** Domain `bouncedat.club` was attached to Vercel charmlink project but never added to `charmlink_creator_domains`. That's why the 6h health monitor never alarmed when SSL first broke. Row now inserted; future regressions will alarm.
+- **Open work item bumped to top of TODO:** ship the self-serve "Heal domain" button in `/admin/domains` (planned in NEW-DOMAIN-TROUBLESHOOTING.md). With it, Kayla heals her own domains and no operator needs to remember `cf-heal`.
 
 ---
 
