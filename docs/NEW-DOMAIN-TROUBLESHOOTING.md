@@ -159,16 +159,19 @@ The 525 race exists because:
 **Permanent fixes that would eliminate the race**:
 
 - Move provisioning to a background job (BullMQ / Vercel Cron) so it can wait 15min without timing out → planned, [issue TBD].
-- Push a "Heal Domain" button into `/admin/domains` so Kayla can re-run heal herself without engineer involvement → **planned next** ([see TODO below](#planned-self-serve-fix)).
+- Push a "Heal Domain" button into `/admin/domains` so Kayla can re-run heal herself without engineer involvement → ✅ **SHIPPED 2026-06-02 (PR #12)** ([see Self-serve Heal button below](#self-serve-heal-button-shipped)).
+- Auto-heal on domain add so most new domains never hit 525 in the first place → ✅ **SHIPPED 2026-06-02 (PR #12)**.
 - Subscribe to Vercel deployment hook + ACME success events → out of scope for current Vercel plan.
 
 Until then: **heal-on-symptom is the workflow**.
 
 ---
 
-## Planned self-serve fix
+## Self-serve Heal button (SHIPPED)
 
-Add a button to `/admin/domains` next to each unhealthy domain row:
+**Shipped 2026-06-02 in PR #12.** No engineer required.
+
+Each domain row in `/admin/domains` has a **Heal** button:
 
 ```
 ⚠️  yourdomain.com — SSL handshake failed   [ Heal domain ]
@@ -176,13 +179,20 @@ Add a button to `/admin/domains` next to each unhealthy domain row:
 
 Clicking it:
 1. POSTs to `/api/admin/domains/heal` with `{ domain }`
-2. Server invokes the same `provisionZone()` that `cf-heal` does
-3. Streams step-by-step status back (or polls)
-4. Row goes green ✅ on success
+2. Server **pre-probes** health via HEAD — if already healthy (<500), returns
+   `{ok:true, noop:true}` immediately (safe to click anytime, no-op when fine)
+3. If unhealthy, invokes the same idempotent `provisionZone()` the `cf-heal`
+   CLI uses: **gray → wait for Vercel cert (6× backoff) → re-orange**
+4. Returns `{ok, noop, preStatus, postStatus, steps}`; row goes green ✅ on success
 
-When this ships, Kayla won't need to ping the team for 525s.
+The route auto-resolves `VERCEL_TEAM_ID` (env → file → `/v2/teams`), so it never
+silently 403s on cert issuance — the historical root cause of "stuck" domains.
 
-**Tracked**: open issue on the charmlink repo (TBD link). Until merged, Slack the engineer.
+**Auto-heal on add:** adding a new domain triggers the heal flow automatically,
+so the gray→orange race is handled at creation time and most domains never 525.
+
+The `cf-heal` CLI still exists and is the fastest path from a terminal for
+engineers. The button is the supported path for everyone else.
 
 ---
 
@@ -203,10 +213,10 @@ Symptom: new CharmLink domain shows 525 SSL handshake failed for >15min
 
   Non-engineer (Kayla, KOPi):
   ┌──────────────────────────────────────────┐
-  │  Wait 15min from first 525.              │
-  │  Slack: "domain X is stuck on 525, can   │
-  │  someone run cf-heal?"                   │
-  │  Done in ~3 min.                         │
+  │  Open /admin/domains.                    │
+  │  Find the domain row (⚠️ if unhealthy).   │
+  │  Click [ Heal domain ]. Wait ~3 min.     │
+  │  Row goes green ✅. No engineer needed.   │
   └──────────────────────────────────────────┘
 ```
 

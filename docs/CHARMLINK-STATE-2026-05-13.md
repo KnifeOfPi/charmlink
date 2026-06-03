@@ -2,7 +2,7 @@
 
 This is the "pick it up cold weeks later" doc. Reads top-to-bottom and assumes
 no prior context. For deep history per phase, see `memory/` daily logs
-referenced inline. **Last updated:** 2026-06-02 (Phase 7.x — 11 live domains; ops note re: cf-heal adoption).
+referenced inline. **Last updated:** 2026-06-03 (Phase 7.7 — 11 live domains; self-serve Heal button shipped + auto-heal on domain add; `cf-heal` VERCEL_TEAM_ID auto-resolve).
 
 ---
 
@@ -52,6 +52,8 @@ Branch `main` clean, no pending PRs.
 | 5 | Per-creator themed decoy cloaking — link-preview scrapers get a wholesome themed blog HTML with **zero** Next/Vercel/Charmlink fingerprints | `452b572` |
 | 5 polish | IG-banner color, chooser UI, iOS-only IG extbrowser scheme, Sec-Fetch-Site `none` allowance, `next.config` image whitelist | `947e009`, `faaff0c`, `9706029`, `85c17dc`, `f2aaac9`, `910f445` |
 | 7 | **2026-05-29** Gray→cert→orange race fix: `provisionZone` now triggers `POST /v4/certs?teamId=` with 6× backoff + HEAD via Vercel IP before flipping orange; idempotency check skips ceremony for healthy domains. `cf-heal` CLI added. Admin route uses `charmlink_creator_domains` join table. `cf-backfill` iterates join table + adds verify step. | PR `fix/domains-525-ssl-race-heal-teamid` |
+| 7.6 | **2026-06-01** `cf-heal` auto-resolves `VERCEL_TEAM_ID` in 3 tiers (env → file → `/v2/teams`). Missing team id was the silent root cause of `/v4/certs` 403s that made `cf-heal` "fail" on every domain. | `5cfb2e9` (PR #11) |
+| 7.7 | **2026-06-02** Self-serve **Heal button** in `/admin/domains` + **auto-heal on domain add**. Button POSTs `/api/admin/domains/heal` → runs the same idempotent `provisionZone()` flow as the `cf-heal` CLI (pre-probe → gray → Vercel cert → re-orange). Returns `{ok, noop, preStatus, postStatus, steps}`. Eliminates the manual unproxy/remove/re-add loop and lets creators/VAs heal their own domains with no engineer. | `d596f62` (PR #12) |
 
 See `memory/archive-2026-05-10.md` for Phase 1–3 ship-day notes and
 `memory/2026-05-11.md` for everything Phase 4 + 5 day-of.
@@ -279,15 +281,48 @@ These cost us hours; future-me should not re-learn them.
 - **Why it was skipped:** Cepheus's MEMORY.md + AGENTS.md didn't mention `cf-heal`. The runbook only lives in the charmlink repo. When the domain monitor alerts, the on-call session doesn't naturally land on the runbook.
 - **Lesson locked in:** Added pointer in `cepheus/MEMORY.md` under "Key Infrastructure". Next CharmLink domain alert MUST start with `cf-heal --` before any manual CF/Vercel API calls.
 - **Secondary lesson:** Domain `bouncedat.club` was attached to Vercel charmlink project but never added to `charmlink_creator_domains`. That's why the 6h health monitor never alarmed when SSL first broke. Row now inserted; future regressions will alarm.
-- **Open work item bumped to top of TODO:** ship the self-serve "Heal domain" button in `/admin/domains` (planned in NEW-DOMAIN-TROUBLESHOOTING.md). With it, Kayla heals her own domains and no operator needs to remember `cf-heal`.
+- **Open work item (NOW SHIPPED — see 7.7):** the self-serve "Heal domain" button in `/admin/domains` was bumped to the top of TODO after this regression and shipped same-day as PR #12. With it, Kayla heals her own domains and no operator needs to remember `cf-heal`.
 
 ---
 
-## 8. Recent Commit Sequence (2026-05-11 → 2026-05-13)
+### 7.7 Self-serve Heal button + auto-heal shipped (2026-06-02, PR #12)
+
+Direct outcome of the 7.6 regression. The manual unproxy/remove/re-add loop is
+now a one-click (or zero-click) operation.
+
+- **Heal button** (`/admin/domains`): each domain row gets a **Heal** action.
+  It POSTs `{domain}` to `app/api/admin/domains/heal/route.ts`, which:
+  1. Pre-probes domain health via HEAD. If already healthy (<500), returns
+     `{ok:true, noop:true}` and exits fast — safe to click anytime.
+  2. If unhealthy, runs the same idempotent `provisionZone()` cycle as the
+     `cf-heal` CLI: **gray → wait for Vercel cert (6× backoff) → re-orange**.
+  3. Returns `{ok, noop, preStatus, postStatus, steps}` so the UI shows what
+     happened.
+- **Auto-heal on add:** adding a new domain now triggers the heal flow
+  automatically, so the gray→orange race is handled at creation time instead
+  of surfacing as a 525 later.
+- **VERCEL_TEAM_ID:** the route auto-resolves the team id the same 3-tier way
+  `cf-heal` does (env → file → `/v2/teams`), so it never silently 403s on
+  `/v4/certs` (the 7.6 + PR #11 root cause).
+- **Operator note:** the `cf-heal` CLI still exists and is still the fastest
+  path from a terminal. For non-engineers (Kayla et al.), the button is the
+  supported path — no repo checkout, no env vars, no memorized command.
+- **Net effect:** the "operator forgot `cf-heal`" failure mode from 7.6 is
+  structurally gone. A broken domain is fixable by anyone with admin access in
+  one click, and most new domains never break in the first place.
+
+---
+
+## 8. Recent Commit Sequence (2026-05-11 → 2026-06-02)
 
 In reverse chronological order. All on `main`.
 
 ```
+d596f62 feat(admin): self-serve Heal button + auto-heal on domain add (#12)            ← Phase 7.7
+5cfb2e9 fix(cf-heal): auto-resolve VERCEL_TEAM_ID — silent root cause of stuck domains (#11)  ← Phase 7.6
+5240cce docs(charmlink): definitive new-domain troubleshooting (525 SSL race) (#10)
+d927aa4 fix(domains): eliminate 525 SSL race + heal-on-detect + cert teamId (#9)
+26e3c15 docs(state): fix WAF rule count + ASN list + add gray->orange lesson (7.5)
 757569d fix(domains): gray→orange CF flip after Vercel cert issues (fixes SSL handshake on new domains)
 3cd5ce3 feat(admin): Vercel Blob storage for avatar uploads (drop data-URL hack)   ← Avatar upload fix
 57a7c19 docs: comprehensive state-of-repo doc for cold resume
