@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>CharmLink V2 mockup — Hannazuki</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg1:#150726; --bg2:#0a0414; --accent:#c45bff; --accent2:#ff6bd6;
+    --txt:#f5eefc; --muted:rgba(245,238,252,.62);
+    --glass:rgba(255,255,255,.055); --glass-brd:rgba(255,255,255,.12);
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{
+    font-family:Inter,system-ui,sans-serif;color:var(--txt);
+    background:var(--bg2);overflow-x:hidden;
+    display:flex;justify-content:center;
+    min-height:100vh;padding:0 18px;
+  }
+  /* ambient aurora orbs */
+  .aurora{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none}
+  .orb{position:absolute;border-radius:50%;filter:blur(70px);opacity:.55;animation:drift 18s ease-in-out infinite}
+  .orb.a{width:420px;height:420px;background:var(--accent);top:-120px;left:-100px}
+  .orb.b{width:340px;height:340px;background:var(--accent2);bottom:-140px;right:-110px;opacity:.4;animation-delay:-7s}
+  .orb.c{width:280px;height:280px;background:#5b8bff;top:38%;left:55%;opacity:.28;animation-delay:-12s}
+  @keyframes drift{0%,100%{transform:translate(0,0) scale(1)}33%{transform:translate(40px,-30px) scale(1.08)}66%{transform:translate(-30px,25px) scale(.95)}}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.04;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>")}
+
+  .wrap{position:relative;z-index:2;width:100%;max-width:440px;padding:52px 0 40px;display:flex;flex-direction:column;align-items:center;min-height:100vh;justify-content:center}
+
+  /* avatar */
+  .ava-ring{position:relative;width:124px;height:124px;border-radius:50%;
+    padding:3px;background:conic-gradient(from 180deg,var(--accent),var(--accent2),#5b8bff,var(--accent));
+    box-shadow:0 0 40px -8px var(--accent);animation:spin 9s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .ava-ring img{width:100%;height:100%;border-radius:50%;object-fit:cover;display:block;animation:spin 9s linear infinite reverse}
+  .ava-ring .ph{width:100%;height:100%;border-radius:50%;background:linear-gradient(135deg,#3a1f52,#1a0f29);display:flex;align-items:center;justify-content:center;font-size:44px;animation:spin 9s linear infinite reverse}
+
+  .name{font-family:'Playfair Display',serif;font-size:30px;font-weight:700;margin-top:20px;letter-spacing:.2px;display:flex;align-items:center;gap:8px}
+  .verified{width:21px;height:21px;display:inline-block}
+  .tagline{color:var(--muted);font-size:14.5px;margin-top:6px;font-weight:450}
+  .presence{display:inline-flex;align-items:center;gap:7px;margin-top:13px;font-size:12px;color:var(--muted);
+    background:var(--glass);border:1px solid var(--glass-brd);padding:5px 12px;border-radius:999px;backdrop-filter:blur(8px)}
+  .dot{width:7px;height:7px;border-radius:50%;background:#46e08a;box-shadow:0 0 8px #46e08a;animation:pulse 1.8s ease-in-out infinite}
+  @keyframes pulse{50%{opacity:.4}}
+
+  /* link stack */
+  .links{width:100%;margin-top:30px;display:flex;flex-direction:column;gap:14px}
+
+  .card{position:relative;display:flex;align-items:center;gap:14px;width:100%;
+    padding:16px 18px;border-radius:18px;text-decoration:none;color:var(--txt);
+    background:var(--glass);border:1px solid var(--glass-brd);backdrop-filter:blur(14px);
+    transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease;overflow:hidden}
+  .card:active{transform:scale(.98)}
+  .card:hover{transform:translateY(-2px);border-color:rgba(196,91,255,.55);box-shadow:0 10px 30px -12px rgba(196,91,255,.5)}
+  .card .ico{width:40px;height:40px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;
+    background:linear-gradient(135deg,rgba(196,91,255,.25),rgba(255,107,214,.18));border:1px solid rgba(255,255,255,.1)}
+  .card .body{flex:1;min-width:0}
+  .card .t{font-weight:600;font-size:15.5px;display:flex;align-items:center;gap:8px}
+  .card .s{color:var(--muted);font-size:12.5px;margin-top:2px}
+  .card .chev{color:var(--muted);font-size:18px;flex-shrink:0;transition:transform .18s}
+  .card:hover .chev{transform:translateX(3px);color:var(--accent2)}
+
+  /* featured / primary CTA */
+  .card.feat{background:linear-gradient(120deg,rgba(196,91,255,.9),rgba(255,107,214,.85));border:none;
+    box-shadow:0 12px 34px -10px rgba(196,91,255,.7)}
+  .card.feat .ico{background:rgba(255,255,255,.2);border-color:rgba(255,255,255,.25)}
+  .card.feat .s{color:rgba(255,255,255,.82)}
+  .card.feat:hover{box-shadow:0 16px 40px -10px rgba(196,91,255,.85)}
+  .shine{position:absolute;top:0;left:-60%;width:40%;height:100%;
+    background:linear-gradient(100deg,transparent,rgba(255,255,255,.35),transparent);
+    transform:skewX(-18deg);animation:shine 4.5s ease-in-out infinite}
+  @keyframes shine{0%,60%{left:-60%}80%,100%{left:130%}}
+
+  .badge{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;
+    padding:3px 8px;border-radius:999px;background:rgba(255,255,255,.22);color:#fff}
+  .badge.hot{background:#ff3b6b;box-shadow:0 0 12px -2px #ff3b6b}
+
+  /* socials row */
+  .socials{display:flex;gap:16px;margin-top:30px}
+  .socials a{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    background:var(--glass);border:1px solid var(--glass-brd);backdrop-filter:blur(10px);
+    transition:transform .16s,border-color .16s;color:var(--txt)}
+  .socials a:hover{transform:translateY(-3px) scale(1.06);border-color:var(--accent)}
+  .socials svg{width:20px;height:20px;fill:currentColor}
+
+  .foot{margin-top:34px;font-size:11px;color:rgba(245,238,252,.32);letter-spacing:.3px}
+
+  /* age modal */
+  .scrim{position:fixed;inset:0;z-index:50;background:rgba(8,3,16,.72);backdrop-filter:blur(8px);
+    display:flex;align-items:center;justify-content:center;padding:22px;opacity:0;pointer-events:none;transition:opacity .25s}
+  .scrim.on{opacity:1;pointer-events:auto}
+  .modal{width:100%;max-width:360px;background:linear-gradient(160deg,rgba(30,14,48,.96),rgba(16,7,26,.97));
+    border:1px solid var(--glass-brd);border-radius:24px;padding:30px 26px;text-align:center;
+    box-shadow:0 30px 80px -20px #000;transform:translateY(14px) scale(.97);transition:transform .25s}
+  .scrim.on .modal{transform:none}
+  .modal .m-ico{width:60px;height:60px;border-radius:18px;margin:0 auto 16px;display:flex;align-items:center;justify-content:center;font-size:30px;
+    background:linear-gradient(135deg,rgba(196,91,255,.3),rgba(255,107,214,.2));border:1px solid rgba(255,255,255,.12)}
+  .modal h2{font-family:'Playfair Display',serif;font-size:21px;font-weight:700;margin-bottom:8px}
+  .modal p{color:var(--muted);font-size:13.5px;line-height:1.5;margin-bottom:22px}
+  .modal .row{display:flex;gap:11px}
+  .btn{flex:1;padding:13px 10px;border-radius:13px;font-weight:600;font-size:13.5px;white-space:nowrap;border:none;cursor:pointer;font-family:inherit}
+  .btn.sec{background:var(--glass);border:1px solid var(--glass-brd);color:var(--txt)}
+  .btn.pri{background:linear-gradient(120deg,var(--accent),var(--accent2));color:#fff;box-shadow:0 8px 22px -8px var(--accent)}
+  .btn:active{transform:scale(.97)}
+</style>
+</head>
+<body>
+  <div class="aurora"><div class="orb a"></div><div class="orb b"></div><div class="orb c"></div></div>
+  <div class="grain"></div>
+
+  <div class="wrap">
+    <div class="ava-ring"><div class="ph">🌸</div></div>
+
+    <div class="name">Hannazuki
+      <svg class="verified" viewBox="0 0 24 24"><path fill="#c45bff" d="M12 2l2.4 1.8 3-.3 1.2 2.7 2.7 1.2-.3 3L23 14l-1.8 2.4.3 3-2.7 1.2-1.2 2.7-3-.3L12 22l-2.4-1.8-3 .3-1.2-2.7L2.7 16.4l.3-3L1 12l1.8-2.4-.3-3 2.7-1.2L6.4 2.7l3 .3z"/><path fill="#fff" d="M10.6 14.6l-2.2-2.2-1.2 1.2 3.4 3.4 6-6-1.2-1.2z"/></svg>
+    </div>
+    <div class="tagline">Model &amp; Content Creator ✦ Tokyo</div>
+    <div class="presence"><span class="dot"></span>Active now · replies fast</div>
+
+    <div class="links">
+      <a class="card feat" href="#" onclick="openAge(event)">
+        <div class="shine"></div>
+        <div class="ico">🔥</div>
+        <div class="body">
+          <div class="t">Exclusive Content <span class="badge hot">VIP</span></div>
+          <div class="s">Unlock my private page — 50% off today</div>
+        </div>
+        <div class="chev">›</div>
+      </a>
+
+      <a class="card" href="#" onclick="openAge(event)">
+        <div class="ico">💌</div>
+        <div class="body">
+          <div class="t">Free Trial <span class="badge">New</span></div>
+          <div class="s">Sneak peek, no card needed</div>
+        </div>
+        <div class="chev">›</div>
+      </a>
+
+      <a class="card" href="#">
+        <div class="ico">🎬</div>
+        <div class="body">
+          <div class="t">Custom Requests</div>
+          <div class="s">DM me what you want to see</div>
+        </div>
+        <div class="chev">›</div>
+      </a>
+
+      <a class="card" href="#">
+        <div class="ico">🛍️</div>
+        <div class="body">
+          <div class="t">My Wishlist</div>
+          <div class="s">Spoil me a little 💕</div>
+        </div>
+        <div class="chev">›</div>
+      </a>
+    </div>
+
+    <div class="socials">
+      <a href="#" aria-label="Instagram"><svg viewBox="0 0 24 24"><path d="M12 2.2c3.2 0 3.6 0 4.9.1 1.2.1 1.8.3 2.2.4.6.2 1 .5 1.4.9.4.4.7.8.9 1.4.2.4.4 1 .4 2.2.1 1.3.1 1.7.1 4.9s0 3.6-.1 4.9c-.1 1.2-.3 1.8-.4 2.2-.2.6-.5 1-.9 1.4-.4.4-.8.7-1.4.9-.4.2-1 .4-2.2.4-1.3.1-1.7.1-4.9.1s-3.6 0-4.9-.1c-1.2-.1-1.8-.3-2.2-.4-.6-.2-1-.5-1.4-.9-.4-.4-.7-.8-.9-1.4-.2-.4-.4-1-.4-2.2C2.2 15.6 2.2 15.2 2.2 12s0-3.6.1-4.9c.1-1.2.3-1.8.4-2.2.2-.6.5-1 .9-1.4.4-.4.8-.7 1.4-.9.4-.2 1-.4 2.2-.4C8.4 2.2 8.8 2.2 12 2.2zm0 1.8c-3.1 0-3.5 0-4.7.1-1.1.1-1.7.2-2.1.4-.5.2-.9.4-1.3.8-.4.4-.6.8-.8 1.3-.2.4-.3 1-.4 2.1C2.6 9.9 2.6 10.3 2.6 12s0 2.1.1 3.3c.1 1.1.2 1.7.4 2.1.2.5.4.9.8 1.3.4.4.8.6 1.3.8.4.2 1 .3 2.1.4 1.2.1 1.6.1 4.7.1s3.5 0 4.7-.1c1.1-.1 1.7-.2 2.1-.4.5-.2.9-.4 1.3-.8.4-.4.6-.8.8-1.3.2-.4.3-1 .4-2.1.1-1.2.1-1.6.1-3.3s0-2.1-.1-3.3c-.1-1.1-.2-1.7-.4-2.1-.2-.5-.4-.9-.8-1.3-.4-.4-.8-.6-1.3-.8-.4-.2-1-.3-2.1-.4C15.5 4 15.1 4 12 4zm0 3.1a4.9 4.9 0 110 9.8 4.9 4.9 0 010-9.8zm0 8.1a3.2 3.2 0 100-6.4 3.2 3.2 0 000 6.4zm6.2-8.3a1.15 1.15 0 11-2.3 0 1.15 1.15 0 012.3 0z"/></svg></a>
+      <a href="#" aria-label="X"><svg viewBox="0 0 24 24"><path d="M18.2 2.3h3.3l-7.2 8.3 8.5 11.1h-6.7l-5.2-6.9-6 6.9H1.6l7.7-8.8L1.1 2.3h6.8l4.7 6.3 5.6-6.3zm-1.2 17.7h1.8L7.1 4.1H5.1l11.9 15.9z"/></svg></a>
+      <a href="#" aria-label="TikTok"><svg viewBox="0 0 24 24"><path d="M16.6 5.8a4.3 4.3 0 01-1-2.8h-3.1v12.3a2.6 2.6 0 11-2.6-2.6c.3 0 .5 0 .8.1V9.6a5.7 5.7 0 00-.8-.1A5.7 5.7 0 1015.4 15V8.7a7.3 7.3 0 004.3 1.4V7a4.3 4.3 0 01-3.1-1.2z"/></svg></a>
+    </div>
+
+    <div class="foot">© hannazuki · all links verified</div>
+  </div>
+
+  <!-- age gate -->
+  <div class="scrim" id="scrim">
+    <div class="modal">
+      <div class="m-ico">🔞</div>
+      <h2>18+ Content Ahead</h2>
+      <p>This link may contain content intended for adult audiences. By continuing you confirm you are 18 or older.</p>
+      <div class="row">
+        <button class="btn sec" onclick="closeAge()">Go back</button>
+        <button class="btn pri" onclick="closeAge()">I'm 18+ &middot; Enter</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  function openAge(e){e.preventDefault();document.getElementById('scrim').classList.add('on')}
+  function closeAge(){document.getElementById('scrim').classList.remove('on')}
+</script>
+</body>
+</html>
