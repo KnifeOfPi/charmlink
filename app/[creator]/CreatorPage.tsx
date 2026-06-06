@@ -54,6 +54,74 @@ function buildBackground(creator: Creator): React.CSSProperties {
   return { backgroundColor: c1 };
 }
 
+// ── Keyframes ─────────────────────────────────────────────────────────────────
+
+const ALL_KEYFRAMES = `
+  @keyframes linkPulse {
+    0%, 100% { transform: scale(1); }
+    50%       { transform: scale(1.03); }
+  }
+  @keyframes linkBounce {
+    0%, 100% { transform: translateY(0); }
+    30%       { transform: translateY(-6px); }
+    60%       { transform: translateY(-2px); }
+  }
+  @keyframes linkShake {
+    0%, 100% { transform: translateX(0); }
+    20%       { transform: translateX(-4px); }
+    40%       { transform: translateX(4px); }
+    60%       { transform: translateX(-3px); }
+    80%       { transform: translateX(3px); }
+  }
+  @keyframes countdownPulse {
+    0%, 100% { transform: scale(1); }
+    50%       { transform: scale(1.05); }
+  }
+  @keyframes drift {
+    0%,100% { transform: translate(0,0) scale(1); }
+    33%      { transform: translate(40px,-30px) scale(1.08); }
+    66%      { transform: translate(-30px,25px) scale(0.95); }
+  }
+  @keyframes auroraSpinRing {
+    to { transform: rotate(360deg); }
+  }
+  @keyframes auroraSpinRingRev {
+    to { transform: rotate(-360deg); }
+  }
+  @keyframes shine {
+    0%,60%   { left: -60%; }
+    80%,100% { left: 130%; }
+  }
+  @keyframes dotPulse {
+    50% { opacity: 0.4; }
+  }
+  @keyframes floatUp {
+    0%   { transform: translateY(100vh) scale(0.6); opacity: 0; }
+    10%  { opacity: 0.9; }
+    90%  { opacity: 0.7; }
+    100% { transform: translateY(-20vh) scale(1); opacity: 0; }
+  }
+  @keyframes twinkle {
+    0%, 100% { opacity: 0.1; transform: scale(1); }
+    50%       { opacity: 1;   transform: scale(1.4); }
+  }
+  @keyframes gradientSpin {
+    0%   { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+  @keyframes statusPulse {
+    0%, 100% { transform: scale(1);   opacity: 0.6; }
+    50%       { transform: scale(1.8); opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+`;
+
 // ── Floating Icons ────────────────────────────────────────────────────────────
 
 interface FloatingIconsProps {
@@ -77,37 +145,27 @@ function FloatingIcons({ emoji, count, speed }: FloatingIconsProps) {
   );
 
   return (
-    <>
-      <style>{`
-        @keyframes floatUp {
-          0%   { transform: translateY(100vh) scale(0.6); opacity: 0; }
-          10%  { opacity: 0.9; }
-          90%  { opacity: 0.7; }
-          100% { transform: translateY(-20vh) scale(1); opacity: 0; }
-        }
-      `}</style>
-      <div
-        className="fixed inset-0 pointer-events-none overflow-hidden"
-        aria-hidden="true"
-        style={{ zIndex: 0 }}
-      >
-        {items.map((item) => (
-          <span
-            key={item.id}
-            style={{
-              position: "absolute",
-              left: `${item.left}%`,
-              bottom: "-5%",
-              fontSize: `${item.size}px`,
-              animation: `floatUp ${item.duration}s ${item.delay}s ease-in-out infinite`,
-              willChange: "transform, opacity",
-            }}
-          >
-            {emoji}
-          </span>
-        ))}
-      </div>
-    </>
+    <div
+      className="fixed inset-0 pointer-events-none overflow-hidden"
+      aria-hidden="true"
+      style={{ zIndex: 2 }}
+    >
+      {items.map((item) => (
+        <span
+          key={item.id}
+          style={{
+            position: "absolute",
+            left: `${item.left}%`,
+            bottom: "-5%",
+            fontSize: `${item.size}px`,
+            animation: `floatUp ${item.duration}s ${item.delay}s ease-in-out infinite`,
+            willChange: "transform, opacity",
+          }}
+        >
+          {emoji}
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -119,6 +177,12 @@ interface StarParticlesProps {
 }
 
 function StarParticles({ count, color }: StarParticlesProps) {
+  // Decorative particles are client-only: positions use Math.random(), which
+  // would differ between SSR and hydration and throw a React hydration
+  // mismatch. Render nothing on the server, then mount on the client.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   const stars = useMemo(
     () =>
       Array.from({ length: count }, (_, i) => ({
@@ -130,40 +194,34 @@ function StarParticles({ count, color }: StarParticlesProps) {
         duration: 2 + Math.random() * 3,
       })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [count]
+    [count, mounted]
   );
 
+  if (!mounted) return null;
+
   return (
-    <>
-      <style>{`
-        @keyframes twinkle {
-          0%, 100% { opacity: 0.1; transform: scale(1); }
-          50%       { opacity: 1;   transform: scale(1.4); }
-        }
-      `}</style>
-      <div
-        className="fixed inset-0 pointer-events-none overflow-hidden"
-        aria-hidden="true"
-        style={{ zIndex: 0 }}
-      >
-        {stars.map((star) => (
-          <div
-            key={star.id}
-            style={{
-              position: "absolute",
-              top: `${star.top}%`,
-              left: `${star.left}%`,
-              width: `${star.size}px`,
-              height: `${star.size}px`,
-              borderRadius: "50%",
-              backgroundColor: color,
-              animation: `twinkle ${star.duration}s ${star.delay}s ease-in-out infinite`,
-              willChange: "opacity, transform",
-            }}
-          />
-        ))}
-      </div>
-    </>
+    <div
+      className="fixed inset-0 pointer-events-none overflow-hidden"
+      aria-hidden="true"
+      style={{ zIndex: 2 }}
+    >
+      {stars.map((star) => (
+        <div
+          key={star.id}
+          style={{
+            position: "absolute",
+            top: `${star.top}%`,
+            left: `${star.left}%`,
+            width: `${star.size}px`,
+            height: `${star.size}px`,
+            borderRadius: "50%",
+            backgroundColor: color,
+            animation: `twinkle ${star.duration}s ${star.delay}s ease-in-out infinite`,
+            willChange: "opacity, transform",
+          }}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -180,28 +238,15 @@ interface AvatarProps {
 }
 
 function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, accentColor }: AvatarProps) {
-  const spinCss = `
-    @keyframes gradientSpin {
-      0%   { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
-    }
-    @keyframes statusPulse {
-      0%, 100% { transform: scale(1);   opacity: 0.6; }
-      50%       { transform: scale(1.8); opacity: 0; }
-    }
-  `;
-
   const online = (
     <div
       className="absolute bottom-0.5 right-0.5 z-20"
       style={{ width: 18, height: 18 }}
     >
-      {/* White ring */}
       <div
         className="absolute inset-0 rounded-full"
         style={{ backgroundColor: "white", width: 18, height: 18 }}
       />
-      {/* Status pulse (blurred outer ring) */}
       <div
         className="absolute rounded-full"
         style={{
@@ -215,7 +260,6 @@ function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, acce
           willChange: "transform, opacity",
         }}
       />
-      {/* Ping ring */}
       <div
         className="absolute rounded-full animate-ping"
         style={{
@@ -227,7 +271,6 @@ function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, acce
           opacity: 0.5,
         }}
       />
-      {/* Solid green dot */}
       <div
         className="absolute rounded-full"
         style={{
@@ -243,79 +286,66 @@ function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, acce
 
   if (borderStyle === "gradient") {
     return (
-      <>
-        <style>{spinCss}</style>
-        <div className="relative" style={{ width: 96, height: 96 }}>
-          {/* Spinning gradient ring */}
+      <div className="relative" style={{ width: 124, height: 124 }}>
+        {/* Spinning conic gradient ring */}
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            borderRadius: "50%",
+            padding: 3,
+            background: `conic-gradient(from 180deg, ${color1}, ${color2}, ${color3}, ${color1})`,
+            boxShadow: `0 0 40px -8px ${accentColor}`,
+            animation: "auroraSpinRing 9s linear infinite",
+            willChange: "transform",
+          }}
+        >
+          {/* Counter-rotating inner: dark gap + image */}
           <div
             style={{
-              position: "absolute",
-              inset: -3,
-              borderRadius: "50%",
-              background: `conic-gradient(${color1}, ${color2}, ${color3}, ${color1})`,
-              animation: "gradientSpin 3s linear infinite",
-              willChange: "transform",
-            }}
-          />
-          {/* Inner white gap */}
-          <div
-            style={{
-              position: "absolute",
-              inset: 1,
-              borderRadius: "50%",
-              backgroundColor: "#0a0a0a",
-            }}
-          />
-          {/* Avatar */}
-          <div
-            style={{
-              position: "absolute",
-              inset: 3,
+              width: "100%",
+              height: "100%",
               borderRadius: "50%",
               overflow: "hidden",
+              animation: "auroraSpinRingRev 9s linear infinite",
+              willChange: "transform",
             }}
           >
             <Image src={src} alt={name} fill className="object-cover" />
           </div>
-          {online}
         </div>
-      </>
+        {online}
+      </div>
     );
   }
 
   if (borderStyle === "none") {
     return (
-      <>
-        <style>{spinCss}</style>
-        <div className="relative" style={{ width: 96, height: 96 }}>
-          <div style={{ position: "absolute", inset: 0, borderRadius: "50%", overflow: "hidden" }}>
-            <Image src={src} alt={name} fill className="object-cover" />
-          </div>
-          {online}
-        </div>
-      </>
-    );
-  }
-
-  // solid border
-  return (
-    <>
-      <style>{spinCss}</style>
       <div className="relative" style={{ width: 96, height: 96 }}>
-        <div
-          style={{
-            position: "absolute",
-            inset: -2,
-            borderRadius: "50%",
-            border: `2px solid ${color1 || accentColor}`,
-          }}
-        />
         <div style={{ position: "absolute", inset: 0, borderRadius: "50%", overflow: "hidden" }}>
           <Image src={src} alt={name} fill className="object-cover" />
         </div>
         {online}
       </div>
-    </>
+    );
+  }
+
+  // solid border (default)
+  return (
+    <div className="relative" style={{ width: 96, height: 96 }}>
+      <div
+        style={{
+          position: "absolute",
+          inset: -2,
+          borderRadius: "50%",
+          border: `2px solid ${color1 || accentColor}`,
+        }}
+      />
+      <div style={{ position: "absolute", inset: 0, borderRadius: "50%", overflow: "hidden" }}>
+        <Image src={src} alt={name} fill className="object-cover" />
+      </div>
+      {online}
+    </div>
   );
 }
 
@@ -333,12 +363,32 @@ function VerifiedBadge() {
       style={{ display: "inline", verticalAlign: "middle", flexShrink: 0 }}
     >
       <path
-        fill="#1d9bf0"
-        d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.33 2.19c-1.4-.46-2.91-.2-3.92.81s-1.26 2.52-.8 3.91C2.88 9.33 2 10.57 2 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.8 3.91s2.52 1.26 3.92.8c.66 1.31 1.9 2.19 3.33 2.19s2.68-.88 3.34-2.19c1.39.46 2.9.2 3.91-.8s1.27-2.52.81-3.91C21.37 14.67 22.25 13.43 22.25 12zm-6.47-1.22l-4.1 4.1a.75.75 0 0 1-1.06 0l-2.05-2.05a.75.75 0 1 1 1.06-1.06l1.52 1.52 3.57-3.57a.75.75 0 1 1 1.06 1.06z"
+        fill={GLASS.accent}
+        d="M12 2l2.4 1.8 3-.3 1.2 2.7 2.7 1.2-.3 3L23 14l-1.8 2.4.3 3-2.7 1.2-1.2 2.7-3-.3L12 22l-2.4-1.8-3 .3-1.2-2.7L2.7 16.4l.3-3L1 12l1.8-2.4-.3-3 2.7-1.2L6.4 2.7l3 .3z"
+      />
+      <path
+        fill="#fff"
+        d="M10.6 14.6l-2.2-2.2-1.2 1.2 3.4 3.4 6-6-1.2-1.2z"
       />
     </svg>
   );
 }
+
+// ── Glass design tokens ───────────────────────────────────────────────────────
+
+const GLASS = {
+  /** translucent card fill */
+  bg: "rgba(255,255,255,0.055)",
+  /** card border */
+  border: "rgba(255,255,255,0.12)",
+  /** muted text */
+  muted: "rgba(245,238,252,0.62)",
+  /** icon gradient */
+  iconBg: "linear-gradient(135deg,rgba(196,91,255,0.25),rgba(255,107,214,0.18))",
+  iconBorder: "rgba(255,255,255,0.1)",
+  /** featured accent for verified badge */
+  accent: "#c45bff",
+};
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -350,7 +400,7 @@ function SocialIcon({ icon }: { icon: string }) {
     youtube: "\u25B6",
     default: "\uD83D\uDD17",
   };
-  return <span className="text-lg">{icons[icon] || icons.default}</span>;
+  return <span style={{ fontSize: 20 }}>{icons[icon] || icons.default}</span>;
 }
 
 function PremiumIcon({ icon }: { icon: string }) {
@@ -360,57 +410,183 @@ function PremiumIcon({ icon }: { icon: string }) {
     heart: "\uD83D\uDC96",
     default: "\u2728",
   };
-  return <span className="text-lg">{icons[icon] || icons.default}</span>;
+  return <span style={{ fontSize: 20 }}>{icons[icon] || icons.default}</span>;
 }
 
 // ── Badge Pill ────────────────────────────────────────────────────────────────
 
 function BadgePill({ badge }: { badge: string }) {
-  const styles: Record<string, string> = {
-    new: "bg-green-600 text-green-100",
-    popular: "bg-orange-500 text-orange-100",
-    exclusive: "bg-purple-600 text-purple-100",
-  };
-  const labels: Record<string, string> = {
-    new: "New",
-    popular: "Popular",
-    exclusive: "Exclusive",
-  };
-  const cls = styles[badge] ?? "bg-gray-600 text-gray-100";
+  const key = badge.toLowerCase();
+  const isHot = key === "hot" || key === "vip";
   return (
-    <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${cls}`}>
-      {labels[badge] ?? badge}
+    <span
+      style={{
+        fontSize: "9.5px",
+        fontWeight: 700,
+        textTransform: "uppercase",
+        letterSpacing: "0.7px",
+        padding: "3px 8px",
+        borderRadius: "999px",
+        background: isHot ? "#ff3b6b" : "rgba(255,255,255,0.22)",
+        color: "#fff",
+        boxShadow: isHot ? "0 0 12px -2px #ff3b6b" : undefined,
+        flexShrink: 0,
+      }}
+    >
+      {badge.toUpperCase()}
     </span>
   );
 }
 
-// ── Sensitive Wrapper ─────────────────────────────────────────────────────────
+// ── Sensitive Wrapper — glass modal ───────────────────────────────────────────
 
 function SensitiveWrapper({
   children,
   sensitive,
   accentColor,
+  onConfirm,
 }: {
   children: React.ReactNode;
   sensitive: boolean;
   accentColor: string;
+  onConfirm?: () => void;
 }) {
-  const [revealed, setRevealed] = useState(false);
+  const [showModal, setShowModal] = useState(false);
 
-  if (!sensitive || revealed) return <>{children}</>;
+  if (!sensitive) return <>{children}</>;
 
   return (
-    <div className="relative w-full" onClick={(e) => e.stopPropagation()}>
-      <div className="blur-sm pointer-events-none select-none">{children}</div>
-      <button
-        className="absolute inset-0 flex flex-col items-center justify-center gap-1 rounded-full text-white text-xs font-semibold backdrop-blur-[2px]"
-        style={{ backgroundColor: `${accentColor}cc` }}
-        onClick={() => setRevealed(true)}
+    <>
+      {/* Intercept clicks; disable pointer events on children */}
+      <div
+        className="relative w-full"
+        style={{ cursor: "pointer" }}
+        role="button"
+        tabIndex={0}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setShowModal(true);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setShowModal(true);
+          }
+        }}
       >
-        <span>🔞 Sensitive Content</span>
-        <span className="text-[10px] opacity-80">Click to reveal</span>
-      </button>
-    </div>
+        <div style={{ pointerEvents: "none" }}>{children}</div>
+      </div>
+
+      {showModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 200,
+            background: "rgba(8,3,16,0.72)",
+            backdropFilter: "blur(8px)",
+            WebkitBackdropFilter: "blur(8px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 22,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 360,
+              background: "linear-gradient(160deg,rgba(30,14,48,0.96),rgba(16,7,26,0.97))",
+              border: `1px solid ${GLASS.border}`,
+              borderRadius: 24,
+              padding: "30px 26px",
+              textAlign: "center",
+              boxShadow: "0 30px 80px -20px #000",
+            }}
+          >
+            <div
+              style={{
+                width: 60,
+                height: 60,
+                borderRadius: 18,
+                margin: "0 auto 16px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 30,
+                background: "linear-gradient(135deg,rgba(196,91,255,0.3),rgba(255,107,214,0.2))",
+                border: `1px solid ${GLASS.border}`,
+              }}
+            >
+              🔞
+            </div>
+            <h2
+              style={{
+                fontSize: 21,
+                fontWeight: 700,
+                marginBottom: 8,
+                color: "#f5eefc",
+              }}
+            >
+              18+ Content Ahead
+            </h2>
+            <p
+              style={{
+                color: GLASS.muted,
+                fontSize: 13.5,
+                lineHeight: 1.5,
+                marginBottom: 22,
+              }}
+            >
+              This link may contain content intended for adult audiences. By
+              continuing you confirm you are 18 or older.
+            </p>
+            <div style={{ display: "flex", gap: 11 }}>
+              <button
+                style={{
+                  flex: 1,
+                  padding: "13px 10px",
+                  borderRadius: 13,
+                  fontWeight: 600,
+                  fontSize: 13.5,
+                  border: `1px solid ${GLASS.border}`,
+                  background: GLASS.bg,
+                  color: "#f5eefc",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+                onClick={() => setShowModal(false)}
+              >
+                Go back
+              </button>
+              <button
+                style={{
+                  flex: 1,
+                  padding: "13px 10px",
+                  borderRadius: 13,
+                  fontWeight: 600,
+                  fontSize: 13.5,
+                  background: `linear-gradient(120deg, ${accentColor}, ${accentColor}cc)`,
+                  color: "#fff",
+                  border: "none",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  boxShadow: `0 8px 22px -8px ${accentColor}`,
+                }}
+                onClick={() => {
+                  setShowModal(false);
+                  onConfirm?.();
+                }}
+              >
+                I&apos;m 18+ · Enter
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -476,8 +652,6 @@ function InstagramBrowserBanner() {
     const url = window.location.href;
 
     if (platform === "ios") {
-      // iOS: googlechrome:// scheme launches Chrome if installed.
-      // If user is still here after 1.5s, Chrome isn't installed → surface hint.
       const chromeUrl = url.replace(/^https?:\/\//, "googlechrome://");
       window.location.href = chromeUrl;
       setTimeout(() => {
@@ -487,7 +661,6 @@ function InstagramBrowserBanner() {
         }
       }, 1500);
     } else if (platform === "android") {
-      // Android: intent:// with package=com.android.chrome forces Chrome.
       const bare = url.replace(/^https?:\/\//, "");
       window.location.href = `intent://${bare}#Intent;scheme=https;package=com.android.chrome;end`;
     } else {
@@ -510,56 +683,105 @@ function InstagramBrowserBanner() {
   if (dismissed) return null;
 
   return (
-    <div className="fixed top-0 left-0 right-0 z-50 bg-pink-500 text-white px-4 py-2 text-sm">
+    <div
+      style={{
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+        zIndex: 100,
+        background: "rgba(30,14,48,0.92)",
+        backdropFilter: "blur(10px)",
+        WebkitBackdropFilter: "blur(10px)",
+        borderBottom: `1px solid ${GLASS.border}`,
+        padding: "10px 16px",
+        fontSize: 13,
+        color: "#f5eefc",
+      }}
+    >
       <button
         onClick={dismiss}
-        className="absolute top-1 right-2 text-white/70 text-base font-bold px-1 leading-none"
+        style={{
+          position: "absolute",
+          top: 8,
+          right: 10,
+          background: "none",
+          border: "none",
+          color: GLASS.muted,
+          fontWeight: 700,
+          fontSize: 16,
+          cursor: "pointer",
+          lineHeight: 1,
+          padding: "0 4px",
+        }}
         aria-label="Dismiss"
       >
         ✕
       </button>
-      <p className="text-xs font-semibold pr-6">
+      <p style={{ fontSize: 12, fontWeight: 600, paddingRight: 20, color: GLASS.muted }}>
         Tap below to open this page outside Instagram:
       </p>
-      <div className="flex gap-2 mt-1.5">
+      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
         <button
           onClick={openInChrome}
-          className="flex-1 bg-black text-white px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap"
+          style={{
+            flex: 1,
+            background: "rgba(255,255,255,0.12)",
+            border: `1px solid ${GLASS.border}`,
+            color: "#fff",
+            padding: "8px 12px",
+            borderRadius: 999,
+            fontSize: 12,
+            fontWeight: 700,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}
         >
           Open in Chrome
         </button>
         <button
           onClick={copyForSafari}
-          className="flex-1 bg-black text-white px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap"
+          style={{
+            flex: 1,
+            background: "rgba(255,255,255,0.12)",
+            border: `1px solid ${GLASS.border}`,
+            color: "#fff",
+            padding: "8px 12px",
+            borderRadius: 999,
+            fontSize: 12,
+            fontWeight: 700,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}
         >
           {copied ? "✓ Copied" : "Copy for Safari"}
         </button>
       </div>
       {copied && (
-        <p className="text-[11px] mt-1 opacity-80">
+        <p style={{ fontSize: 11, marginTop: 6, color: GLASS.muted }}>
           ✓ Copied — paste in Safari address bar
         </p>
       )}
       {copyFailed && (
-        <p className="text-[11px] mt-1 opacity-80">
+        <p style={{ fontSize: 11, marginTop: 6, color: GLASS.muted }}>
           Copy blocked — long-press the URL bar to copy
         </p>
       )}
       {chromeNotInstalled && (
-        <p className="text-[11px] mt-1 opacity-80">
+        <p style={{ fontSize: 11, marginTop: 6, color: GLASS.muted }}>
           Chrome not installed — try Copy for Safari
         </p>
       )}
-      <p className="text-[11px] mt-1.5 opacity-70">
+      <p style={{ fontSize: 11, marginTop: 6, color: GLASS.muted }}>
         Or tap &#x22EF; at the top → &quot;Open in External Browser&quot;
       </p>
     </div>
   );
 }
 
-// ── Active Status ─────────────────────────────────────────────────────────────
+// ── Active Status — glass presence pill ───────────────────────────────────────
 
-function ActiveStatus({ textColor }: { textColor: string }) {
+function ActiveStatus() {
   const [responseTime, setResponseTime] = useState<string | null>(null);
 
   useEffect(() => {
@@ -576,23 +798,43 @@ function ActiveStatus({ textColor }: { textColor: string }) {
   if (!responseTime) return null;
 
   return (
-    <div className="flex items-center justify-center gap-1.5 mt-1.5">
+    <div
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 7,
+        marginTop: 13,
+        background: GLASS.bg,
+        border: `1px solid ${GLASS.border}`,
+        padding: "5px 12px",
+        borderRadius: 999,
+        backdropFilter: "blur(8px)",
+        WebkitBackdropFilter: "blur(8px)",
+        fontSize: 12,
+        color: GLASS.muted,
+      }}
+    >
       <span
-        className="inline-block w-2 h-2 rounded-full animate-pulse"
-        style={{ backgroundColor: "#22c55e" }}
+        style={{
+          display: "inline-block",
+          width: 7,
+          height: 7,
+          borderRadius: "50%",
+          backgroundColor: "#46e08a",
+          boxShadow: "0 0 8px #46e08a",
+          animation: "dotPulse 1.8s ease-in-out infinite",
+          flexShrink: 0,
+        }}
       />
-      <span className="text-xs opacity-60" style={{ color: textColor }}>
-        Active now · Responds in ~{responseTime}
-      </span>
+      Active now · Responds in ~{responseTime}
     </div>
   );
 }
 
-// ── Location Pill ─────────────────────────────────────────────────────────────
+// ── Location Pill — glass style ───────────────────────────────────────────────
 
 function LocationPill({
   pillColor,
-  textColor,
 }: {
   pillColor: string | null | undefined;
   textColor: string;
@@ -614,15 +856,23 @@ function LocationPill({
 
   if (!location) return null;
 
-  const bg = pillColor ?? `${textColor}15`;
-
   return (
     <div
-      className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs"
-      style={{ backgroundColor: bg, color: textColor }}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 7,
+        background: pillColor ?? GLASS.bg,
+        border: `1px solid ${GLASS.border}`,
+        padding: "5px 12px",
+        borderRadius: 999,
+        backdropFilter: "blur(8px)",
+        WebkitBackdropFilter: "blur(8px)",
+        fontSize: 12,
+        color: GLASS.muted,
+      }}
     >
-      {/* Map pin SVG */}
-      <svg width="11" height="14" viewBox="0 0 11 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <svg width="11" height="14" viewBox="0 0 11 14" fill="none" aria-hidden="true">
         <path
           d="M5.5 0C2.46 0 0 2.46 0 5.5c0 3.85 5.5 8.5 5.5 8.5S11 9.35 11 5.5C11 2.46 8.54 0 5.5 0zm0 7.5A2 2 0 1 1 5.5 3.5a2 2 0 0 1 0 4z"
           fill="currentColor"
@@ -633,57 +883,33 @@ function LocationPill({
   );
 }
 
-// ── Hover Animation CSS ───────────────────────────────────────────────────────
-
-const HOVER_KEYFRAMES = `
-  @keyframes linkPulse {
-    0%, 100% { transform: scale(1); }
-    50%       { transform: scale(1.03); }
-  }
-  @keyframes linkBounce {
-    0%, 100% { transform: translateY(0); }
-    30%       { transform: translateY(-6px); }
-    60%       { transform: translateY(-2px); }
-  }
-  @keyframes linkShake {
-    0%, 100% { transform: translateX(0); }
-    20%       { transform: translateX(-4px); }
-    40%       { transform: translateX(4px); }
-    60%       { transform: translateX(-3px); }
-    80%       { transform: translateX(3px); }
-  }
-  @keyframes countdownPulse {
-    0%, 100% { transform: scale(1); }
-    50%       { transform: scale(1.05); }
-  }
-`;
-
 // ── Link Components ───────────────────────────────────────────────────────────
 
 interface LinkProps {
   link: SocialLink | PremiumLink;
   isPremium: boolean;
+  isFeatured?: boolean;
   theme: { bgColor: string; accentColor: string; textColor: string };
   isSensitive: boolean;
   onClick: () => void;
 }
 
-function LinkButton({ link, isPremium, theme, isSensitive, onClick }: LinkProps) {
+function LinkButton({ link, isPremium, isFeatured, theme, isSensitive, onClick }: LinkProps) {
   const hasImage = Boolean(link.image_url);
   const [hovered, setHovered] = useState(false);
 
-  // Hover animation style
+  // Hover animation style (custom per-link)
   const hoverAnim = link.hover_animation;
-  let hoverStyle: React.CSSProperties = {};
+  let hoverAnimStyle: React.CSSProperties = {};
   if (hovered && hoverAnim) {
     if (hoverAnim === "pulse") {
-      hoverStyle = { animation: "linkPulse 0.8s ease-in-out infinite" };
+      hoverAnimStyle = { animation: "linkPulse 0.8s ease-in-out infinite" };
     } else if (hoverAnim === "bounce") {
-      hoverStyle = { animation: "linkBounce 0.6s ease-in-out" };
+      hoverAnimStyle = { animation: "linkBounce 0.6s ease-in-out" };
     } else if (hoverAnim === "shake") {
-      hoverStyle = { animation: "linkShake 0.5s ease-in-out" };
+      hoverAnimStyle = { animation: "linkShake 0.5s ease-in-out" };
     } else if (hoverAnim === "glow") {
-      hoverStyle = { boxShadow: `0 0 16px 4px ${theme.accentColor}80` };
+      hoverAnimStyle = { boxShadow: `0 0 16px 4px ${theme.accentColor}80` };
     }
   }
 
@@ -696,57 +922,75 @@ function LinkButton({ link, isPremium, theme, isSensitive, onClick }: LinkProps)
   }
 
   // Title font size
-  const titleFontSize: Record<string, string> = {
-    sm: "text-xs",
-    base: "text-sm",
-    lg: "text-base",
-    xl: "text-lg",
+  const fontSizeMap: Record<string, string> = {
+    sm: "12px",
+    base: "14px",
+    lg: "15.5px",
+    xl: "18px",
   };
-  const titleCls = link.title_font_size ? (titleFontSize[link.title_font_size] ?? "text-sm") : "text-sm";
+  const titleFontSize = link.title_font_size ? (fontSizeMap[link.title_font_size] ?? "15.5px") : "15.5px";
 
-  // Border
-  const borderStyle: React.CSSProperties = {};
-  if (link.show_border && link.border_color) {
-    borderStyle.border = `1.5px solid ${link.border_color}`;
-  }
+  // Explicit border override (non-featured, non-glass-default)
+  const borderOverride: React.CSSProperties =
+    link.show_border && link.border_color ? { border: `1.5px solid ${link.border_color}` } : {};
 
+  // ── Image card (16:9) ────────────────────────────────────────────────────────
   if (hasImage) {
     return (
-      <SensitiveWrapper sensitive={isSensitive} accentColor={theme.accentColor}>
+      <SensitiveWrapper sensitive={isSensitive} accentColor={theme.accentColor} onConfirm={onClick}>
         <button
           onClick={onClick}
           onMouseEnter={() => setHovered(true)}
           onMouseLeave={() => setHovered(false)}
-          className="group w-full relative overflow-hidden rounded-2xl transition-transform active:scale-[0.98]"
+          className="group w-full relative overflow-hidden active:scale-[0.98]"
           style={{
-            ...borderStyle,
-            ...hoverStyle,
-            willChange: hoverAnim ? "transform" : undefined,
+            borderRadius: 18,
+            border: `1px solid ${GLASS.border}`,
+            background: GLASS.bg,
+            backdropFilter: "blur(14px)",
+            WebkitBackdropFilter: "blur(14px)",
+            transition: "transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease",
+            ...(hovered
+              ? {
+                  transform: "translateY(-2px)",
+                  borderColor: `${theme.accentColor}8c`,
+                  boxShadow: `0 10px 30px -12px ${theme.accentColor}80`,
+                }
+              : {}),
+            ...borderOverride,
+            ...hoverAnimStyle,
+            cursor: "pointer",
           }}
         >
           {/* 16:9 wrapper */}
-          <div className="relative w-full pt-[56.25%]">
+          <div className="relative w-full" style={{ paddingTop: "56.25%" }}>
             <Image
               src={link.image_url!}
               alt={link.label}
               fill
-              className="object-cover object-center transition-transform duration-300 group-hover:scale-105"
+              className="object-cover object-center"
+              style={{ transition: "transform 0.3s", transform: hovered ? "scale(1.05)" : "scale(1)" }}
             />
             {/* Dark overlay */}
-            <div className="absolute inset-0 bg-black/40" />
+            <div className="absolute inset-0" style={{ background: "rgba(0,0,0,0.4)" }} />
             {/* Bottom content */}
-            <div className="absolute inset-x-0 bottom-0 p-3 flex flex-col items-center justify-end">
-              <div className="flex items-center gap-2">
+            <div className="absolute inset-x-0 bottom-0" style={{ padding: 12, display: "flex", flexDirection: "column", alignItems: "center" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span
-                  className={`text-white font-bold drop-shadow ${titleCls}`}
-                  style={{ color: link.title_color ?? "#ffffff", ...glowStyle }}
+                  style={{
+                    color: link.title_color ?? "#ffffff",
+                    fontWeight: 700,
+                    fontSize: titleFontSize,
+                    filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.8))",
+                    ...glowStyle,
+                  }}
                 >
                   {link.label}
                 </span>
                 {link.badge && <BadgePill badge={link.badge} />}
               </div>
               {link.subtitle && (
-                <p className="text-white/70 text-xs drop-shadow mt-0.5">{link.subtitle}</p>
+                <p style={{ color: "rgba(255,255,255,0.7)", fontSize: 12, marginTop: 2 }}>{link.subtitle}</p>
               )}
             </div>
           </div>
@@ -755,54 +999,147 @@ function LinkButton({ link, isPremium, theme, isSensitive, onClick }: LinkProps)
     );
   }
 
-  // Standard button style
-  const baseStyle: React.CSSProperties = isPremium
+  // ── Glass card (standard + featured) ─────────────────────────────────────────
+  const cardBase: React.CSSProperties = isFeatured
     ? {
-        backgroundColor: theme.accentColor,
-        color: link.title_color ?? "#ffffff",
-        ...borderStyle,
-        ...hoverStyle,
+        background: `linear-gradient(120deg, ${theme.accentColor}e6, ${theme.accentColor}d9)`,
+        border: "none",
+        boxShadow: `0 12px 34px -10px ${theme.accentColor}b3`,
       }
     : {
-        borderColor: link.show_border ? (link.border_color ?? `${theme.textColor}40`) : `${theme.textColor}40`,
-        color: link.title_color ?? theme.textColor,
-        ...hoverStyle,
+        background: GLASS.bg,
+        border: `1px solid ${link.show_border && link.border_color ? link.border_color : GLASS.border}`,
+        backdropFilter: "blur(14px)",
+        WebkitBackdropFilter: "blur(14px)",
       };
 
+  const cardHover: React.CSSProperties = hovered
+    ? isFeatured
+      ? {
+          transform: "translateY(-2px)",
+          boxShadow: `0 16px 40px -10px ${theme.accentColor}d9`,
+        }
+      : {
+          transform: "translateY(-2px)",
+          borderColor: `${theme.accentColor}8c`,
+          boxShadow: `0 10px 30px -12px ${theme.accentColor}80`,
+        }
+    : {};
+
+  const titleColor = link.title_color ?? (isFeatured ? "#ffffff" : theme.textColor);
+  const subtitleColor = isFeatured ? "rgba(255,255,255,0.82)" : GLASS.muted;
+  const chevronColor = hovered ? (isFeatured ? "#ffffff" : theme.accentColor) : GLASS.muted;
+
+  const iconBg = isFeatured
+    ? "rgba(255,255,255,0.2)"
+    : GLASS.iconBg;
+  const iconBorder = isFeatured
+    ? "rgba(255,255,255,0.25)"
+    : GLASS.iconBorder;
+
   return (
-    <SensitiveWrapper sensitive={isSensitive} accentColor={theme.accentColor}>
+    <SensitiveWrapper sensitive={isSensitive} accentColor={theme.accentColor} onConfirm={onClick}>
       <button
         onClick={onClick}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
-        className={`w-full flex flex-col items-center py-3 px-6 rounded-full text-sm font-medium transition-all active:scale-95 ${
-          isPremium
-            ? "font-bold hover:opacity-90"
-            : "border hover:opacity-80"
-        }`}
-        style={baseStyle}
+        style={{
+          position: "relative",
+          width: "100%",
+          display: "flex",
+          alignItems: "center",
+          gap: 14,
+          padding: "16px 18px",
+          borderRadius: 18,
+          cursor: "pointer",
+          textAlign: "left",
+          overflow: "hidden",
+          transition: "transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease",
+          ...cardBase,
+          ...cardHover,
+          ...hoverAnimStyle,
+          willChange: hoverAnim ? "transform" : undefined,
+        }}
       >
-        <div className="flex items-center gap-2">
-          {isPremium ? <PremiumIcon icon={link.icon} /> : <SocialIcon icon={link.icon} />}
-          <span className={titleCls} style={glowStyle}>
-            {link.label}
-          </span>
-          {link.badge && <BadgePill badge={link.badge} />}
-        </div>
-        {link.subtitle && (
-          <span
-            className="text-xs mt-0.5 opacity-70"
-            style={{ color: isPremium ? "#ffffffcc" : theme.textColor }}
-          >
-            {link.subtitle}
-          </span>
+        {/* Shine sweep — featured only */}
+        {isFeatured && (
+          <div
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              top: 0,
+              left: "-60%",
+              width: "40%",
+              height: "100%",
+              background: "linear-gradient(100deg,transparent,rgba(255,255,255,0.35),transparent)",
+              transform: "skewX(-18deg)",
+              animation: "shine 4.5s ease-in-out infinite",
+              pointerEvents: "none",
+            }}
+          />
         )}
+
+        {/* Icon box */}
+        <div
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: 12,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+            background: iconBg,
+            border: `1px solid ${iconBorder}`,
+          }}
+        >
+          {isPremium ? <PremiumIcon icon={link.icon} /> : <SocialIcon icon={link.icon} />}
+        </div>
+
+        {/* Text */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontWeight: 600,
+              fontSize: titleFontSize,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              color: titleColor,
+              flexWrap: "wrap",
+              ...glowStyle,
+            }}
+          >
+            {link.label}
+            {link.badge && <BadgePill badge={link.badge} />}
+          </div>
+          {link.subtitle && (
+            <div style={{ color: subtitleColor, fontSize: 12.5, marginTop: 2 }}>
+              {link.subtitle}
+            </div>
+          )}
+        </div>
+
+        {/* Chevron */}
+        <span
+          style={{
+            color: chevronColor,
+            fontSize: 18,
+            flexShrink: 0,
+            transition: "transform 0.18s ease, color 0.18s ease",
+            transform: hovered ? "translateX(3px)" : "translateX(0)",
+            lineHeight: 1,
+          }}
+          aria-hidden="true"
+        >
+          ›
+        </span>
       </button>
     </SensitiveWrapper>
   );
 }
 
-// ── Countdown Timer ───────────────────────────────────────────────────────────
+// ── Countdown Timer — glass style ─────────────────────────────────────────────
 
 function CountdownTimer({
   targetDate,
@@ -848,26 +1185,51 @@ function CountdownTimer({
 
   return (
     <div
-      className="w-full rounded-2xl p-4 text-center"
-      style={{ backgroundColor: `${accentColor}15`, border: `1px solid ${accentColor}30` }}
+      style={{
+        width: "100%",
+        borderRadius: 18,
+        padding: "16px 18px",
+        background: GLASS.bg,
+        border: `1px solid ${GLASS.border}`,
+        backdropFilter: "blur(14px)",
+        WebkitBackdropFilter: "blur(14px)",
+        textAlign: "center",
+      }}
     >
-      <p className="text-xs font-semibold uppercase tracking-widest mb-3 opacity-70" style={{ color: textColor }}>
+      <p
+        style={{
+          fontSize: 10,
+          fontWeight: 600,
+          textTransform: "uppercase",
+          letterSpacing: "0.15em",
+          marginBottom: 12,
+          color: GLASS.muted,
+        }}
+      >
         {label}
       </p>
-      <div className="flex items-center justify-center gap-2">
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
         {units.map((u) => (
-          <div key={u.label} className="flex flex-col items-center">
+          <div key={u.label} style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
             <div
-              className="w-14 h-14 rounded-xl flex items-center justify-center text-xl font-bold"
               style={{
-                backgroundColor: `${accentColor}25`,
+                width: 56,
+                height: 56,
+                borderRadius: 12,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 20,
+                fontWeight: 700,
+                background: `${accentColor}25`,
+                border: `1px solid ${accentColor}40`,
                 color: textColor,
                 animation: "countdownPulse 1s ease-in-out",
               }}
             >
               {String(u.value).padStart(2, "0")}
             </div>
-            <span className="text-[10px] mt-1 opacity-50" style={{ color: textColor }}>
+            <span style={{ fontSize: 10, marginTop: 4, color: GLASS.muted }}>
               {u.label}
             </span>
           </div>
@@ -948,32 +1310,13 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
     const igDetected = ua.includes("Instagram");
     setIsInstagram(igDetected);
 
-    // ── IG WebView auto-escape (mimics slt.bio behavior) ──────────────────────
-    // When loaded inside Instagram's in-app browser, fire the undocumented
-    // `instagram://extbrowser/?url=<current>` scheme. IG intercepts it and
-    // triggers its native "Open in External Browser" handoff to the user's
-    // default browser (Safari on iOS, Chrome on Android). Chains Chrome/
-    // Firefox/Brave fallbacks with 1.5s delays for users without IG's handler.
-    //
-    // Guards:
-    //   - Only fires when UA contains "Instagram" (skip TG/FB/Safari/Chrome)
-    //   - Skip on bot UAs (defense in depth — bots get decoy anyway)
-    //   - sessionStorage flag prevents re-firing if user closes Safari and
-    //     returns to IG (would be obnoxious otherwise)
-    //   - Manual banner chooser remains as visible fallback either way
+    // ── IG WebView auto-escape ─────────────────────────────────────────────────
     if (igDetected && !isBot) {
       try {
         if (!sessionStorage.getItem("cl_escape_fired")) {
           sessionStorage.setItem("cl_escape_fired", "1");
           const full = window.location.href;
           const bare = full.replace(/^https?:\/\//, "");
-          // Platform detection — chained Chrome/Firefox/Brave fallbacks
-          // only make sense on Android. On iOS, `instagram://extbrowser/`
-          // hands off to Safari natively and the JS timer queue stays
-          // alive in the IG tab during the brief handoff window — chained
-          // setTimeouts then fire `googlechromes://` which iOS resolves
-          // to Chrome AFTER the Safari handoff, hijacking the user out
-          // of their default browser. iOS gets the IG scheme only.
           const isIOS = /iPad|iPhone|iPod/.test(ua) && !(window as unknown as { MSStream?: unknown }).MSStream;
           const fire = () => {
             try {
@@ -982,34 +1325,15 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
             } catch {
               /* noop */
             }
-            if (isIOS) {
-              // iOS: stop here. Safari handoff is reliable, no chain needed.
-              return;
-            }
-            // Android-only chained fallbacks for users whose IG client
-            // doesn't honor extbrowser/ (older builds, some variants).
+            if (isIOS) return;
             setTimeout(() => {
-              try {
-                window.location.href = "googlechromes://" + bare;
-              } catch {
-                /* noop */
-              }
+              try { window.location.href = "googlechromes://" + bare; } catch { /* noop */ }
             }, 1500);
             setTimeout(() => {
-              try {
-                window.location.href =
-                  "firefox://open-url?url=" + encodeURIComponent(full);
-              } catch {
-                /* noop */
-              }
+              try { window.location.href = "firefox://open-url?url=" + encodeURIComponent(full); } catch { /* noop */ }
             }, 3000);
             setTimeout(() => {
-              try {
-                window.location.href =
-                  "brave://open-url?url=" + encodeURIComponent(full);
-              } catch {
-                /* noop */
-              }
+              try { window.location.href = "brave://open-url?url=" + encodeURIComponent(full); } catch { /* noop */ }
             }, 4500);
           };
           if (typeof requestAnimationFrame === "function") {
@@ -1019,12 +1343,10 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
           }
         }
       } catch {
-        // sessionStorage blocked (private mode, etc.) — silently skip auto-fire,
-        // user can still use the manual chooser banner.
+        // sessionStorage blocked — silently skip
       }
     }
 
-    // Rotate session ID on every pageview mount (Item 15)
     const sid = createSessionId();
     sessionIdRef.current = sid;
 
@@ -1039,16 +1361,6 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
     }
 
     if (!isBot) {
-      // Phase 4.x: fetch premium links immediately on mount.
-      // The previous interaction-gate (scroll/touch/click) was anti-scraping defense-in-depth
-      // but caused empty-state UX for real users — they saw avatar + name with no links
-      // and assumed the page was broken. Anti-scraping is now layered via:
-      //   - HMAC link token (IP-bound, 5-min)
-      //   - Same-origin + Origin/Host validation in /api/links
-      //   - detectBot() with HIGH-confidence decoy
-      //   - Turnstile escalation on LOW confidence
-      //   - Rate limit (30 req/min per IP)
-      // Losing the interaction gate is a small recall hit, worth it to fix breakage.
       setInteracted(true);
       void fetchPremiumLinks();
     }
@@ -1061,15 +1373,12 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
   }
 
   function getNavigationUrl(link: SocialLink | PremiumLink): string {
-    // Phase 4: sensitive links always route through the per-link interstitial,
-    // which enforces the 18+ confirmation before revealing the real URL.
     if (isSensitiveLink(link) && link.id) return `/r/${link.id}`;
     if (link.redirect_url) return `/api/redirect/${link.id}`;
     return link.url;
   }
 
   function navigate(link: SocialLink | PremiumLink) {
-    // Sensitive links: skip OS-deeplink, always go through the interstitial.
     if (link.deeplink_enabled && !isSensitiveLink(link)) {
       handleDeepLink(link.url, link.recovery_url || link.url);
       return;
@@ -1098,9 +1407,6 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
       sessionId: sessionIdRef.current,
       isInstagram,
     });
-    // In IG webview: attempt OS-level deeplink-out before navigating.
-    // Sensitive links bypass the IG-deeplink flow — they must go through the
-    // /r/[linkId] interstitial so the age confirmation isn't lost.
     if (isInstagram && !isSensitiveLink(link)) {
       const targetUrl = link.redirect_url ? `/api/redirect/${link.id}` : link.url;
       const bare = targetUrl.replace(/^https?:\/\//, "");
@@ -1133,13 +1439,98 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
   const { theme } = creator;
   const bgStyle = buildBackground(creator);
 
+  // Aurora orb colors derived from creator theme
+  const orbA = theme.accentColor;
+  const orbB = creator.bg_color_2 ?? "#0a0414";
+  const orbC = creator.bg_color_3 ?? "#5b8bff";
+
+  // Avatar border gradient fallback colors
+  const avColor1 = creator.avatar_border_color_1 ?? theme.accentColor;
+  const avColor2 = creator.avatar_border_color_2 ?? "#ff6bd6";
+  const avColor3 = creator.avatar_border_color_3 ?? "#5b8bff";
 
   return (
     <>
-      <style>{HOVER_KEYFRAMES}</style>
+      <style>{ALL_KEYFRAMES}</style>
+
+      {/* Page background (behind aurora) */}
+      <div
+        aria-hidden="true"
+        style={{ position: "fixed", inset: 0, zIndex: 0, ...bgStyle }}
+      />
+
+      {/* Aurora orbs */}
+      <div
+        aria-hidden="true"
+        style={{ position: "fixed", inset: 0, zIndex: 1, overflow: "hidden", pointerEvents: "none" }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            width: 420,
+            height: 420,
+            borderRadius: "50%",
+            filter: "blur(70px)",
+            opacity: 0.55,
+            background: orbA,
+            top: -120,
+            left: -100,
+            animation: "drift 18s ease-in-out infinite",
+            willChange: "transform",
+          }}
+        />
+        <div
+          style={{
+            position: "absolute",
+            width: 340,
+            height: 340,
+            borderRadius: "50%",
+            filter: "blur(70px)",
+            opacity: 0.4,
+            background: orbB,
+            bottom: -140,
+            right: -110,
+            animation: "drift 18s ease-in-out infinite",
+            animationDelay: "-7s",
+            willChange: "transform",
+          }}
+        />
+        <div
+          style={{
+            position: "absolute",
+            width: 280,
+            height: 280,
+            borderRadius: "50%",
+            filter: "blur(70px)",
+            opacity: 0.28,
+            background: orbC,
+            top: "38%",
+            left: "55%",
+            animation: "drift 18s ease-in-out infinite",
+            animationDelay: "-12s",
+            willChange: "transform",
+          }}
+        />
+      </div>
+
+      {/* Film grain overlay */}
+      <div
+        aria-hidden="true"
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 2,
+          pointerEvents: "none",
+          opacity: 0.04,
+          backgroundImage:
+            "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>\")",
+        }}
+      />
+
+      {/* IG banner */}
       {isInstagram && <InstagramBrowserBanner />}
 
-      {/* Background effects (fixed, behind content) */}
+      {/* Background effects */}
       {creator.show_floating_icons && (
         <FloatingIcons
           emoji={creator.floating_icon ?? "💫"}
@@ -1155,18 +1546,34 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
       )}
 
       <main
-        className="min-h-screen flex flex-col items-center justify-start px-4 pb-12 relative"
         style={{
-          ...bgStyle,
+          position: "relative",
+          zIndex: 3,
+          minHeight: "100vh",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "flex-start",
+          paddingLeft: 18,
+          paddingRight: 18,
+          paddingBottom: 48,
+          paddingTop: isInstagram ? "8rem" : "52px",
           color: theme.textColor,
-          paddingTop: isInstagram ? "8rem" : "3rem",
           fontFamily,
-          zIndex: 1,
         }}
       >
-        <div className="w-full max-w-sm flex flex-col items-center gap-6 relative z-10">
-
-          {/* Location Pill — above avatar */}
+        <div
+          style={{
+            position: "relative",
+            zIndex: 3,
+            width: "100%",
+            maxWidth: 440,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+          }}
+        >
+          {/* Location Pill */}
           {creator.show_location && (
             <LocationPill
               pillColor={creator.location_pill_color}
@@ -1175,28 +1582,52 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
           )}
 
           {/* Avatar */}
-          <AvatarWithBorder
-            src={creator.avatar}
-            name={creator.name}
-            borderStyle={creator.avatar_border_style ?? "solid"}
-            color1={creator.avatar_border_color_1 ?? "#ffffff"}
-            color2={creator.avatar_border_color_2 ?? "#f472b6"}
-            color3={creator.avatar_border_color_3 ?? "#fda4af"}
-            accentColor={theme.accentColor}
-          />
-
-          {/* Name & Tagline */}
-          <div className="text-center">
-            <div className="flex items-center justify-center gap-2">
-              <h1 className="text-2xl font-bold">{creator.name}</h1>
-              {creator.is_verified && <VerifiedBadge />}
-            </div>
-            <p className="text-sm opacity-70 mt-1">{creator.tagline}</p>
-            <ActiveStatus textColor={theme.textColor} />
+          <div style={{ marginTop: creator.show_location ? 20 : 0 }}>
+            <AvatarWithBorder
+              src={creator.avatar}
+              name={creator.name}
+              borderStyle={creator.avatar_border_style ?? "gradient"}
+              color1={avColor1}
+              color2={avColor2}
+              color3={avColor3}
+              accentColor={theme.accentColor}
+            />
           </div>
 
-          {/* Social Links */}
-          <div className="w-full flex flex-col gap-3">
+          {/* Name & Tagline */}
+          <div style={{ textAlign: "center", marginTop: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+              <h1
+                style={{
+                  fontSize: 30,
+                  fontWeight: 700,
+                  letterSpacing: "0.2px",
+                  color: theme.textColor,
+                }}
+              >
+                {creator.name}
+              </h1>
+              {creator.is_verified && <VerifiedBadge />}
+            </div>
+            {creator.tagline && (
+              <p style={{ color: GLASS.muted, fontSize: 14.5, marginTop: 6, fontWeight: 450 }}>
+                {creator.tagline}
+              </p>
+            )}
+            <ActiveStatus />
+          </div>
+
+          {/* Link stack */}
+          <div
+            style={{
+              width: "100%",
+              marginTop: 30,
+              display: "flex",
+              flexDirection: "column",
+              gap: 14,
+            }}
+          >
+            {/* Social links */}
             {creator.socialLinks.map((link) => {
               const isSensitive = link.sensitive ?? creator.sensitive_default ?? false;
               return (
@@ -1204,76 +1635,119 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
                   key={link.id ?? link.label}
                   link={link}
                   isPremium={false}
+                  isFeatured={false}
                   theme={theme}
                   isSensitive={isSensitive}
                   onClick={() => handleSocialClick(link)}
                 />
               );
             })}
-          </div>
 
-          {/* Turnstile challenge — server escalates suspicious sessions to a CF managed challenge. */}
-          {interacted && turnstileChallenge && (
-            <div className="w-full flex flex-col items-center gap-2 my-2">
-              <p className="text-xs opacity-70">Quick check before continuing…</p>
-              <Turnstile
-                siteKey={turnstileChallenge.siteKey}
-                options={{ theme: "auto", size: "normal" }}
-                onSuccess={(token) => {
-                  void fetchPremiumLinks(token);
+            {/* Turnstile challenge */}
+            {interacted && turnstileChallenge && (
+              <div
+                style={{
+                  width: "100%",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "8px 0",
                 }}
-                onError={() => {
-                  // Leave the widget mounted so the user can retry.
-                }}
-                onExpire={() => {
-                  // No-op: widget will auto-refresh and emit onSuccess again.
-                }}
-              />
-            </div>
-          )}
+              >
+                <p style={{ fontSize: 12, color: GLASS.muted }}>Quick check before continuing…</p>
+                <Turnstile
+                  siteKey={turnstileChallenge.siteKey}
+                  options={{ theme: "auto", size: "normal" }}
+                  onSuccess={(token) => {
+                    void fetchPremiumLinks(token);
+                  }}
+                  onError={() => {
+                    // Leave the widget mounted so the user can retry.
+                  }}
+                  onExpire={() => {
+                    // No-op: widget will auto-refresh and emit onSuccess again.
+                  }}
+                />
+              </div>
+            )}
 
-          {/* Premium Links — not mounted until first interaction (Item 14) */}
-          {interacted && premiumLinks.length > 0 && (
-            <div
-              className="w-full flex flex-col gap-3 transition-opacity duration-700"
-              style={{ opacity: premiumVisible ? 1 : 0 }}
-            >
-              <div className="w-full h-px opacity-20 my-1" style={{ background: theme.textColor }} />
-              {premiumLinks.map((link) => {
-                const isSensitive = link.sensitive ?? creator.sensitive_default ?? false;
-                // Check for countdown type (countdown:YYYY-MM-DDTHH:mm:ss)
-                if (link.url.startsWith("countdown:")) {
-                  const targetDate = link.url.replace("countdown:", "");
+            {/* Premium links */}
+            {interacted && premiumLinks.length > 0 && (
+              <div
+                style={{
+                  width: "100%",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 14,
+                  transition: "opacity 700ms",
+                  opacity: premiumVisible ? 1 : 0,
+                }}
+              >
+                {/* Subtle divider */}
+                <div
+                  style={{
+                    width: "100%",
+                    height: 1,
+                    background: `linear-gradient(to right, transparent, ${GLASS.border}, transparent)`,
+                    margin: "2px 0",
+                  }}
+                />
+                {premiumLinks.map((link, index) => {
+                  const isSensitive = link.sensitive ?? creator.sensitive_default ?? false;
+                  if (link.url.startsWith("countdown:")) {
+                    const targetDate = link.url.replace("countdown:", "");
+                    return (
+                      <CountdownTimer
+                        key={link.id ?? link.label}
+                        targetDate={targetDate}
+                        label={link.label}
+                        accentColor={theme.accentColor}
+                        textColor={theme.textColor}
+                      />
+                    );
+                  }
                   return (
-                    <CountdownTimer
+                    <LinkButton
                       key={link.id ?? link.label}
-                      targetDate={targetDate}
-                      label={link.label}
-                      accentColor={theme.accentColor}
-                      textColor={theme.textColor}
+                      link={link}
+                      isPremium={true}
+                      isFeatured={index === 0}
+                      theme={theme}
+                      isSensitive={isSensitive}
+                      onClick={() => handlePremiumClick(link)}
                     />
                   );
-                }
-                return (
-                  <LinkButton
-                    key={link.id ?? link.label}
-                    link={link}
-                    isPremium={true}
-                    theme={theme}
-                    isSensitive={isSensitive}
-                    onClick={() => handlePremiumClick(link)}
-                  />
-                );
-              })}
-            </div>
-          )}
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div
+            style={{
+              marginTop: 34,
+              fontSize: 11,
+              color: "rgba(245,238,252,0.32)",
+              letterSpacing: "0.3px",
+            }}
+          >
+            © {creator.name.toLowerCase().replace(/\s+/g, "")} · all links verified
+          </div>
 
           {/* Honeypot — invisible to real users, followed only by bots */}
           <a
             href="/api/honeypot"
             tabIndex={-1}
             aria-hidden="true"
-            style={{ position: "absolute", left: "-9999px", opacity: 0, width: 0, height: 0, overflow: "hidden" }}
+            style={{
+              position: "absolute",
+              left: "-9999px",
+              opacity: 0,
+              width: 0,
+              height: 0,
+              overflow: "hidden",
+            }}
           >
             Site map
           </a>
