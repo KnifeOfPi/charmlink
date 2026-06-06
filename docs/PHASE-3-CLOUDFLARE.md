@@ -299,6 +299,46 @@ isBot=false, confidence=high →  real payload (clean visitor)
 The Turnstile path is currently inactive (bot-detect only returns `{isBot:false, confidence:"high"}`
 for clean visitors) but is wired and ready for when bot-detect gains lower-confidence non-bot signals.
 
+### Why we do NOT challenge every visitor with Turnstile/reCAPTCHA
+
+This is a deliberate design decision, not an oversight. Turnstile is wired in but
+gated to near-zero on purpose. Reasons:
+
+1. **Conversion.** CharmLink is an IG → link-in-bio → OnlyFans funnel. Every
+   friction step bleeds clicks. A CAPTCHA on page load would tank the one metric
+   creators care about. The whole interaction-gate history (see
+   `1458de8` — "load on mount, remove interaction gate") was about *removing*
+   friction that was silently blanking real iOS users; a hard challenge wall
+   re-introduces exactly that failure.
+
+2. **It's the wrong tool for the actual threat.** The adversary is not a human
+   solving a challenge — it's **IG's own link-preview crawlers + scrapers**
+   scanning the URL. The winning move against those is **cloaking** (serve a
+   wholesome decoy blog so they never see adult signal), not challenging them. A
+   CAPTCHA wall *helps* a classifier: a blank challenge page is itself a
+   suspicious fingerprint, and it hides nothing — the scraper just logs "this
+   domain throws a CAPTCHA," which is precisely the pattern IG flags. Cloaking
+   denies the signal; a challenge advertises it.
+
+3. **Cheap bots are already blocked upstream, for free.** The CF WAF (6 rules:
+   empty UA, bad-UA list, datacenter ASNs, Tor, Meta ASN) + Bot Fight Mode kill
+   low-quality traffic at the edge before it reaches the app. No CAPTCHA needed
+   for those.
+
+4. **reCAPTCHA specifically is rejected:** it injects Google JS on every creator
+   page (privacy + perf hit + an extra third-party fingerprint). Turnstile is the
+   only challenge we'd ever use, and only as a *targeted* rung — never the front
+   door.
+
+**Design philosophy: hide from bots, don't challenge them.** Layered detection →
+cloak the scrapers, block the junk at CF edge, serve real humans instantly.
+Turnstile sits in reserve as the *benefit-of-the-doubt* rung for
+suspicious-but-maybe-human cases (`isBot=false, confidence=low`) — the only place
+a challenge makes sense without hurting conversion or tipping off IG. To actually
+activate it, give `lib/bot-detect.ts` a low-confidence non-bot signal (odd-but-not-
+blocked ASN, weird header combo); those edge cases then get Turnstile instead of
+being waved through. The plumbing is ready; we just haven't needed it.
+
 Frontend note: `CreatorPage.tsx` must handle `{ turnstile_required: true, site_key: "..." }` by
 rendering the CF Turnstile widget and re-POSTing with the solved token in `x-turnstile-token` header.
 This frontend wiring is a follow-up task.
