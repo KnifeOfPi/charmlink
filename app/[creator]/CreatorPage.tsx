@@ -1704,7 +1704,7 @@ function SpotlightTemplate({
         paddingBottom: 48, color: theme.textColor, fontFamily,
         paddingTop: isInstagram ? "4rem" : "0",
       }}>
-        <div style={{ width: "100%", maxWidth: 440 }}>
+        <div style={{ width: "100%", maxWidth: 440, overflowX: "hidden" }}>
 
           {/* Hero section */}
           {hasHero ? (
@@ -1733,6 +1733,7 @@ function SpotlightTemplate({
             marginTop: hasHero ? -60 : 0,
             position: "relative", zIndex: 4,
             paddingLeft: 18, paddingRight: 18,
+            width: "100%", boxSizing: "border-box",
           }}>
             {/* Avatar (shown when no hero) */}
             {!hasHero && (
@@ -1878,6 +1879,7 @@ function SpotlightTemplate({
                   WebkitOverflowScrolling: "touch" as never,
                   paddingBottom: 4, paddingRight: 18,
                   scrollbarWidth: "none" as never,
+                  width: "100%",
                 }}>
                   {creator.gallery_thumbnails.map((thumb, i) => (
                     <button
@@ -1980,9 +1982,10 @@ interface CreatorPageProps {
   creator: Creator;
   slug: string;
   isBot: boolean;
+  previewPremiumLinks?: PremiumLink[];
 }
 
-export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
+export function CreatorPage({ creator, slug, isBot, previewPremiumLinks }: CreatorPageProps) {
   const [premiumLinks, setPremiumLinks] = useState<PremiumLink[]>([]);
   const [premiumVisible, setPremiumVisible] = useState(false);
   const [interacted, setInteracted] = useState(false);
@@ -1994,6 +1997,15 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
   const trackedView = useRef(false);
 
   const fontFamily = resolveFontFamily(creator.font);
+
+  // Preview-only: seed premium links without API fetch
+  useEffect(() => {
+    if (previewPremiumLinks) {
+      setPremiumLinks(previewPremiumLinks);
+      setInteracted(true);
+      setPremiumVisible(true);
+    }
+  }, [previewPremiumLinks]);
 
   const fetchPremiumLinks = useCallback(
     async (turnstileToken?: string) => {
@@ -2095,11 +2107,11 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
       });
     }
 
-    if (!isBot) {
+    if (!isBot && !previewPremiumLinks) {
       setInteracted(true);
       void fetchPremiumLinks();
     }
-  }, [isBot, fetchPremiumLinks, slug]);
+  }, [isBot, fetchPremiumLinks, slug, previewPremiumLinks]);
 
   // ── Click Handlers ──────────────────────────────────────────────────────────
 
