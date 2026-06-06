@@ -84,6 +84,15 @@ export interface Creator {
   is_verified?: boolean;
   font?: string;
   location_pill_color?: string | null;
+  // spotlight template
+  template?: "glass" | "spotlight";
+  hero_image_url?: string | null;
+  hero_enabled?: boolean;
+  username?: string | null;
+  show_follower_count?: boolean;
+  follower_count_label?: string | null;
+  featured_card?: { image_url: string; label?: string; link_id?: string; url?: string; sensitive?: boolean } | null;
+  gallery_thumbnails?: Array<{ image_url: string; link_id?: string; url?: string }> | null;
 }
 
 export interface CreatorsConfig {
