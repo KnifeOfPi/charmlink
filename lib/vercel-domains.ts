@@ -118,8 +118,22 @@ export async function waitForDomainReady(
 
 export async function listDomains(): Promise<VercelDomainStatus[]> {
   const { projectId } = getConfig();
-  const data = await vercelFetch("GET", `/v10/projects/${projectId}/domains`) as VercelDomainList;
-  return data.domains ?? [];
+  const all: VercelDomainStatus[] = [];
+  let until: number | undefined;
+  // Vercel paginates project domains; follow pagination.next (a timestamp used
+  // as the `until` cursor) until exhausted. Cap iterations to avoid infinite loops.
+  for (let i = 0; i < 50; i++) {
+    const qs = `?limit=100${until !== undefined ? `&until=${until}` : ""}`;
+    const data = (await vercelFetch(
+      "GET",
+      `/v10/projects/${projectId}/domains${qs}`
+    )) as VercelDomainList;
+    if (Array.isArray(data.domains)) all.push(...data.domains);
+    const next = data.pagination?.next;
+    if (next === null || next === undefined) break;
+    until = next;
+  }
+  return all;
 }
 
 /**

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useAdminAuth } from "../useAdminAuth";
 import { AdminNav } from "../AdminNav";
+import { CopyButton } from "../CopyButton";
 
 interface VercelDomain {
   name: string;
@@ -313,7 +314,19 @@ export default function DomainsPage() {
                   <div className="flex items-center gap-3">
                     <span className={`w-2 h-2 rounded-full flex-shrink-0 ${domain.verified ? "bg-green-400" : "bg-yellow-400 animate-pulse"}`} />
                     <div>
-                      <p className="text-white font-medium">{domain.name}</p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-white font-medium">{domain.name}</p>
+                        <CopyButton value={domain.name} title="Copy domain" />
+                        <a
+                          href={`https://${domain.name}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-gray-500 hover:text-[#e91e8a] border border-[#333] hover:border-[#e91e8a] rounded px-1.5 py-0.5 transition-colors"
+                          title="Open page in new tab"
+                        >
+                          Open ↗
+                        </a>
+                      </div>
                       {domain.apexName !== domain.name && (
                         <p className="text-gray-500 text-xs">Apex: {domain.apexName}</p>
                       )}
