@@ -4,6 +4,15 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAdminAuth } from "../useAdminAuth";
 import { AdminNav } from "../AdminNav";
+import { CopyButton } from "../CopyButton";
+
+// Resolve the public-facing URL for a creator: custom domain if set, else origin/slug.
+function publicUrl(slug: string, customDomain: string | null): string {
+  if (customDomain) return `https://${customDomain}`;
+  const origin =
+    typeof window !== "undefined" ? window.location.origin : "";
+  return `${origin}/${slug}`;
+}
 
 interface DBCreator {
   id: string;
@@ -283,14 +292,35 @@ export default function CreatorsPage() {
                         )}
                         <div>
                           <p className="text-white text-sm font-medium">{creator.name}</p>
-                          <p className="text-gray-500 text-xs">/{creator.slug}</p>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <p className="text-gray-500 text-xs">/{creator.slug}</p>
+                            <CopyButton
+                              value={publicUrl(creator.slug, creator.custom_domain)}
+                              title="Copy public URL"
+                            />
+                            <a
+                              href={publicUrl(creator.slug, creator.custom_domain)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-xs text-gray-500 hover:text-[#e91e8a] border border-[#333] hover:border-[#e91e8a] rounded px-1.5 py-0.5 transition-colors"
+                              title="Open page in new tab"
+                            >
+                              Open ↗
+                            </a>
+                          </div>
                         </div>
                       </div>
                     </td>
                     <td className="px-4 py-3 hidden md:table-cell">
-                      <span className="text-gray-400 text-sm">
-                        {creator.custom_domain ?? <span className="text-gray-700">—</span>}
-                      </span>
+                      {creator.custom_domain ? (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-gray-400 text-sm">{creator.custom_domain}</span>
+                          <CopyButton value={creator.custom_domain} title="Copy domain" />
+                        </div>
+                      ) : (
+                        <span className="text-gray-700">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 hidden sm:table-cell">
                       <div className="flex items-center gap-1">
@@ -306,6 +336,15 @@ export default function CreatorsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-2">
+                        <a
+                          href={publicUrl(creator.slug, creator.custom_domain)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-gray-400 hover:text-white text-sm transition-colors px-2 py-1"
+                          title="Open public page"
+                        >
+                          Open ↗
+                        </a>
                         <button
                           onClick={() => router.push(`/admin/creators/${creator.id}`)}
                           className="text-gray-400 hover:text-white text-sm transition-colors px-2 py-1"
