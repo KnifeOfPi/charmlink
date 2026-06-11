@@ -14,8 +14,12 @@ function getPool(): Pool {
     pool = new Pool({
       connectionString,
       ssl: { rejectUnauthorized: false },
-      max: 10,
-      idleTimeoutMillis: 30000,
+      // Serverless fan-out safety: each Vercel function instance gets its own
+      // pool. Keep max small so concurrent instances can't exhaust the Supabase
+      // pooler. DATABASE_URL must point at the TRANSACTION pooler (port 6543),
+      // which multiplexes many clients over few backend connections.
+      max: 3,
+      idleTimeoutMillis: 10000,
       connectionTimeoutMillis: 10000,
     });
   }
