@@ -148,6 +148,8 @@ function extractDecoyCandidateSlug(
   if (pathname.startsWith("/api/")) return null;
   if (pathname.startsWith("/_next/")) return null;
   if (pathname.startsWith("/admin")) return null;
+  if (pathname.startsWith("/demo-spotlight")) return null;
+  if (pathname.startsWith("/demo-glass")) return null;
   if (pathname.startsWith("/r/")) return null;
   if (pathname === "/favicon.ico") return null;
   if (pathname === "/robots.txt") return null;
@@ -185,6 +187,8 @@ export async function middleware(request: NextRequest) {
       pathname.startsWith("/admin") ||
       pathname.startsWith("/api") ||
       pathname.startsWith("/_next") ||
+      pathname.startsWith("/demo-spotlight") ||
+      pathname.startsWith("/demo-glass") ||
       pathname === "/" ||
       pathname === "/robots.txt" ||
       pathname === "/favicon.ico";

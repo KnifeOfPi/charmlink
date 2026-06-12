@@ -79,6 +79,15 @@ export interface DBCreator {
   is_verified: boolean;
   font: string;
   location_pill_color: string | null;
+  // spotlight template
+  template: string;
+  hero_image_url: string | null;
+  hero_enabled: boolean;
+  username: string | null;
+  show_follower_count: boolean;
+  follower_count_label: string | null;
+  featured_card: { image_url: string; label?: string; link_id?: string; url?: string; sensitive?: boolean } | null;
+  gallery_thumbnails: Array<{ image_url: string; link_id?: string; url?: string }> | null;
   created_at: string;
   updated_at: string;
 }
@@ -146,6 +155,15 @@ export interface CreateCreatorInput {
   is_verified?: boolean;
   font?: string;
   location_pill_color?: string | null;
+  // spotlight
+  template?: string;
+  hero_image_url?: string | null;
+  hero_enabled?: boolean;
+  username?: string | null;
+  show_follower_count?: boolean;
+  follower_count_label?: string | null;
+  featured_card?: { image_url: string; label?: string; link_id?: string; url?: string; sensitive?: boolean } | null;
+  gallery_thumbnails?: Array<{ image_url: string; link_id?: string; url?: string }> | null;
 }
 
 export interface UpdateCreatorInput extends Partial<CreateCreatorInput> {
@@ -253,7 +271,12 @@ export async function updateCreator(input: UpdateCreatorInput): Promise<DBCreato
     "show_stars", "stars_count", "stars_color", "animation_speed",
     "avatar_border_style", "avatar_border_color_1", "avatar_border_color_2", "avatar_border_color_3",
     "is_verified", "font", "location_pill_color",
+    // spotlight
+    "template", "hero_image_url", "hero_enabled", "username",
+    "show_follower_count", "follower_count_label", "featured_card", "gallery_thumbnails",
   ] as const;
+
+  const jsonbKeys = new Set(["featured_card", "gallery_thumbnails"]);
 
   const setClauses: string[] = [];
   const values: unknown[] = [];
@@ -261,8 +284,14 @@ export async function updateCreator(input: UpdateCreatorInput): Promise<DBCreato
 
   for (const key of allowed) {
     if (key in fields) {
-      setClauses.push(`${key} = $${idx++}`);
-      values.push((fields as Record<string, unknown>)[key]);
+      const val = (fields as Record<string, unknown>)[key];
+      if (jsonbKeys.has(key)) {
+        setClauses.push(`${key} = $${idx++}::jsonb`);
+        values.push(val == null ? null : JSON.stringify(val));
+      } else {
+        setClauses.push(`${key} = $${idx++}`);
+        values.push(val);
+      }
     }
   }
 

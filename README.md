@@ -94,22 +94,31 @@ When a visitor opens the link from Instagram (which uses an in-app WebView), a b
 - For launches, drops, and limited-time promotions
 
 ### Admin Dashboard (rebuilt with shadcn/ui)
-- **5-tab layout**: Profile, Theme, Effects, Avatar, Misc
+- **6-tab layout**: Profile, Theme, Effects, Avatar, Misc, **Spotlight**
 - **Profile tab**: Name, tagline, slug, avatar URL, custom domain + Vercel integration, active/sensitive toggles
 - **Theme tab**: Background type selector, 3 color pickers, gradient type/direction controls
 - **Effects tab**: Floating icons toggle + emoji/count/speed config, star particles toggle + count/color
 - **Avatar tab**: Border style selector, 3 gradient color pickers, verified badge toggle
 - **Misc tab**: Font family selector, location toggle + type + pill color
+- **Spotlight tab**: Page template selector (**Glass** vs **Spotlight**); when Spotlight is selected, exposes hero image + enable toggle, @username, follower-count toggle + label, featured card (image/label/link), and a repeatable gallery-thumbnail list. See `docs/SOP-spotlight-landing-page.md` for the manager setup guide.
 - **Link editor**: All v3 visual fields behind expandable "✨ Visual options" section
 
+### Landing Page Templates
+Each creator picks a `template` (per-creator, non-destructive — switching keeps all links/content):
+- **`glass`** (default) — aurora glassmorphism: themed gradient background, floating icons / star particles, glass link cards.
+- **`spotlight`** — link.me-style warm dark design: full-bleed hero image fading to dark, name + verified badge + @username, circular gradient social pills, follower count with chevron, an "EXCLUSIVE CONTENT" featured card, and a horizontally-scrollable thumbnail gallery. The warm background tint/glow is derived automatically from the creator's `theme_accent`. All content is per-creator and data-driven (no hardcoded platform text); shares the same age-gate, interaction-gated premium-link fetch, decoy SSR branch, and per-link overrides as Glass.
+
+Live demo of the Spotlight layout (mock data): `/demo-spotlight`.
+
 ### Database
-- 19 new columns on `charmlink_creators`: `bg_type`, `bg_gradient_type`, `bg_gradient_direction`, `bg_color_2`, `bg_color_3`, `show_floating_icons`, `floating_icon`, `floating_icon_count`, `show_stars`, `stars_count`, `stars_color`, `animation_speed`, `avatar_border_style`, `avatar_border_color_1/2/3`, `is_verified`, `font`, `location_pill_color`
-- 8 new columns on `charmlink_links`: `show_text_glow`, `text_glow_color`, `text_glow_intensity`, `hover_animation`, `border_color`, `show_border`, `title_color`, `title_font_size`
-- Run `npx tsx scripts/migrate-v3.ts` to apply to existing databases
+- 19 v3 columns on `charmlink_creators`: `bg_type`, `bg_gradient_type`, `bg_gradient_direction`, `bg_color_2`, `bg_color_3`, `show_floating_icons`, `floating_icon`, `floating_icon_count`, `show_stars`, `stars_count`, `stars_color`, `animation_speed`, `avatar_border_style`, `avatar_border_color_1/2/3`, `is_verified`, `font`, `location_pill_color`
+- 8 v3 columns on `charmlink_links`: `show_text_glow`, `text_glow_color`, `text_glow_intensity`, `hover_animation`, `border_color`, `show_border`, `title_color`, `title_font_size`
+- 8 Spotlight columns on `charmlink_creators` (migration `20260606000000_add_spotlight_template.sql`, all `ADD COLUMN IF NOT EXISTS`, non-breaking): `template` (default `'glass'`), `hero_image_url`, `hero_enabled` (default true), `username`, `show_follower_count` (default false), `follower_count_label`, `featured_card` (JSONB), `gallery_thumbnails` (JSONB)
+- Run `npx tsx scripts/migrate-v3.ts` to apply v3 columns; apply the Spotlight migration via your normal Supabase migration flow
 
 ## Tech Stack
 
-- **Framework**: Next.js 15 (App Router)
+- **Framework**: Next.js 16 (App Router)
 - **Language**: TypeScript
 - **Styling**: Tailwind CSS v4
 - **UI Components**: shadcn/ui (base-ui/react)
@@ -134,7 +143,7 @@ charmlink/
 │   │   ├── dashboard/          # Overview stats + recent activity
 │   │   ├── creators/           # Creator CRUD + link management
 │   │   │   ├── page.tsx        # Creator list + add/delete
-│   │   │   └── [id]/page.tsx   # 5-tab editor (Profile/Theme/Effects/Avatar/Misc)
+│   │   │   └── [id]/page.tsx   # 6-tab editor (Profile/Theme/Effects/Avatar/Misc/Spotlight)
 │   │   ├── analytics/          # Analytics dashboard
 │   │   │   ├── page.tsx        # Analytics page wrapper
 │   │   │   └── AnalyticsDashboard.tsx  # Charts + stats
@@ -238,6 +247,14 @@ Three tables, all prefixed with `charmlink_`:
 | `is_verified` | BOOLEAN | Show blue verified badge next to name |
 | `font` | VARCHAR(30) | Google Font family name |
 | `location_pill_color` | VARCHAR(20) | Custom background for location pill |
+| `template` | TEXT | Landing page template: `glass` (default) or `spotlight` |
+| `hero_image_url` | TEXT | Spotlight: full-bleed hero image URL |
+| `hero_enabled` | BOOLEAN | Spotlight: hide hero even if URL set (default true) |
+| `username` | TEXT | Spotlight: @handle shown under the display name |
+| `show_follower_count` | BOOLEAN | Spotlight: show the follower count block (default false) |
+| `follower_count_label` | TEXT | Spotlight: formatted follower string (e.g. `2.6K`) |
+| `featured_card` | JSONB | Spotlight: `{image_url, label?, link_id?, url?, sensitive?}` |
+| `gallery_thumbnails` | JSONB | Spotlight: array of `{image_url, link_id?, url?}` |
 | `created_at` | TIMESTAMPTZ | Creation timestamp |
 | `updated_at` | TIMESTAMPTZ | Last update timestamp |
 

@@ -63,6 +63,15 @@ interface DBCreator {
   is_verified: boolean;
   font: string;
   location_pill_color: string | null;
+  // spotlight template
+  template: string;
+  hero_image_url: string | null;
+  hero_enabled: boolean;
+  username: string | null;
+  show_follower_count: boolean;
+  follower_count_label: string | null;
+  featured_card: { image_url: string; label?: string; url?: string } | null;
+  gallery_thumbnails: Array<{ image_url: string; url?: string }> | null;
   created_at: string;
   updated_at: string;
 }
@@ -754,6 +763,34 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
     setForm((p) => ({ ...p, [key]: value }));
   }
 
+  function setFeaturedCardField(key: "image_url" | "label" | "url", value: string) {
+    setForm((p) => ({
+      ...p,
+      featured_card: {
+        image_url: p.featured_card?.image_url ?? "",
+        label: p.featured_card?.label ?? "",
+        url: p.featured_card?.url ?? "",
+        [key]: value,
+      },
+    }));
+  }
+
+  function addGalleryThumb() {
+    setForm((p) => ({ ...p, gallery_thumbnails: [...(p.gallery_thumbnails ?? []), { image_url: "", url: "" }] }));
+  }
+
+  function removeGalleryThumb(idx: number) {
+    setForm((p) => ({ ...p, gallery_thumbnails: (p.gallery_thumbnails ?? []).filter((_, i) => i !== idx) }));
+  }
+
+  function setGalleryThumb(idx: number, key: "image_url" | "url", value: string) {
+    setForm((p) => {
+      const thumbs = [...(p.gallery_thumbnails ?? [])];
+      thumbs[idx] = { ...thumbs[idx], [key]: value };
+      return { ...p, gallery_thumbnails: thumbs };
+    });
+  }
+
   if (!ready) return null;
   if (loading) {
     return (
@@ -819,12 +856,13 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
           <div>
             <form onSubmit={handleSave}>
               <Tabs defaultValue="profile" className="space-y-4">
-                <TabsList className="w-full grid grid-cols-5 text-xs">
+                <TabsList className="w-full grid grid-cols-6 text-xs">
                   <TabsTrigger value="profile">Profile</TabsTrigger>
                   <TabsTrigger value="theme">Theme</TabsTrigger>
                   <TabsTrigger value="effects">Effects</TabsTrigger>
                   <TabsTrigger value="avatar">Avatar</TabsTrigger>
                   <TabsTrigger value="misc">Misc</TabsTrigger>
+                  <TabsTrigger value="spotlight">Spotlight</TabsTrigger>
                 </TabsList>
 
                 {/* ── Profile Tab ── */}
@@ -1352,6 +1390,118 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
                           </div>
                         )}
                       </div>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+
+                {/* ── Spotlight Tab ── */}
+                <TabsContent value="spotlight">
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base">Template</CardTitle>
+                      <CardDescription className="text-xs">Choose the landing page design</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="space-y-1">
+                        <Label>Page Template</Label>
+                        <Select
+                          value={form.template ?? "glass"}
+                          onValueChange={(v) => setField("template", v ?? "glass")}
+                        >
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="glass">Glass (default)</SelectItem>
+                            <SelectItem value="spotlight">Spotlight (link.me style)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {form.template === "spotlight" && (
+                        <div className="space-y-4 border-t border-border pt-4">
+                          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Spotlight Settings</p>
+
+                          {/* Hero */}
+                          <div className="space-y-2">
+                            <p className="text-xs font-medium text-muted-foreground">Hero Image</p>
+                            <div className="flex items-center justify-between">
+                              <Label className="font-normal text-sm">Hero enabled</Label>
+                              <Switch checked={form.hero_enabled ?? true} onCheckedChange={(v) => setField("hero_enabled", v)} />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Hero image URL</Label>
+                              <Input value={form.hero_image_url ?? ""} onChange={(e) => setField("hero_image_url", e.target.value || null)} placeholder="https://..." />
+                            </div>
+                          </div>
+
+                          <Separator />
+
+                          {/* Username + follower count */}
+                          <div className="space-y-3">
+                            <div className="space-y-1">
+                              <Label className="text-xs">@Username (shown under name)</Label>
+                              <Input value={form.username ?? ""} onChange={(e) => setField("username", e.target.value || null)} placeholder="username" />
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <Label className="font-normal">Show follower count</Label>
+                              <Switch checked={form.show_follower_count ?? false} onCheckedChange={(v) => setField("show_follower_count", v)} />
+                            </div>
+                            {form.show_follower_count && (
+                              <div className="space-y-1">
+                                <Label className="text-xs">Follower label (e.g. &quot;2.6K&quot;)</Label>
+                                <Input value={form.follower_count_label ?? ""} onChange={(e) => setField("follower_count_label", e.target.value || null)} placeholder="2.6K" />
+                              </div>
+                            )}
+                          </div>
+
+                          <Separator />
+
+                          {/* Featured card */}
+                          <div className="space-y-2">
+                            <p className="text-xs font-medium text-muted-foreground">Featured Card</p>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Card image URL</Label>
+                              <Input value={form.featured_card?.image_url ?? ""} onChange={(e) => setFeaturedCardField("image_url", e.target.value)} placeholder="https://..." />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Card label (e.g. &quot;EXCLUSIVE CONTENT&quot;)</Label>
+                              <Input value={form.featured_card?.label ?? ""} onChange={(e) => setFeaturedCardField("label", e.target.value)} placeholder="EXCLUSIVE CONTENT" />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Card link URL</Label>
+                              <Input value={form.featured_card?.url ?? ""} onChange={(e) => setFeaturedCardField("url", e.target.value)} placeholder="https://..." />
+                            </div>
+                          </div>
+
+                          <Separator />
+
+                          {/* Gallery thumbnails */}
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <p className="text-xs font-medium text-muted-foreground">Gallery Thumbnails</p>
+                              <Button type="button" variant="outline" size="sm" className="text-xs h-7" onClick={addGalleryThumb}>
+                                + Add
+                              </Button>
+                            </div>
+                            {(form.gallery_thumbnails ?? []).map((thumb, idx) => (
+                              <div key={idx} className="flex gap-2 items-center">
+                                <Input
+                                  value={thumb.image_url ?? ""}
+                                  onChange={(e) => setGalleryThumb(idx, "image_url", e.target.value)}
+                                  placeholder="Image URL"
+                                  className="text-xs flex-1"
+                                />
+                                <Input
+                                  value={thumb.url ?? ""}
+                                  onChange={(e) => setGalleryThumb(idx, "url", e.target.value)}
+                                  placeholder="Link URL"
+                                  className="text-xs flex-1"
+                                />
+                                <button type="button" onClick={() => removeGalleryThumb(idx)} className="text-destructive text-xs flex-shrink-0">✕</button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
                 </TabsContent>

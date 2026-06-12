@@ -1239,216 +1239,52 @@ function CountdownTimer({
   );
 }
 
-// ── Main Component ────────────────────────────────────────────────────────────
+// ── Template Props ────────────────────────────────────────────────────────────
 
-interface CreatorPageProps {
+interface TemplateProps {
   creator: Creator;
   slug: string;
-  isBot: boolean;
+  theme: { bgColor: string; accentColor: string; textColor: string };
+  fontFamily: string;
+  isInstagram: boolean;
+  interacted: boolean;
+  premiumLinks: PremiumLink[];
+  premiumVisible: boolean;
+  turnstileChallenge: { siteKey: string } | null;
+  handleSocialClick: (link: SocialLink) => void;
+  handlePremiumClick: (link: PremiumLink) => void;
+  fetchPremiumLinks: (token?: string) => Promise<void>;
+  orbA: string;
+  orbB: string;
+  orbC: string;
+  avColor1: string;
+  avColor2: string;
+  avColor3: string;
+  bgStyle: React.CSSProperties;
 }
 
-export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
-  const [premiumLinks, setPremiumLinks] = useState<PremiumLink[]>([]);
-  const [premiumVisible, setPremiumVisible] = useState(false);
-  const [interacted, setInteracted] = useState(false);
-  const [isInstagram, setIsInstagram] = useState(false);
-  const [turnstileChallenge, setTurnstileChallenge] = useState<{
-    siteKey: string;
-  } | null>(null);
-  const sessionIdRef = useRef<string>("");
-  const trackedView = useRef(false);
+// ── Glass Template ────────────────────────────────────────────────────────────
 
-  const fontFamily = resolveFontFamily(creator.font);
-
-  const fetchPremiumLinks = useCallback(
-    async (turnstileToken?: string) => {
-      try {
-        const scriptEl =
-          typeof document !== "undefined"
-            ? document.getElementById("cl-token")
-            : null;
-        const tokenData = scriptEl
-          ? (JSON.parse(scriptEl.textContent || "{}") as { token?: string })
-          : {};
-        const token = tokenData.token ?? "";
-
-        const headers: Record<string, string> = {
-          "Content-Type": "application/json",
-        };
-        if (turnstileToken) {
-          headers["x-turnstile-token"] = turnstileToken;
-        }
-
-        const res = await fetch(`/api/links/${slug}`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ token }),
-        });
-        if (res.ok) {
-          const data = (await res.json()) as {
-            links?: PremiumLink[];
-            turnstile_required?: boolean;
-            site_key?: string | null;
-          };
-          if (data.turnstile_required && data.site_key) {
-            setTurnstileChallenge({ siteKey: data.site_key });
-            return;
-          }
-          setTurnstileChallenge(null);
-          setPremiumLinks(data.links || []);
-          setTimeout(() => setPremiumVisible(true), 100);
-        }
-      } catch {
-        // Silently fail
-      }
-    },
-    [slug]
-  );
-
-  useEffect(() => {
-    const ua = navigator.userAgent;
-    const igDetected = ua.includes("Instagram");
-    setIsInstagram(igDetected);
-
-    // ── IG WebView auto-escape ─────────────────────────────────────────────────
-    if (igDetected && !isBot) {
-      try {
-        if (!sessionStorage.getItem("cl_escape_fired")) {
-          sessionStorage.setItem("cl_escape_fired", "1");
-          const full = window.location.href;
-          const bare = full.replace(/^https?:\/\//, "");
-          const isIOS = /iPad|iPhone|iPod/.test(ua) && !(window as unknown as { MSStream?: unknown }).MSStream;
-          const fire = () => {
-            try {
-              window.location.href =
-                "instagram://extbrowser/?url=" + encodeURIComponent(full);
-            } catch {
-              /* noop */
-            }
-            if (isIOS) return;
-            setTimeout(() => {
-              try { window.location.href = "googlechromes://" + bare; } catch { /* noop */ }
-            }, 1500);
-            setTimeout(() => {
-              try { window.location.href = "firefox://open-url?url=" + encodeURIComponent(full); } catch { /* noop */ }
-            }, 3000);
-            setTimeout(() => {
-              try { window.location.href = "brave://open-url?url=" + encodeURIComponent(full); } catch { /* noop */ }
-            }, 4500);
-          };
-          if (typeof requestAnimationFrame === "function") {
-            requestAnimationFrame(() => setTimeout(fire, 0));
-          } else {
-            setTimeout(fire, 50);
-          }
-        }
-      } catch {
-        // sessionStorage blocked — silently skip
-      }
-    }
-
-    const sid = createSessionId();
-    sessionIdRef.current = sid;
-
-    if (!trackedView.current) {
-      trackedView.current = true;
-      sendBeacon("/api/pageview", {
-        creator: slug,
-        sessionId: sid,
-        isInstagram: igDetected,
-        isBot: false,
-      });
-    }
-
-    if (!isBot) {
-      setInteracted(true);
-      void fetchPremiumLinks();
-    }
-  }, [isBot, fetchPremiumLinks, slug]);
-
-  // ── Click Handlers ──────────────────────────────────────────────────────────
-
-  function isSensitiveLink(link: SocialLink | PremiumLink): boolean {
-    return Boolean(link.sensitive ?? creator.sensitive_default ?? false);
-  }
-
-  function getNavigationUrl(link: SocialLink | PremiumLink): string {
-    if (isSensitiveLink(link) && link.id) return `/r/${link.id}`;
-    if (link.redirect_url) return `/api/redirect/${link.id}`;
-    return link.url;
-  }
-
-  function navigate(link: SocialLink | PremiumLink) {
-    if (link.deeplink_enabled && !isSensitiveLink(link)) {
-      handleDeepLink(link.url, link.recovery_url || link.url);
-      return;
-    }
-    window.location.href = getNavigationUrl(link);
-  }
-
-  const handleSocialClick = (link: SocialLink) => {
-    sendBeacon("/api/track", {
-      creator: slug,
-      linkLabel: link.label,
-      linkUrl: link.url,
-      linkType: "social",
-      sessionId: sessionIdRef.current,
-      isInstagram,
-    });
-    setTimeout(() => navigate(link), 50);
-  };
-
-  const handlePremiumClick = (link: PremiumLink) => {
-    sendBeacon("/api/track", {
-      creator: slug,
-      linkLabel: link.label,
-      linkUrl: link.url,
-      linkType: "premium",
-      sessionId: sessionIdRef.current,
-      isInstagram,
-    });
-    if (isInstagram && !isSensitiveLink(link)) {
-      const targetUrl = link.redirect_url ? `/api/redirect/${link.id}` : link.url;
-      const bare = targetUrl.replace(/^https?:\/\//, "");
-      const host = window.location.hostname;
-      const ua = navigator.userAgent;
-      const isIos = /iPhone|iPad|iPod/.test(ua);
-      const isAndroid = /Android/.test(ua);
-      let deeplink = "";
-      if (isIos) {
-        deeplink = `x-safari-https://${host}${bare.startsWith(host) ? bare.slice(host.length) : "/" + bare}`;
-      } else if (isAndroid) {
-        const path = bare.startsWith(host) ? bare.slice(host.length) : "/" + bare;
-        deeplink = `intent://${host}${path}#Intent;scheme=https;end`;
-      }
-      if (deeplink) {
-        const blurred = { v: false };
-        const onBlur = () => { blurred.v = true; };
-        window.addEventListener("blur", onBlur, { once: true });
-        window.location.href = deeplink;
-        setTimeout(() => {
-          window.removeEventListener("blur", onBlur);
-          if (!blurred.v) navigate(link);
-        }, 500);
-        return;
-      }
-    }
-    setTimeout(() => navigate(link), 50);
-  };
-
-  const { theme } = creator;
-  const bgStyle = buildBackground(creator);
-
-  // Aurora orb colors derived from creator theme
-  const orbA = theme.accentColor;
-  const orbB = creator.bg_color_2 ?? "#0a0414";
-  const orbC = creator.bg_color_3 ?? "#5b8bff";
-
-  // Avatar border gradient fallback colors
-  const avColor1 = creator.avatar_border_color_1 ?? theme.accentColor;
-  const avColor2 = creator.avatar_border_color_2 ?? "#ff6bd6";
-  const avColor3 = creator.avatar_border_color_3 ?? "#5b8bff";
-
+function GlassTemplate({
+  creator,
+  theme,
+  fontFamily,
+  isInstagram,
+  interacted,
+  premiumLinks,
+  premiumVisible,
+  turnstileChallenge,
+  handleSocialClick,
+  handlePremiumClick,
+  fetchPremiumLinks,
+  orbA,
+  orbB,
+  orbC,
+  avColor1,
+  avColor2,
+  avColor3,
+  bgStyle,
+}: TemplateProps) {
   return (
     <>
       <style>{ALL_KEYFRAMES}</style>
@@ -1755,4 +1591,634 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
       </main>
     </>
   );
+}
+
+// ── Spotlight Template ────────────────────────────────────────────────────────
+
+function SpotlightTemplate({
+  creator,
+  slug,
+  theme,
+  fontFamily,
+  isInstagram,
+  interacted,
+  premiumLinks,
+  premiumVisible,
+  turnstileChallenge,
+  handleSocialClick,
+  handlePremiumClick,
+  fetchPremiumLinks,
+  avColor1,
+  avColor2,
+  avColor3,
+}: TemplateProps) {
+  const SPOTLIGHT_KEYFRAMES = ALL_KEYFRAMES + `
+    @keyframes spotlightSheen {
+      0% { transform: translateX(-100%) skewX(-15deg); }
+      100% { transform: translateX(300%) skewX(-15deg); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .spotlight-sheen { animation: none !important; }
+    }
+  `;
+
+  // Social pill brand colors
+  const socialPillStyle = (icon: string): React.CSSProperties => {
+    const map: Record<string, React.CSSProperties> = {
+      instagram: { background: "linear-gradient(45deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888)" },
+      reddit: { background: "#FF4500" },
+      twitter: { background: "#000000" },
+      x: { background: "#000000" },
+      tiktok: { background: "#010101" },
+      threads: { background: "#1c1c1c" },
+      youtube: { background: "#FF0000" },
+    };
+    return map[icon] ?? { background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.15)" };
+  };
+
+  // Featured card click handler
+  const handleFeaturedCardClick = () => {
+    const fc = creator.featured_card;
+    if (!fc) return;
+    if (fc.link_id) {
+      const premMatch = premiumLinks.find((l) => l.id === fc.link_id);
+      if (premMatch) { handlePremiumClick(premMatch); return; }
+      const socialMatch = creator.socialLinks.find((l) => l.id === fc.link_id);
+      if (socialMatch) { handleSocialClick(socialMatch); return; }
+    }
+    if (fc.url) {
+      const synthetic: PremiumLink = {
+        id: "featured-card",
+        label: fc.label ?? "Featured",
+        url: fc.url,
+        icon: "link",
+        sensitive: fc.sensitive ?? false,
+      };
+      handlePremiumClick(synthetic);
+    }
+  };
+
+  const handleGalleryThumbClick = (thumb: { image_url: string; link_id?: string; url?: string }) => {
+    if (thumb.link_id) {
+      const premMatch = premiumLinks.find((l) => l.id === thumb.link_id);
+      if (premMatch) { handlePremiumClick(premMatch); return; }
+      const socialMatch = creator.socialLinks.find((l) => l.id === thumb.link_id);
+      if (socialMatch) { handleSocialClick(socialMatch); return; }
+    }
+    if (thumb.url) {
+      const synthetic: PremiumLink = {
+        id: "gallery-" + thumb.image_url,
+        label: "Gallery",
+        url: thumb.url,
+        icon: "link",
+        sensitive: false,
+      };
+      handlePremiumClick(synthetic);
+    }
+  };
+
+  const hasHero = creator.hero_enabled && creator.hero_image_url;
+
+  return (
+    <>
+      <style>{SPOTLIGHT_KEYFRAMES}</style>
+
+      {/* Warm dark background */}
+      <div aria-hidden="true" style={{
+        position: "fixed", inset: 0, zIndex: 0,
+        background: `linear-gradient(to bottom, ${theme.bgColor} 0%, #0E0808 100%)`
+      }} />
+
+      {/* Radial accent glow */}
+      <div aria-hidden="true" style={{
+        position: "fixed", inset: 0, zIndex: 0, pointerEvents: "none",
+        background: `radial-gradient(ellipse 80% 60% at 50% 35%, ${theme.accentColor}28 0%, transparent 70%)`
+      }} />
+
+      {/* IG banner */}
+      {isInstagram && <InstagramBrowserBanner />}
+
+      <main style={{
+        position: "relative", zIndex: 3, minHeight: "100vh",
+        display: "flex", flexDirection: "column", alignItems: "center",
+        paddingBottom: 48, color: theme.textColor, fontFamily,
+        paddingTop: isInstagram ? "4rem" : "0",
+      }}>
+        <div style={{ width: "100%", maxWidth: 440, overflowX: "hidden" }}>
+
+          {/* Hero section */}
+          {hasHero ? (
+            <div style={{ position: "relative", width: "100%", height: "min(36vh, 360px)", overflow: "hidden" }}>
+              <Image
+                src={creator.hero_image_url!}
+                alt={creator.name}
+                fill
+                unoptimized={creator.hero_image_url!.startsWith("data:")}
+                style={{ objectFit: "cover", objectPosition: "center top" }}
+              />
+              {/* Bottom fade overlay */}
+              <div aria-hidden="true" style={{
+                position: "absolute", inset: 0,
+                background: `linear-gradient(to bottom, transparent 40%, ${theme.bgColor}cc 80%, #0E0808 100%)`
+              }} />
+            </div>
+          ) : (
+            /* No-hero spacer */
+            <div style={{ height: 24 }} />
+          )}
+
+          {/* Profile section - overlaps hero bottom */}
+          <div style={{
+            display: "flex", flexDirection: "column", alignItems: "center",
+            marginTop: hasHero ? -60 : 0,
+            position: "relative", zIndex: 4,
+            paddingLeft: 18, paddingRight: 18,
+            width: "100%", boxSizing: "border-box",
+          }}>
+            {/* Avatar (shown when no hero) */}
+            {!hasHero && (
+              <div style={{ marginBottom: 16 }}>
+                <AvatarWithBorder
+                  src={creator.avatar}
+                  name={creator.name}
+                  borderStyle={creator.avatar_border_style ?? "gradient"}
+                  color1={avColor1}
+                  color2={avColor2}
+                  color3={avColor3}
+                  accentColor={theme.accentColor}
+                />
+              </div>
+            )}
+
+            {/* Name + verified + username */}
+            <div style={{ textAlign: "center" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, flexWrap: "wrap" }}>
+                <h1 style={{ fontSize: 26, fontWeight: 700, color: "#f5f0f0", letterSpacing: "0.1px" }}>
+                  {creator.name}
+                </h1>
+                {creator.is_verified && <VerifiedBadge />}
+              </div>
+              <p style={{ color: "rgba(245,238,252,0.5)", fontSize: 13.5, marginTop: 3 }}>
+                @{creator.username ?? slug}
+              </p>
+              {creator.tagline && (
+                <p style={{ color: "rgba(245,238,252,0.65)", fontSize: 13.5, marginTop: 5 }}>
+                  {creator.tagline}
+                </p>
+              )}
+            </div>
+
+            {/* Social pills row */}
+            {creator.socialLinks.length > 0 && (
+              <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap", justifyContent: "center" }}>
+                {creator.socialLinks.map((link) => (
+                  <button
+                    key={link.id ?? link.label}
+                    onClick={() => handleSocialClick(link)}
+                    aria-label={link.label}
+                    style={{
+                      width: 38, height: 38, borderRadius: "50%",
+                      border: "none", cursor: "pointer",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      flexShrink: 0,
+                      ...socialPillStyle(link.icon),
+                    }}
+                  >
+                    <SocialIcon icon={link.icon} />
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Follower count */}
+            {creator.show_follower_count && creator.follower_count_label && (
+              <div style={{ textAlign: "center", marginTop: 22 }}>
+                <p style={{ fontSize: 28, fontWeight: 700, color: "#f5f0f0", lineHeight: 1 }}>
+                  {creator.follower_count_label}
+                </p>
+                <p style={{ fontSize: 11, color: "rgba(245,238,252,0.5)", marginTop: 3, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                  Total Followers
+                </p>
+                {/* Decorative chevron */}
+                <svg width="16" height="10" viewBox="0 0 16 10" fill="none" aria-hidden="true" style={{ marginTop: 5, opacity: 0.4 }}>
+                  <path d="M1 1l7 7 7-7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+            )}
+
+            {/* Featured card */}
+            {creator.featured_card && (
+              <div style={{ width: "100%", marginTop: 24 }}>
+                <button
+                  onClick={handleFeaturedCardClick}
+                  style={{
+                    width: "100%", height: 220, borderRadius: 16, position: "relative",
+                    overflow: "hidden", cursor: "pointer", border: "none", padding: 0,
+                    display: "block",
+                  }}
+                >
+                  {/* Background image */}
+                  <Image
+                    src={creator.featured_card.image_url}
+                    alt={creator.featured_card.label ?? "Featured"}
+                    fill
+                    unoptimized={creator.featured_card.image_url.startsWith("data:")}
+                    style={{ objectFit: "cover" }}
+                  />
+                  {/* Dark bottom gradient */}
+                  <div aria-hidden="true" style={{
+                    position: "absolute", inset: 0,
+                    background: "linear-gradient(to bottom, transparent 30%, rgba(0,0,0,0.7) 100%)"
+                  }} />
+                  {/* Glossy left-edge sheen */}
+                  <div
+                    aria-hidden="true"
+                    className="spotlight-sheen"
+                    style={{
+                      position: "absolute",
+                      top: 0, left: "-60%", width: "35%", height: "100%",
+                      background: "linear-gradient(100deg, transparent, rgba(255,255,255,0.12), transparent)",
+                      transform: "skewX(-15deg)",
+                      animation: "spotlightSheen 5s ease-in-out infinite",
+                      pointerEvents: "none",
+                    }}
+                  />
+                  {/* Glass link icon top-left */}
+                  <div style={{
+                    position: "absolute", top: 12, left: 12,
+                    width: 36, height: 36, borderRadius: 10,
+                    background: "rgba(255,255,255,0.15)",
+                    border: "1px solid rgba(255,255,255,0.2)",
+                    backdropFilter: "blur(8px)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                    </svg>
+                  </div>
+                  {/* Label bottom-center */}
+                  <div style={{
+                    position: "absolute", bottom: 14, left: 0, right: 0,
+                    textAlign: "center",
+                    fontSize: 11, fontWeight: 700, letterSpacing: "0.12em",
+                    textTransform: "uppercase", color: "#fff",
+                    filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.8))",
+                  }}>
+                    {creator.featured_card.label || "EXCLUSIVE CONTENT"}
+                  </div>
+                </button>
+              </div>
+            )}
+
+            {/* Gallery thumbnails */}
+            {creator.gallery_thumbnails && creator.gallery_thumbnails.length > 0 && (
+              <div style={{ width: "100%", marginTop: 16 }}>
+                <div style={{
+                  display: "flex", gap: 8, overflowX: "auto",
+                  WebkitOverflowScrolling: "touch" as never,
+                  paddingBottom: 4, paddingRight: 18,
+                  scrollbarWidth: "none" as never,
+                  width: "100%",
+                }}>
+                  {creator.gallery_thumbnails.map((thumb, i) => (
+                    <button
+                      key={i}
+                      onClick={() => handleGalleryThumbClick(thumb)}
+                      style={{
+                        width: 100, height: 100, flexShrink: 0,
+                        borderRadius: 12, position: "relative", overflow: "hidden",
+                        border: "none", cursor: "pointer", padding: 0,
+                      }}
+                    >
+                      <Image
+                        src={thumb.image_url}
+                        alt=""
+                        fill
+                        unoptimized={thumb.image_url.startsWith("data:")}
+                        style={{ objectFit: "cover" }}
+                      />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Turnstile challenge */}
+            {interacted && turnstileChallenge && (
+              <div style={{ width: "100%", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "16px 0" }}>
+                <p style={{ fontSize: 12, color: "rgba(245,238,252,0.62)" }}>Quick check before continuing…</p>
+                <Turnstile
+                  siteKey={turnstileChallenge.siteKey}
+                  options={{ theme: "auto", size: "normal" }}
+                  onSuccess={(token) => { void fetchPremiumLinks(token); }}
+                  onError={() => {}}
+                  onExpire={() => {}}
+                />
+              </div>
+            )}
+
+            {/* Premium links (if any) */}
+            {interacted && premiumLinks.length > 0 && (
+              <div style={{
+                width: "100%", display: "flex", flexDirection: "column", gap: 14,
+                marginTop: 20,
+                transition: "opacity 700ms", opacity: premiumVisible ? 1 : 0,
+              }}>
+                <div style={{
+                  width: "100%", height: 1,
+                  background: "linear-gradient(to right, transparent, rgba(255,255,255,0.12), transparent)",
+                  margin: "4px 0",
+                }} />
+                {premiumLinks.map((link, index) => {
+                  const isSensitive = link.sensitive ?? creator.sensitive_default ?? false;
+                  if (link.url.startsWith("countdown:")) {
+                    return (
+                      <CountdownTimer
+                        key={link.id ?? link.label}
+                        targetDate={link.url.replace("countdown:", "")}
+                        label={link.label}
+                        accentColor={theme.accentColor}
+                        textColor={theme.textColor}
+                      />
+                    );
+                  }
+                  return (
+                    <LinkButton
+                      key={link.id ?? link.label}
+                      link={link}
+                      isPremium={true}
+                      isFeatured={index === 0}
+                      theme={theme}
+                      isSensitive={isSensitive}
+                      onClick={() => handlePremiumClick(link)}
+                    />
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Footer */}
+            <div style={{ marginTop: 40, fontSize: 11, color: "rgba(245,238,252,0.28)", letterSpacing: "0.3px" }}>
+              © {creator.name.toLowerCase().replace(/\s+/g, "")} · all links verified
+            </div>
+
+            {/* Honeypot */}
+            <a href="/api/honeypot" tabIndex={-1} aria-hidden="true" style={{
+              position: "absolute", left: "-9999px", opacity: 0, width: 0, height: 0, overflow: "hidden"
+            }}>
+              Site map
+            </a>
+          </div>
+        </div>
+      </main>
+    </>
+  );
+}
+
+// ── Main Component ────────────────────────────────────────────────────────────
+
+interface CreatorPageProps {
+  creator: Creator;
+  slug: string;
+  isBot: boolean;
+  previewPremiumLinks?: PremiumLink[];
+}
+
+export function CreatorPage({ creator, slug, isBot, previewPremiumLinks }: CreatorPageProps) {
+  const [premiumLinks, setPremiumLinks] = useState<PremiumLink[]>([]);
+  const [premiumVisible, setPremiumVisible] = useState(false);
+  const [interacted, setInteracted] = useState(false);
+  const [isInstagram, setIsInstagram] = useState(false);
+  const [turnstileChallenge, setTurnstileChallenge] = useState<{
+    siteKey: string;
+  } | null>(null);
+  const sessionIdRef = useRef<string>("");
+  const trackedView = useRef(false);
+
+  const fontFamily = resolveFontFamily(creator.font);
+
+  // Preview-only: seed premium links without API fetch
+  useEffect(() => {
+    if (previewPremiumLinks) {
+      setPremiumLinks(previewPremiumLinks);
+      setInteracted(true);
+      setPremiumVisible(true);
+    }
+  }, [previewPremiumLinks]);
+
+  const fetchPremiumLinks = useCallback(
+    async (turnstileToken?: string) => {
+      try {
+        const scriptEl =
+          typeof document !== "undefined"
+            ? document.getElementById("cl-token")
+            : null;
+        const tokenData = scriptEl
+          ? (JSON.parse(scriptEl.textContent || "{}") as { token?: string })
+          : {};
+        const token = tokenData.token ?? "";
+
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+        if (turnstileToken) {
+          headers["x-turnstile-token"] = turnstileToken;
+        }
+
+        const res = await fetch(`/api/links/${slug}`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ token }),
+        });
+        if (res.ok) {
+          const data = (await res.json()) as {
+            links?: PremiumLink[];
+            turnstile_required?: boolean;
+            site_key?: string | null;
+          };
+          if (data.turnstile_required && data.site_key) {
+            setTurnstileChallenge({ siteKey: data.site_key });
+            return;
+          }
+          setTurnstileChallenge(null);
+          setPremiumLinks(data.links || []);
+          setTimeout(() => setPremiumVisible(true), 100);
+        }
+      } catch {
+        // Silently fail
+      }
+    },
+    [slug]
+  );
+
+  useEffect(() => {
+    const ua = navigator.userAgent;
+    const igDetected = ua.includes("Instagram");
+    setIsInstagram(igDetected);
+
+    // ── IG WebView auto-escape ─────────────────────────────────────────────────
+    if (igDetected && !isBot) {
+      try {
+        if (!sessionStorage.getItem("cl_escape_fired")) {
+          sessionStorage.setItem("cl_escape_fired", "1");
+          const full = window.location.href;
+          const bare = full.replace(/^https?:\/\//, "");
+          const isIOS = /iPad|iPhone|iPod/.test(ua) && !(window as unknown as { MSStream?: unknown }).MSStream;
+          const fire = () => {
+            try {
+              window.location.href =
+                "instagram://extbrowser/?url=" + encodeURIComponent(full);
+            } catch {
+              /* noop */
+            }
+            if (isIOS) return;
+            setTimeout(() => {
+              try { window.location.href = "googlechromes://" + bare; } catch { /* noop */ }
+            }, 1500);
+            setTimeout(() => {
+              try { window.location.href = "firefox://open-url?url=" + encodeURIComponent(full); } catch { /* noop */ }
+            }, 3000);
+            setTimeout(() => {
+              try { window.location.href = "brave://open-url?url=" + encodeURIComponent(full); } catch { /* noop */ }
+            }, 4500);
+          };
+          if (typeof requestAnimationFrame === "function") {
+            requestAnimationFrame(() => setTimeout(fire, 0));
+          } else {
+            setTimeout(fire, 50);
+          }
+        }
+      } catch {
+        // sessionStorage blocked — silently skip
+      }
+    }
+
+    const sid = createSessionId();
+    sessionIdRef.current = sid;
+
+    if (!trackedView.current) {
+      trackedView.current = true;
+      sendBeacon("/api/pageview", {
+        creator: slug,
+        sessionId: sid,
+        isInstagram: igDetected,
+        isBot: false,
+      });
+    }
+
+    if (!isBot && !previewPremiumLinks) {
+      setInteracted(true);
+      void fetchPremiumLinks();
+    }
+  }, [isBot, fetchPremiumLinks, slug, previewPremiumLinks]);
+
+  // ── Click Handlers ──────────────────────────────────────────────────────────
+
+  function isSensitiveLink(link: SocialLink | PremiumLink): boolean {
+    return Boolean(link.sensitive ?? creator.sensitive_default ?? false);
+  }
+
+  function getNavigationUrl(link: SocialLink | PremiumLink): string {
+    if (isSensitiveLink(link) && link.id) return `/r/${link.id}`;
+    if (link.redirect_url) return `/api/redirect/${link.id}`;
+    return link.url;
+  }
+
+  function navigate(link: SocialLink | PremiumLink) {
+    if (link.deeplink_enabled && !isSensitiveLink(link)) {
+      handleDeepLink(link.url, link.recovery_url || link.url);
+      return;
+    }
+    window.location.href = getNavigationUrl(link);
+  }
+
+  const handleSocialClick = (link: SocialLink) => {
+    sendBeacon("/api/track", {
+      creator: slug,
+      linkLabel: link.label,
+      linkUrl: link.url,
+      linkType: "social",
+      sessionId: sessionIdRef.current,
+      isInstagram,
+    });
+    setTimeout(() => navigate(link), 50);
+  };
+
+  const handlePremiumClick = (link: PremiumLink) => {
+    sendBeacon("/api/track", {
+      creator: slug,
+      linkLabel: link.label,
+      linkUrl: link.url,
+      linkType: "premium",
+      sessionId: sessionIdRef.current,
+      isInstagram,
+    });
+    if (isInstagram && !isSensitiveLink(link)) {
+      const targetUrl = link.redirect_url ? `/api/redirect/${link.id}` : link.url;
+      const bare = targetUrl.replace(/^https?:\/\//, "");
+      const host = window.location.hostname;
+      const ua = navigator.userAgent;
+      const isIos = /iPhone|iPad|iPod/.test(ua);
+      const isAndroid = /Android/.test(ua);
+      let deeplink = "";
+      if (isIos) {
+        deeplink = `x-safari-https://${host}${bare.startsWith(host) ? bare.slice(host.length) : "/" + bare}`;
+      } else if (isAndroid) {
+        const path = bare.startsWith(host) ? bare.slice(host.length) : "/" + bare;
+        deeplink = `intent://${host}${path}#Intent;scheme=https;end`;
+      }
+      if (deeplink) {
+        const blurred = { v: false };
+        const onBlur = () => { blurred.v = true; };
+        window.addEventListener("blur", onBlur, { once: true });
+        window.location.href = deeplink;
+        setTimeout(() => {
+          window.removeEventListener("blur", onBlur);
+          if (!blurred.v) navigate(link);
+        }, 500);
+        return;
+      }
+    }
+    setTimeout(() => navigate(link), 50);
+  };
+
+  const { theme } = creator;
+  const bgStyle = buildBackground(creator);
+
+  // Aurora orb colors derived from creator theme
+  const orbA = theme.accentColor;
+  const orbB = creator.bg_color_2 ?? "#0a0414";
+  const orbC = creator.bg_color_3 ?? "#5b8bff";
+
+  // Avatar border gradient fallback colors
+  const avColor1 = creator.avatar_border_color_1 ?? theme.accentColor;
+  const avColor2 = creator.avatar_border_color_2 ?? "#ff6bd6";
+  const avColor3 = creator.avatar_border_color_3 ?? "#5b8bff";
+
+  const templateProps: TemplateProps = {
+    creator,
+    slug,
+    theme,
+    fontFamily,
+    isInstagram,
+    interacted,
+    premiumLinks,
+    premiumVisible,
+    turnstileChallenge,
+    handleSocialClick,
+    handlePremiumClick,
+    fetchPremiumLinks,
+    orbA,
+    orbB,
+    orbC,
+    avColor1,
+    avColor2,
+    avColor3,
+    bgStyle,
+  };
+
+  return creator.template === "spotlight"
+    ? <SpotlightTemplate {...templateProps} />
+    : <GlassTemplate {...templateProps} />;
 }
