@@ -135,6 +135,17 @@ decoy path, interaction-gated premium-link fetch).
 - **Serverless PG pool cap** — Postgres pool `max=3` with the Supabase transaction pooler
   (`:6543`) to survive Vercel serverless fan-out without exhausting connections.
 
+### Domain health & cursor fixes (latest)
+- **Server-side domain health probe** — the admin domains list used to probe each row with a
+  browser-side `fetch()`, which threw on cross-origin policy errors and falsely flagged
+  **every** domain as "SSL broken." Health is now probed server-side in
+  `/api/admin/domains/status` (Node runtime), so only real 525/TLS/network failures flag
+  broken. Single-domain Refresh + post-Heal re-checks route through the server too.
+- **Pointer cursor everywhere** — a global `globals.css` rule applies `cursor: pointer` to all
+  interactive elements (`button`, `a[href]`, `[role=button]`, tabs/menu items, `select`,
+  `summary`, `label[for]`, `.cursor-pointer`) and `cursor: not-allowed` to disabled/`aria-disabled`
+  elements. Covers both the admin dashboard and the public CreatorPage.
+
 ## Tech Stack
 
 - **Framework**: Next.js 15 (App Router)
@@ -422,26 +433,50 @@ Access at `/admin` with your `CHARMLINK_ADMIN_KEY`.
 - Dark themed with CSS bar charts
 
 ### Domains (`/admin/domains`)
-- List all custom domains registered with Vercel
-- Add new domains (calls Vercel API)
-- Remove domains
-- View verification status and DNS instructions
+- List all custom domains registered with Vercel (fully paginated)
+- Add new domains — runs the full provisioning ceremony (Vercel + DB + Cloudflare, see below), not just a Vercel API call
+- Remove domains (detaches from Vercel + clears DB rows)
+- **Health badge** — each row shows live SSL/HTTP health, probed **server-side** via `/api/admin/domains/status` (Node runtime, no browser-CORS false positives). Healthy = any sub-500 response; only real 525/TLS/network failures flag **"SSL broken"**
+- **🩹 Heal button** — appears on broken rows; re-runs the `cf-heal` flow (unproxy → wait for Vercel cert → re-proxy) then re-probes server-side
+- **Copy / Open buttons** — copy a domain to clipboard or open the live page in a new tab
+- View verification status (Verified / Pending) and DNS instructions
 
 ## Custom Domains
 
+### Prerequisite: the Cloudflare zone must exist first
+
+CharmLink does **not** register domains or create Cloudflare zones for you. Before adding a domain in the admin:
+1. **Register the domain** at any registrar (or Cloudflare Registrar).
+2. **Add it as a zone in your Cloudflare account** and point its **nameservers to Cloudflare**.
+
+If you add a domain in the admin before its CF zone exists, provisioning returns `zoneFound: false` (*"add the zone in Cloudflare first"*) and the domain half-registers in Vercel + DB only. To recover: remove it, create the CF zone, then re-add. (Everything after "the zone exists" is automated.)
+
 ### How it works
 
-1. **Add domain in admin** → Calls Vercel Domains API to register the domain on the project
-2. **Point DNS** → Set A record to `76.76.21.21` (or CNAME to `cname.vercel-dns.com` for subdomains)
-3. **Middleware routes** → When a request comes in, middleware checks the hostname against the database, finds the mapped creator, and rewrites the request to their page
-4. **SSL auto-provisioned** → Vercel handles certificate generation automatically
+When you click **Add Domain** (`POST /api/admin/domains`), the route runs three steps + auto-heal:
+1. **Vercel** — registers the domain on the CharmLink project (`addDomain`).
+2. **Database** — inserts into `charmlink_creator_domains` (first domain for a creator auto-becomes primary; a DB trigger syncs the primary back to `charmlink_creators.custom_domain` — never write that column directly).
+3. **Cloudflare `provisionZone`** — the full ceremony: find zone → gray-cloud (DNS-only) → wait for Vercel cert → flip to orange-cloud (proxied) → apply WAF + Turnstile hostname.
+4. **Auto-verify + heal** — HEAD-probes the live domain on a backoff schedule (~105s); if it's stuck in a **525** state, it re-runs `provisionZone` once automatically. This is what eliminates the old stuck-525 regression.
+
+Then at request time: **Middleware routes** — checks the hostname against the database, finds the mapped creator, and rewrites to their page. **SSL** is auto-provisioned by Vercel and served through the Cloudflare proxy.
 
 ### DNS Records
 
-| Type | Scenario | Name | Value |
-|------|----------|------|-------|
-| A | Root domain (`example.com`) | `@` | `76.76.21.21` |
-| CNAME | Subdomain (`www.example.com`) | `www` | `cname.vercel-dns.com` |
+**You normally don't set these by hand** — `provisionZone` creates and manages the proxied
+CNAME automatically once the CF zone exists. Production runs everything **Cloudflare
+orange-cloud (proxied)** in front of the Vercel origin, not a direct-to-Vercel A record.
+
+| Type | Scenario | Name | Value | Proxy |
+|------|----------|------|-------|-------|
+| CNAME | Root or subdomain (CF flattens apex) | `@` / `www` | `cname.vercel-dns.com` | 🟠 proxied (after cert) |
+
+Provisioning starts the CNAME **gray-cloud** (DNS-only) so Vercel's ACME HTTP-01 challenge
+can reach the origin, then **flips it to orange-cloud** once the cert verifies. Full detail:
+**[docs/PHASE-3-CLOUDFLARE.md](./docs/PHASE-3-CLOUDFLARE.md)**.
+
+> Legacy/non-Cloudflare fallback (not used in prod): A `@` → `76.76.21.21`, or CNAME
+> `www` → `cname.vercel-dns.com` pointed directly at Vercel with no proxy.
 
 ### Scaling
 
