@@ -82,7 +82,7 @@ const CSP =
   "img-src 'self' data: https:; " +
   "style-src 'self' 'unsafe-inline'; " +
   "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://va.vercel-scripts.com; " +
-  "connect-src 'self' https://*.supabase.co https://va.vercel-scripts.com https://ipapi.co https://blob.vercel-storage.com https://*.public.blob.vercel-storage.com; " +
+  "connect-src 'self' https://*.supabase.co https://va.vercel-scripts.com https://ipapi.co https://vercel.com https://blob.vercel-storage.com https://*.public.blob.vercel-storage.com; " +
   "font-src 'self' data:; " +
   "frame-ancestors 'none'";
 
