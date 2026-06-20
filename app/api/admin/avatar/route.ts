@@ -18,8 +18,10 @@ export const runtime = "nodejs";
 // display it. This keeps the upload path simple and avoids reintroducing the
 // body-limit problem. (sharp is intentionally no longer used here.)
 
-// ~10 MB cap, enforced by Blob during the client upload via the signed token.
-const MAX_SIZE = 10 * 1024 * 1024;
+// 100 MB cap, enforced by Blob during the client upload via the signed token.
+// Client-direct upload has no serverless body limit (Blob supports up to 5 TB);
+// avatars get downscaled on render anyway, so a large source file is fine.
+const MAX_SIZE = 100 * 1024 * 1024;
 
 const ALLOWED_TYPES = [
   "image/jpeg",

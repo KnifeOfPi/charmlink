@@ -614,7 +614,7 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
     try {
       // Client-direct upload: the browser streams bytes straight to Vercel
       // Blob, so we are NOT bound by Vercel's ~4.5 MB function body cap.
-      // Files up to ~10 MB work. The admin key is forwarded to our token
+      // Files up to 100 MB work. The admin key is forwarded to our token
       // endpoint via a custom header (the SDK owns the request body).
       const creatorSlug = (form.slug ?? "unknown")
         .toLowerCase()
@@ -908,7 +908,7 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
                                 {dragOver ? "Drop image here" : "Click or drag image to upload"}
                               </p>
                               <p className="text-xs text-muted-foreground/60 mt-1">
-                                JPEG, PNG, WebP, GIF, HEIC · Max 10 MB
+                                JPEG, PNG, WebP, GIF, HEIC · Max 100 MB
                               </p>
                             </>
                           )}
