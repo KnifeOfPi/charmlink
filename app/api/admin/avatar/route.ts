@@ -46,12 +46,16 @@ function isAuthorized(request: NextRequest): boolean {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  // Enforce auth BEFORE generating any upload token. An unauthenticated caller
-  // must never be able to mint a Blob write token.
-  if (!isAuthorized(request)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+  // NOTE: do NOT gate the whole route on our admin key. handleUpload handles
+  // TWO request types on this same endpoint:
+  //   1. blob.generate-client-token  — from our admin browser (carries x-admin-key)
+  //   2. blob.upload-completed       — a server-to-server callback FROM Vercel Blob
+  //      after the file lands. That callback canNOT carry our admin key, so a
+  //      blanket auth gate here would 401 it, the SDK would never get its
+  //      completion confirmation, and the client would hang on "uploading…"
+  //      forever (the file is already stored). We therefore enforce auth only
+  //      inside onBeforeGenerateToken (the token-mint event), and let the
+  //      Blob-signed completion callback through.
   const body = (await request.json()) as HandleUploadBody;
 
   try {
@@ -59,8 +63,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       request,
       body,
       onBeforeGenerateToken: async () => {
-        // Re-check auth here as defense in depth; this callback only runs for
-        // the token-generation event, and we've already verified above.
+        // Auth is enforced HERE — the only place a write token is minted. An
+        // unauthenticated caller can never get a Blob write token.
         if (!isAuthorized(request)) {
           throw new Error("Unauthorized");
         }
@@ -71,10 +75,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           cacheControlMaxAge: 60 * 60 * 24 * 30, // 30 days
         };
       },
-      onUploadCompleted: async ({ blob }) => {
-        // No persistence needed here — the client sets form.avatar_url from the
-        // returned blob URL and saves it via the creator PUT endpoint.
-        console.log("[admin:avatar:upload] completed", blob.url);
+      onUploadCompleted: async () => {
+        // Intentionally a no-op: the client sets form.avatar_url from the
+        // returned blob URL and persists it via the creator PUT endpoint.
+        // (Must stay defined so the SDK completes its handshake cleanly.)
       },
     });
 
