@@ -75,11 +75,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           cacheControlMaxAge: 60 * 60 * 24 * 30, // 30 days
         };
       },
-      onUploadCompleted: async () => {
-        // Intentionally a no-op: the client sets form.avatar_url from the
-        // returned blob URL and persists it via the creator PUT endpoint.
-        // (Must stay defined so the SDK completes its handshake cleanly.)
-      },
+      // IMPORTANT: do NOT define onUploadCompleted here. When it is defined the
+      // @vercel/blob SDK makes the browser's upload() promise BLOCK until Vercel
+      // Blob delivers a server-to-server completion callback to an auto-derived
+      // callbackUrl and gets a 200 back. On a Cloudflare-proxied custom domain
+      // (e.g. kaiaklicks.com) that callback gets bot-challenged/blocked, so the
+      // callback never succeeds and the UI hangs forever on "Uploading…". We do
+      // not need a server callback at all — the client reads the final URL
+      // straight from the upload() return value and persists it via the creator
+      // PUT endpoint. Omitting it makes upload() resolve immediately after the
+      // PUT, killing the hang.
     });
 
     return NextResponse.json(jsonResponse);
