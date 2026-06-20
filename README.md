@@ -107,6 +107,34 @@ When a visitor opens the link from Instagram (which uses an in-app WebView), a b
 - 8 new columns on `charmlink_links`: `show_text_glow`, `text_glow_color`, `text_glow_intensity`, `hover_animation`, `border_color`, `show_border`, `title_color`, `title_font_size`
 - Run `npx tsx scripts/migrate-v3.ts` to apply to existing databases
 
+## v4 Features — V2 Glass Reskin (live)
+
+The public `CreatorPage` is reskinned to a **dark glassmorphism** design (mockup ref:
+`docs/mockups/`). This is a pure visual port — **all functional behavior is preserved**
+(age gate, countdown, location pill, per-link v3 overrides, theme-driven styling, bot
+decoy path, interaction-gated premium-link fetch).
+
+- **Aurora background** — animated gradient ring derived from the creator's accent/bg
+  colors (`auroraSpinRing` / `auroraSpinRingRev` keyframes).
+- **Glass link cards** — frosted `backdrop-blur` cards with subtle borders/glow, driven
+  by a shared `GLASS` design-token set.
+- **Glow avatar** — luminous avatar treatment layered over the aurora.
+- **Glass sensitive modal** — "Click to reveal" sensitive overlay restyled as a glass modal.
+- **Hydration fix** — `StarParticles` no longer calls `Math.random()` at render (was an
+  SSR/client hydration mismatch logging a console error every load); now client-only mounted.
+
+### Admin quality-of-life
+- **Copy / Open buttons** — one-click copy + open for creator slug URL and custom domain
+  in the creator list (`app/admin/CopyButton.tsx`).
+- **Full domain pagination** — `lib/vercel-domains.ts` `listDomains` now paginates so the
+  admin domains view returns **all** domains, not just the first page.
+- **Mobile fix** — `width=device-width` viewport meta added (fixes desktop-width fallback /
+  right-edge overflow on mobile).
+
+### Infra
+- **Serverless PG pool cap** — Postgres pool `max=3` with the Supabase transaction pooler
+  (`:6543`) to survive Vercel serverless fan-out without exhausting connections.
+
 ## Tech Stack
 
 - **Framework**: Next.js 15 (App Router)
