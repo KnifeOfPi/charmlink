@@ -44,38 +44,20 @@ export default function DomainsPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  // Probe domain health after load so we can show the Heal button on broken rows.
-  // Uses the public site directly (HEAD) — no admin auth needed, no extra route.
+  // Probe a single domain's health via the SERVER-side status route (Node runtime,
+  // no browser CORS false positives). Used to re-confirm after a heal.
   async function probeDomainHealth(name: string): Promise<{ healthy: boolean; status: number | null }> {
     try {
-      const res = await fetch(`https://${name}/`, {
-        method: "HEAD",
-        mode: "no-cors",
+      const res = await fetch(`/api/admin/domains/status?domain=${encodeURIComponent(name)}`, {
+        headers: authHeaders(),
         cache: "no-store",
-        redirect: "manual",
-        signal: AbortSignal.timeout(12_000),
       });
-      // no-cors gives us an opaque response — status is always 0. Falling through
-      // to the catch below means the request errored (network/TLS/525). Reaching
-      // here means the fetch resolved, which means TLS handshake + HTTP completed.
-      return { healthy: true, status: res.status || 200 };
+      if (!res.ok) return { healthy: false, status: null };
+      const data = await res.json();
+      return { healthy: data.health === "healthy", status: data.healthStatus ?? null };
     } catch {
       return { healthy: false, status: null };
     }
-  }
-
-  async function probeAllDomains(items: VercelDomain[]) {
-    const results = await Promise.all(
-      items.map(async (d) => {
-        const probe = await probeDomainHealth(d.name);
-        return {
-          ...d,
-          health: probe.healthy ? ("healthy" as const) : ("broken" as const),
-          healthStatus: probe.status,
-        };
-      })
-    );
-    setDomains(results);
   }
 
   useEffect(() => {
@@ -90,14 +72,15 @@ export default function DomainsPage() {
       const res = await fetch("/api/admin/domains/status", { headers: authHeaders() });
       if (res.ok) {
         const data = await res.json();
+        // The status route now probes health server-side (no browser CORS false
+        // positives), so trust the health/healthStatus it returns directly.
         const items: VercelDomain[] = Array.isArray(data)
-          ? data.map((d: VercelDomain) => ({ ...d, health: "probing" as const }))
+          ? data.map((d: VercelDomain) => ({
+              ...d,
+              health: d.health ?? ("unknown" as const),
+            }))
           : [];
         setDomains(items);
-        // Kick off health probes in the background — don't block the UI.
-        if (items.length > 0) {
-          probeAllDomains(items);
-        }
       }
     } finally {
       setLoading(false);
