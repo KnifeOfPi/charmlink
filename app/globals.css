@@ -13,6 +13,30 @@ body {
   padding: 0;
 }
 
+/* Pointer cursor on every interactive element (buttons, links, role=button,
+   selects, summary, and any onClick-bearing element marked clickable). Native
+   <button> defaults to the arrow cursor in most browsers; this normalizes the
+   whole app — admin + public CreatorPage — so clickable === pointer. */
+button:not(:disabled),
+a[href],
+[role="button"],
+[role="link"],
+[role="tab"],
+[role="menuitem"],
+[role="option"],
+summary,
+label[for],
+select:not(:disabled),
+.cursor-pointer {
+  cursor: pointer;
+}
+
+button:disabled,
+[aria-disabled="true"],
+[data-disabled] {
+  cursor: not-allowed;
+}
+
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans: var(--font-sans);
