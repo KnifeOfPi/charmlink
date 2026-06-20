@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback, use } from "react";
 import { useRouter } from "next/navigation";
+import { upload } from "@vercel/blob/client";
 import { useAdminAuth } from "../../useAdminAuth";
 import { AdminNav } from "../../AdminNav";
 import { Button } from "@/components/ui/button";
@@ -588,7 +589,7 @@ function AddLinkForm({ creatorId, onAdded, authHeaders }: AddLinkFormProps) {
 
 export default function EditCreatorPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const { ready, authHeaders } = useAdminAuth();
+  const { ready, token, authHeaders } = useAdminAuth();
   const router = useRouter();
 
   const [creator, setCreator] = useState<DBCreator | null>(null);
@@ -611,47 +612,26 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
     setAvatarUploading(true);
     setAvatarError("");
     try {
-      // Vercel serverless functions hard-cap the request body at ~4.5 MB, so
-      // anything larger 413s before our route runs. Guard client-side with a
-      // clear message + suggest the paste-URL fallback instead of a raw 413.
-      const VERCEL_BODY_LIMIT = 4.4 * 1024 * 1024;
-      if (file.size > VERCEL_BODY_LIMIT) {
-        const mb = (file.size / (1024 * 1024)).toFixed(1);
-        setAvatarError(
-          `Image is ${mb} MB — max upload is ~4 MB. Compress it, or paste an image URL below instead.`,
-        );
-        setAvatarUploading(false);
-        return;
-      }
+      // Client-direct upload: the browser streams bytes straight to Vercel
+      // Blob, so we are NOT bound by Vercel's ~4.5 MB function body cap.
+      // Files up to ~10 MB work. The admin key is forwarded to our token
+      // endpoint via a custom header (the SDK owns the request body).
+      const creatorSlug = (form.slug ?? "unknown")
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 64) || "unknown";
+      const ext = (file.name.split(".").pop() || "bin").toLowerCase();
+      const pathname = `avatars/${creatorSlug}/avatar.${ext}`;
 
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("creatorSlug", form.slug ?? "unknown");
-
-      const res = await fetch("/api/admin/avatar", {
-        method: "POST",
-        headers: authHeaders(),
-        body: formData,
+      const blob = await upload(pathname, file, {
+        access: "public",
+        handleUploadUrl: "/api/admin/avatar",
+        contentType: file.type || undefined,
+        headers: token ? { "x-admin-key": token } : {},
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        setForm((p) => ({ ...p, avatar_url: data.url }));
-      } else {
-        let message = `Upload failed (HTTP ${res.status})`;
-        try {
-          const err = (await res.json()) as { error?: string; details?: string };
-          if (err?.error) {
-            message = err.error;
-            if (err.details && process.env.NODE_ENV !== "production") {
-              message += ` — ${err.details}`;
-            }
-          }
-        } catch {
-          // body was not JSON; keep the HTTP status message
-        }
-        setAvatarError(message);
-      }
+      setForm((p) => ({ ...p, avatar_url: blob.url }));
     } catch (err) {
       setAvatarError(
         err instanceof Error ? `Upload failed: ${err.message}` : "Upload failed",
@@ -660,7 +640,7 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
       setAvatarUploading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.slug]);
+  }, [form.slug, token]);
 
   useEffect(() => {
     if (!ready) return;
@@ -928,7 +908,7 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
                                 {dragOver ? "Drop image here" : "Click or drag image to upload"}
                               </p>
                               <p className="text-xs text-muted-foreground/60 mt-1">
-                                JPEG, PNG, WebP, GIF, HEIC · Max ~4 MB
+                                JPEG, PNG, WebP, GIF, HEIC · Max 10 MB
                               </p>
                             </>
                           )}
