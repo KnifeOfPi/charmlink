@@ -611,6 +611,19 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
     setAvatarUploading(true);
     setAvatarError("");
     try {
+      // Vercel serverless functions hard-cap the request body at ~4.5 MB, so
+      // anything larger 413s before our route runs. Guard client-side with a
+      // clear message + suggest the paste-URL fallback instead of a raw 413.
+      const VERCEL_BODY_LIMIT = 4.4 * 1024 * 1024;
+      if (file.size > VERCEL_BODY_LIMIT) {
+        const mb = (file.size / (1024 * 1024)).toFixed(1);
+        setAvatarError(
+          `Image is ${mb} MB — max upload is ~4 MB. Compress it, or paste an image URL below instead.`,
+        );
+        setAvatarUploading(false);
+        return;
+      }
+
       const formData = new FormData();
       formData.append("file", file);
       formData.append("creatorSlug", form.slug ?? "unknown");
@@ -915,7 +928,7 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
                                 {dragOver ? "Drop image here" : "Click or drag image to upload"}
                               </p>
                               <p className="text-xs text-muted-foreground/60 mt-1">
-                                JPEG, PNG, WebP, GIF, HEIC · Max 10 MB
+                                JPEG, PNG, WebP, GIF, HEIC · Max ~4 MB
                               </p>
                             </>
                           )}
