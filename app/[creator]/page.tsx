@@ -148,6 +148,15 @@ export default async function CreatorPageServer({ params }: PageProps) {
       is_verified: dbCreator.is_verified,
       font: dbCreator.font,
       location_pill_color: dbCreator.location_pill_color,
+      // spotlight template
+      template: dbCreator.template as "glass" | "spotlight",
+      hero_image_url: dbCreator.hero_image_url,
+      hero_enabled: dbCreator.hero_enabled,
+      username: dbCreator.username,
+      show_follower_count: dbCreator.show_follower_count,
+      follower_count_label: dbCreator.follower_count_label,
+      featured_card: dbCreator.featured_card,
+      gallery_thumbnails: dbCreator.gallery_thumbnails,
     };
   } catch (err) {
     console.error("[creator:page] DB error", err);

@@ -54,6 +54,7 @@ Branch `main` clean, no pending PRs.
 | 7 | **2026-05-29** Gray→cert→orange race fix: `provisionZone` now triggers `POST /v4/certs?teamId=` with 6× backoff + HEAD via Vercel IP before flipping orange; idempotency check skips ceremony for healthy domains. `cf-heal` CLI added. Admin route uses `charmlink_creator_domains` join table. `cf-backfill` iterates join table + adds verify step. | PR `fix/domains-525-ssl-race-heal-teamid` |
 | 7.6 | **2026-06-01** `cf-heal` auto-resolves `VERCEL_TEAM_ID` in 3 tiers (env → file → `/v2/teams`). Missing team id was the silent root cause of `/v4/certs` 403s that made `cf-heal` "fail" on every domain. | `5cfb2e9` (PR #11) |
 | 7.7 | **2026-06-02** Self-serve **Heal button** in `/admin/domains` + **auto-heal on domain add**. Button POSTs `/api/admin/domains/heal` → runs the same idempotent `provisionZone()` flow as the `cf-heal` CLI (pre-probe → gray → Vercel cert → re-orange). Returns `{ok, noop, preStatus, postStatus, steps}`. Eliminates the manual unproxy/remove/re-add loop and lets creators/VAs heal their own domains with no engineer. | `d596f62` (PR #12) |
+| 8 | **2026-06-06** **Spotlight template** — second, per-creator selectable landing-page design (link.me-style warm dark: full-bleed hero, gradient social pills, follower count, "EXCLUSIVE CONTENT" featured card, scrollable thumbnail gallery), alongside the existing **Glass** template. Fully data-driven per creator; tint/glow derived from `theme_accent`. New admin **Spotlight** tab. Shares age-gate, interaction-gated premium fetch, decoy SSR branch, and per-link overrides with Glass. Migration `20260606000000_add_spotlight_template.sql` (8 non-breaking columns). Also fixed a site-wide missing `viewport` meta (mobile desktop-width fallback). Manager guide: `docs/SOP-spotlight-landing-page.md`. Live demo: `/demo-spotlight`. | PR #13 (`feat/spotlight-template`) |
 
 See `memory/archive-2026-05-10.md` for Phase 1–3 ship-day notes and
 `memory/2026-05-11.md` for everything Phase 4 + 5 day-of.
@@ -66,7 +67,7 @@ See `memory/archive-2026-05-10.md` for Phase 1–3 ship-day notes and
 charmlink/
 ├─ app/
 │  ├─ [creator]/                  ← public creator page (CreatorPage.tsx + AgeGate*, page.tsx)
-│  ├─ admin/                      ← admin dashboard (5-tab shadcn UI)
+│  ├─ admin/                      ← admin dashboard (6-tab shadcn UI: +Spotlight)
 │  ├─ api/
 │  │  ├─ links/[creator]/route.ts ← HMAC-locked premium links API
 │  │  ├─ resolve-creator-meta/    ← (Phase 5) creator meta lookup for decoy
@@ -190,7 +191,10 @@ Shared instance with CharmaSutra. Tables:
 
 - `charmlink_creators` — slug, name, avatar_url, custom_domain, theme JSON,
   effects JSON, `show_location`, `location_type`, `sensitive_default`,
-  `cloak_enabled` (Phase 5, default true), `active`, `verified`, `font`, etc.
+  `cloak_enabled` (Phase 5, default true), `active`, `verified`, `font`,
+  `template` (`glass`|`spotlight`, default glass) + Spotlight fields
+  `hero_image_url`, `hero_enabled`, `username`, `show_follower_count`,
+  `follower_count_label`, `featured_card` (JSONB), `gallery_thumbnails` (JSONB) — Phase 8, etc.
 - `charmlink_links` — creator_id, label, subtitle, url, image_url,
   `deeplink_enabled`, `recovery_url`, `redirect_url`, `sensitive`, `badge`,
   `notes`, `tags`, visual override fields, ordering
