@@ -1407,31 +1407,30 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
       sessionId: sessionIdRef.current,
       isInstagram,
     });
-    if (isInstagram && !isSensitiveLink(link)) {
+    // Android only: `intent://` reliably pops the click out of the Instagram
+    // WebView into Chrome. There is deliberately NO iOS branch here — this
+    // used to fire `x-safari-https://`, which Apple removed in iOS 14.5 and
+    // never replaced (see docs/CHARMLINK-STATE §7.1). On iOS it did nothing
+    // except stall the click for 500ms waiting for a blur that never came,
+    // and could surface an "address is invalid" error first. iOS escape is
+    // already handled on mount via `instagram://extbrowser/`; on click, iOS
+    // navigates normally.
+    if (isInstagram && !isSensitiveLink(link) && /Android/.test(navigator.userAgent)) {
       const targetUrl = link.redirect_url ? `/api/redirect/${link.id}` : link.url;
       const bare = targetUrl.replace(/^https?:\/\//, "");
       const host = window.location.hostname;
-      const ua = navigator.userAgent;
-      const isIos = /iPhone|iPad|iPod/.test(ua);
-      const isAndroid = /Android/.test(ua);
-      let deeplink = "";
-      if (isIos) {
-        deeplink = `x-safari-https://${host}${bare.startsWith(host) ? bare.slice(host.length) : "/" + bare}`;
-      } else if (isAndroid) {
-        const path = bare.startsWith(host) ? bare.slice(host.length) : "/" + bare;
-        deeplink = `intent://${host}${path}#Intent;scheme=https;end`;
-      }
-      if (deeplink) {
-        const blurred = { v: false };
-        const onBlur = () => { blurred.v = true; };
-        window.addEventListener("blur", onBlur, { once: true });
-        window.location.href = deeplink;
-        setTimeout(() => {
-          window.removeEventListener("blur", onBlur);
-          if (!blurred.v) navigate(link);
-        }, 500);
-        return;
-      }
+      const path = bare.startsWith(host) ? bare.slice(host.length) : "/" + bare;
+      const deeplink = `intent://${host}${path}#Intent;scheme=https;end`;
+
+      const blurred = { v: false };
+      const onBlur = () => { blurred.v = true; };
+      window.addEventListener("blur", onBlur, { once: true });
+      window.location.href = deeplink;
+      setTimeout(() => {
+        window.removeEventListener("blur", onBlur);
+        if (!blurred.v) navigate(link);
+      }, 500);
+      return;
     }
     setTimeout(() => navigate(link), 50);
   };

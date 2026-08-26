@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseDeviceType, generateId } from "../../../lib/analytics";
 import { recordEvent, getCreatorBySlug } from "../../../lib/db";
+import { resolveIsBot } from "../../../lib/event-bot-flag";
 
 export const runtime = "nodejs";
 
@@ -43,7 +44,8 @@ export async function POST(request: NextRequest) {
       referer: request.headers.get("referer") || "",
       country,
       device: parseDeviceType(ua),
-      is_bot: false,
+      // Resolved server-side — never taken from the client. See lib/event-bot-flag.ts.
+      is_bot: resolveIsBot(request),
       is_instagram: body.isInstagram || false,
     });
 

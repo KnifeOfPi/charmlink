@@ -10,36 +10,25 @@ export const runtime = "nodejs";
 
 const NOINDEX = { "X-Robots-Tag": "noindex" };
 
-// Identical-shape decoy response — same status, same structure, decoy URL
+// Rejection response for any request that fails the gates below.
+//
+// This used to return a single visible link labelled "Loading…" pointing at
+// `/api/honeypot?ref=d1`, on the theory that only a scraper would follow it.
+// Production data says otherwise: between 2026-05-10 and 2026-08-26 that link
+// was tapped 25,522 times — 12.6% of ALL recorded premium clicks — and the
+// honeypot behind it banned 8,712 distinct IPs for 24h each. Of the 33,517
+// honeypot hits, 86.6% carried mobile browser UAs and 0.12% carried bot UAs.
+// It was catching humans, not scrapers, and because a banned IP is then served
+// the decoy page by middleware, each false positive locked a real visitor (and
+// everyone sharing their carrier NAT address) out for a day.
+//
+// A rejected caller now gets an empty list: a scraper still learns nothing,
+// and a falsely-rejected human gets a page with no premium links rather than
+// a trap that bans them. Never put a followable honeypot URL in this payload.
+// The genuine trap is the off-screen aria-hidden link in CreatorPage, which a
+// real user cannot see or tab to.
 function decoyResponse() {
-  return NextResponse.json(
-    {
-      links: [
-        {
-          id: "d1",
-          label: "Loading…",
-          url: "/api/honeypot?ref=d1",
-          icon: "circle",
-          subtitle: null,
-          badge: null,
-          sensitive: false,
-          image_url: null,
-          deeplink_enabled: false,
-          recovery_url: null,
-          redirect_url: null,
-          show_text_glow: false,
-          text_glow_color: null,
-          text_glow_intensity: null,
-          hover_animation: null,
-          border_color: null,
-          show_border: false,
-          title_color: null,
-          title_font_size: null,
-        },
-      ],
-    },
-    { status: 200, headers: NOINDEX }
-  );
+  return NextResponse.json({ links: [] }, { status: 200, headers: NOINDEX });
 }
 
 export async function GET() {
@@ -107,7 +96,9 @@ export async function POST(
     return decoyResponse();
   }
   const token = body?.token ?? "";
-  if (!verifyLinkToken(token, slug, ip, ageConfirmed)) {
+  // `ip` is passed only to keep accepting tokens minted by the previous
+  // IP-bound scheme during the deploy window; it is not required to verify.
+  if (!verifyLinkToken(token, slug, ageConfirmed, ip)) {
     return decoyResponse();
   }
 

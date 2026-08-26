@@ -14,17 +14,19 @@ CharmLink solves this by serving **completely clean pages** to bots while showin
 
 1. **Server-side bot detection** — Middleware identifies known crawlers (`facebookexternalhit`, `Facebot`, `Twitterbot`, `Googlebot`, `bingbot`, `Bytespider`, and others) via User-Agent matching. Bots receive a clean page with only social media links — no premium/adult content links ever appear in server-rendered HTML.
 
-2. **Client-side-only premium links** — Premium links (OnlyFans, Fanvue, etc.) are never in the page source. They're fetched via a separate API call (`GET /api/links/[creator]`) that also filters bots, then injected into the DOM via React state.
+2. **Client-side-only premium links** — Premium links (OnlyFans, Fanvue, etc.) are never in the page source. They're fetched via a separate API call (`POST /api/links/[creator]`) that also filters bots, then injected into the DOM via React state.
 
-3. **Interaction-gated loading** — Premium links only load after a real human interaction (scroll, touch, click, or mouse movement). Headless browsers that execute JavaScript but don't simulate user input will never trigger the fetch.
+3. **HMAC-locked links API** — Premium links load automatically on mount via `POST /api/links/[creator]`, but the request must carry a server-minted HMAC token (bound to slug + IP + a 5-minute time bucket) plus a matching `Origin`/`Sec-Fetch-Site`. Any check that fails gets an identical-shape decoy payload instead of an error, so scraping the endpoint directly never reveals real links.
 
-4. **18+ age gate** — A full-screen age verification overlay blocks all content until the user confirms they're 18+. This is client-side only, so bots see nothing. Persists per browser session via `sessionStorage`.
+4. **Per-link age gate** — Sensitive links (not the whole page) route through a `/r/[linkId]` interstitial. The real destination URL is never rendered until the visitor confirms 18+, which sets a server-side `cl_age` cookie; non-sensitive links redirect immediately with no friction.
 
 5. **Honeypot link** — An invisible link in the DOM (`/api/honeypot`) that only bots would discover and follow. Visits are logged with User-Agent, IP, and referer for monitoring.
 
-6. **Rate limiting** — The premium links API limits requests to 30/minute per IP. Excessive requests receive empty responses silently (no error messages that would tip off a bot).
+6. **Rate limiting** — The premium links API limits requests to 30/minute per IP. Over-limit and rejected requests receive the same identical-shape decoy payload as a failed auth check — no error messages that would tip off a bot.
 
-7. **Clean OG meta tags** — `<meta>` tags contain only the creator's name and clean tagline — no NSFW keywords, no adult platform references.
+7. **Clean OG meta tags** — `<meta>` tags contain only the creator's name and clean tagline — no NSFW keywords, no adult platform references. Metadata stays generic until the visitor's `cl_age` cookie is set, and always stays generic for link-preview scrapers.
+
+8. **Fingerprint-free decoy pages** — Confirmed scrapers and link-preview bots (`facebookexternalhit`, Telegram, Discord, Slack, WhatsApp, etc.) hitting a creator's root path get an inline, per-creator-themed "wholesome blog" HTML response from middleware — zero Next.js/Vercel/CharmLink fingerprints in the markup or headers. Toggleable per creator via a `cloak_enabled` flag; fails open to normal rendering if the lookup fails, so a DB hiccup never breaks a real visitor.
 
 ### Custom Domain Routing
 
@@ -111,8 +113,8 @@ When a visitor opens the link from Instagram (which uses an in-app WebView), a b
 
 The public `CreatorPage` is reskinned to a **dark glassmorphism** design (mockup ref:
 `docs/mockups/`). This is a pure visual port — **all functional behavior is preserved**
-(age gate, countdown, location pill, per-link v3 overrides, theme-driven styling, bot
-decoy path, interaction-gated premium-link fetch).
+(per-link age gate, countdown, location pill, per-link v3 overrides, theme-driven
+styling, bot decoy path, on-mount premium-link fetch).
 
 - **Aurora background** — animated gradient ring derived from the creator's accent/bg
   colors (`auroraSpinRing` / `auroraSpinRingRev` keyframes).
@@ -148,7 +150,7 @@ decoy path, interaction-gated premium-link fetch).
 
 ## Tech Stack
 
-- **Framework**: Next.js 15 (App Router)
+- **Framework**: Next.js 16 (App Router)
 - **Language**: TypeScript
 - **Styling**: Tailwind CSS v4
 - **UI Components**: shadcn/ui (base-ui/react)
@@ -527,10 +529,14 @@ Tested architecture supports 100+ creators with custom domains from a single dep
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/creators` | List all active creator slugs |
-| `GET` | `/api/links/[creator]` | Get premium links for a creator (bot-filtered, rate-limited) |
+| `POST` | `/api/links/[creator]` | Get premium links for a creator — requires an HMAC token (minted server-side and embedded in the page), bot-filtered, rate-limited, may respond with `turnstile_required` |
+| `GET` | `/r/[linkId]` | Per-link interstitial — age-gates sensitive links, then redirects |
+| `GET` | `/api/redirect/[linkId]` | Records the click and issues the real 302 (never rendered in HTML) |
+| `POST` | `/api/age-confirm` | Sets the `cl_age` age-verification cookie |
 | `POST` | `/api/track` | Record a click event |
 | `POST` | `/api/pageview` | Record a page view event |
-| `GET` | `/api/resolve-domain?domain=x` | Internal: resolve custom domain to creator slug |
+| `GET` | `/api/resolve-domain?domain=x` | Internal: resolve custom domain to creator slug (used by middleware) |
+| `GET` | `/api/resolve-creator-meta?slug=x\|domain=x` | Internal: creator existence + `cloak_enabled` lookup (used by middleware's decoy bypass) |
 | `GET` | `/api/honeypot` | Honeypot for bot detection (logs visits) |
 
 ### Analytics Routes (requires `Authorization: Bearer <CHARMLINK_ADMIN_KEY>`)
@@ -553,16 +559,19 @@ Tested architecture supports 100+ creators with custom domains from a single dep
 | `POST` | `/api/admin/creators/[id]/links` | Create a new link |
 | `PUT` | `/api/admin/creators/[id]/links` | Update a link (send `id` in body) |
 | `DELETE` | `/api/admin/creators/[id]/links` | Delete a link (send `id` in body) |
-| `POST` | `/api/admin/domains` | Add domain to Vercel (`{ "domain": "example.com" }`) |
+| `POST` | `/api/admin/domains` | Add domain — runs the full Vercel + DB + Cloudflare provisioning ceremony + auto-heal (`{ "domain": "example.com" }`) |
 | `DELETE` | `/api/admin/domains` | Remove domain (`{ "domain": "example.com" }`) |
-| `GET` | `/api/admin/domains/status` | Get all domain verification statuses |
+| `GET` | `/api/admin/domains/status` | Get all domain verification + server-side health statuses |
+| `POST` | `/api/admin/domains/heal` | Re-run the idempotent gray→cert→orange heal cycle for one domain (`{ "domain": "example.com" }`) |
+| `POST` | `/api/admin/avatar` | Mint a scoped client-direct upload token for Vercel Blob (browser uploads straight to Blob, not through this route) |
 | `GET` | `/api/admin/recent-events` | Last 20 analytics events |
+| `GET` | `/api/admin/themes` | List built-in theme presets (no auth — static data only) |
 
 ## Security Considerations
 
 - **Admin key**: All admin routes require `CHARMLINK_ADMIN_KEY` via Bearer token. Set a strong, random key.
 - **No credentials in code**: All secrets are environment variables.
-- **Bot detection is defense-in-depth**: Multiple layers (UA matching, interaction gating, honeypot, rate limiting) make it progressively harder for bots to access premium links.
+- **Bot detection is defense-in-depth**: Multiple layers (UA matching, ASN checks, HMAC-locked links API, decoy cloaking, honeypot, rate limiting, Turnstile escalation) make it progressively harder for bots to access premium links.
 - **Rate limiting**: The links API limits to 30 requests/minute per IP to prevent scraping.
 - **No NSFW in HTML source**: Premium link URLs never appear in server-rendered HTML, page source, or OG meta tags.
 - **Honeypot monitoring**: Check Vercel function logs for `[honeypot]` entries to identify bot IPs.
@@ -572,7 +581,7 @@ Tested architecture supports 100+ creators with custom domains from a single dep
 - [x] ~~Cloudflare DNS API integration~~ ✅ Shipped in v2
 - [x] ~~Visual design system (gradients, effects, fonts)~~ ✅ Shipped in v3
 - [x] ~~shadcn/ui admin dashboard~~ ✅ Shipped in v3
-- [ ] Avatar image upload (currently URL-only)
+- [x] ~~Avatar image upload~~ ✅ Shipped — client-direct upload to Vercel Blob (`/api/admin/avatar`)
 - [ ] CSV bulk import for onboarding many creators at once
 - [ ] A/B testing for link labels and page themes
 - [ ] Webhook notifications for click milestones

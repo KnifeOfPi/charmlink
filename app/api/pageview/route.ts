@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseDeviceType, generateId } from "../../../lib/analytics";
 import { recordEvent, getCreatorBySlug } from "../../../lib/db";
+import { resolveIsBot } from "../../../lib/event-bot-flag";
 
 export const runtime = "nodejs";
 
@@ -8,7 +9,9 @@ interface PageViewPayload {
   creator: string;
   sessionId: string;
   isInstagram: boolean;
-  isBot: boolean;
+  // NOTE: the client also sends `isBot`, but it is deliberately ignored — it
+  // is hard-coded `false` there and a bot would never self-report anyway.
+  // The flag is resolved server-side; see lib/event-bot-flag.ts.
 }
 
 export async function POST(request: NextRequest) {
@@ -38,7 +41,7 @@ export async function POST(request: NextRequest) {
       referer: request.headers.get("referer") || "",
       country,
       device: parseDeviceType(ua),
-      is_bot: body.isBot || false,
+      is_bot: resolveIsBot(request),
       is_instagram: body.isInstagram || false,
     });
 

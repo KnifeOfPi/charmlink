@@ -432,6 +432,29 @@ export async function recordEvent(input: RecordEventInput): Promise<void> {
 
 // ── Analytics ─────────────────────────────────────────────────────────────────
 
+// ── Click de-duplication ──────────────────────────────────────────────────────
+//
+// A single user journey can write TWO click rows:
+//   1. the client beacon to /api/track, fired the instant the link is tapped;
+//   2. a server-side row from /api/redirect/[linkId], for the links that route
+//      through the redirect handler (sensitive links via /r/, and any link with
+//      a redirect_url set).
+//
+// Counting both inflated premium clicks — measured at 6,355 duplicated journeys
+// against production. The beacon fires for every journey regardless of link
+// type, so it is the complete and consistent series and is what the click
+// metric counts. The redirect rows are NOT deleted: the gap between the two is
+// the funnel signal (tapped vs. actually served a redirect to the destination),
+// which is how the age-gate completion rate was measured.
+//
+// /api/redirect has no access to the client's sessionStorage id, so it writes
+// this sentinel instead. Historical rows use the same value — do not change it
+// without backfilling, or old duplicates will silently re-enter the counts.
+export const REDIRECT_EVENT_SESSION_ID = "redirect";
+
+/** SQL predicate isolating the beacon-sourced click rows (one per journey). */
+const DEDUPED_CLICKS = `e.type = 'click' AND e.session_id <> '${REDIRECT_EVENT_SESSION_ID}'`;
+
 function periodCutoff(period: "today" | "7d" | "30d" | "all"): string | null {
   if (period === "all") return null;
   const now = new Date();
@@ -482,7 +505,7 @@ export async function getAnalytics(
       COUNT(*) FILTER (WHERE link_type = 'premium') AS premium,
       COUNT(*) FILTER (WHERE link_type = 'social') AS social
      FROM charmlink_events e
-     WHERE e.type = 'click' AND e.creator_slug = $1 ${timeFilter}`,
+     WHERE ${DEDUPED_CLICKS} AND e.creator_slug = $1 ${timeFilter}`,
     params
   );
 
@@ -517,7 +540,7 @@ export async function getAnalytics(
   const lnkRows = await query<{ link_label: string; link_url: string; link_type: string; count: string }>(
     `SELECT link_label, link_url, link_type, COUNT(*) AS count
      FROM charmlink_events e
-     WHERE e.creator_slug = $1 AND e.type = 'click' ${timeFilter}
+     WHERE e.creator_slug = $1 AND ${DEDUPED_CLICKS} ${timeFilter}
      GROUP BY link_label, link_url, link_type ORDER BY count DESC`,
     params
   );
@@ -603,7 +626,7 @@ export async function getAnalyticsOverview(
     `SELECT
       COUNT(*) AS total,
       COUNT(*) FILTER (WHERE link_type = 'premium') AS premium
-     FROM charmlink_events WHERE type = 'click' ${timeFilter}`,
+     FROM charmlink_events e WHERE ${DEDUPED_CLICKS} ${timeFilter}`,
     params
   );
 

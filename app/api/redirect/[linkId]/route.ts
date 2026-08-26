@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getLinkById, getCreatorById, recordEvent } from "../../../../lib/db";
+import {
+  getLinkById,
+  getCreatorById,
+  recordEvent,
+  REDIRECT_EVENT_SESSION_ID,
+} from "../../../../lib/db";
 
 export const runtime = "nodejs";
 
@@ -25,7 +30,13 @@ export async function GET(
       const userAgent = request.headers.get("user-agent") ?? "";
       const referer = request.headers.get("referer") ?? "";
       const country = request.headers.get("x-vercel-ip-country") ?? "unknown";
-      const sessionId = request.cookies.get("charmlink_sid")?.value ?? "redirect";
+      // The browser keeps its analytics session id in sessionStorage, which is
+      // unreachable from this server-side redirect, so these rows carry a
+      // sentinel instead. Analytics uses it to exclude them from click counts
+      // (the client beacon already counted this journey) while keeping them as
+      // the "redirect actually served" funnel signal — see lib/db.ts.
+      const sessionId =
+        request.cookies.get("charmlink_sid")?.value ?? REDIRECT_EVENT_SESSION_ID;
 
       recordEvent({
         type: "click",
