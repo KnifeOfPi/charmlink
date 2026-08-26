@@ -64,12 +64,23 @@ export default function AnalyticsPage() {
   return (
     <div className="min-h-screen bg-[#0a0a0a]">
       <AdminNav />
-      <AnalyticsDashboard
-        summaries={summaries}
-        totals={totals}
-        period={period}
-        onPeriodChange={setPeriod}
-      />
+      <main className="max-w-7xl mx-auto px-4 py-8">
+        <div className="flex items-center justify-between mb-8">
+          <h1 className="text-2xl font-bold text-white">Analytics</h1>
+          <select
+            value={period}
+            onChange={(e) => setPeriod(e.target.value as typeof period)}
+            className="bg-[#1a1a1a] border border-[#333] text-white text-sm rounded-lg px-3 py-2
+                       outline-none focus:border-[#e91e8a]"
+          >
+            <option value="today">Today</option>
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+            <option value="all">All time</option>
+          </select>
+        </div>
+        <AnalyticsDashboard summaries={summaries} totals={totals} period={period} adminKey="" />
+      </main>
     </div>
   );
 }

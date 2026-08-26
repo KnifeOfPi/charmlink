@@ -169,7 +169,7 @@ When a request hits `hannazuki.com/waifuzukii`:
 |---|---|---|
 | `DATABASE_URL` | Supabase pooled connection | yes |
 | `CHARMLINK_ADMIN_KEY` | Admin route bearer auth | yes |
-| `CHARMLINK_LINK_TOKEN_SECRET` | Signs link tokens | yes |
+| `CHARMLINK_LINK_HMAC_SECRET` | Signs link tokens | yes |
 | `CLOUDFLARE_API_TOKEN` | CF provisioning (DNS + WAF + Settings) | optional, but unset = no auto-provision |
 | `VERCEL_API_TOKEN` | Adds domains to Vercel project | yes for domain adds |
 | `TURNSTILE_SECRET_KEY` | Server-side Turnstile verify | optional (gracefully skipped) |
@@ -196,19 +196,12 @@ Shared instance with CharmaSutra. Tables:
   `notes`, `tags`, visual override fields, ordering
 - `charmlink_events` — pageviews + clicks + honeypot hits (used by analytics
   dashboard)
-- `charmlink_creator_domains` — join table for multi-domain creators
-  (`creator_id`, `domain`, `is_primary`); a trigger syncs the primary row back
-  to `charmlink_creators.custom_domain` — never write that column directly
 - `kv_*` (Vercel KV) — rate limit counters, ban list
 
-Migrations live in `supabase/migrations/`. Three so far: honeypot logs
-(`20260508000000_create_honeypot_logs.sql`), Phase-5 cloak toggle
-(`20260511000000_add_cloak_enabled.sql`), and the Phase-6/7
-`charmlink_creator_domains` table + sync trigger
-(`20260529000000_create_creator_domains.sql`, most recent — this table had been
-applied out-of-band and was undocumented in-repo until this migration was
-added). Run via Vercel-deployed migration script or feed SQL to Nate (no local
-DATABASE_URL on Cepheus machine).
+Migrations live in `supabase/migrations/`. Two so far: honeypot logs
+(`20260508000000_create_honeypot_logs.sql`) and Phase-5 cloak toggle
+(`20260511000000_add_cloak_enabled.sql`, most recent). Run via Vercel-deployed migration
+script or feed SQL to Nate (no local DATABASE_URL on Cepheus machine).
 
 ---
 
