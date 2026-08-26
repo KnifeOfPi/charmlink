@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { AnalyticsSummary } from "../../../lib/types";
 
 interface TotalsData {
@@ -16,7 +15,7 @@ interface DashboardProps {
   summaries: AnalyticsSummary[];
   totals: TotalsData;
   period: "today" | "7d" | "30d" | "all";
-  adminKey: string;
+  onPeriodChange: (period: "today" | "7d" | "30d" | "all") => void;
 }
 
 function StatCard({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
@@ -142,21 +141,13 @@ function CreatorCard({ summary, period }: { summary: AnalyticsSummary; period: s
   );
 }
 
-export function AnalyticsDashboard({ summaries, totals, period, adminKey }: DashboardProps) {
-  const router = useRouter();
-  const periods: Array<{ value: string; label: string }> = [
+export function AnalyticsDashboard({ summaries, totals, period, onPeriodChange }: DashboardProps) {
+  const periods: Array<{ value: "today" | "7d" | "30d" | "all"; label: string }> = [
     { value: "today", label: "Today" },
     { value: "7d", label: "7 Days" },
     { value: "30d", label: "30 Days" },
     { value: "all", label: "All Time" },
   ];
-
-  const switchPeriod = (p: string) => {
-    const params = new URLSearchParams();
-    if (adminKey) params.set("key", adminKey);
-    params.set("period", p);
-    router.push(`/admin/analytics?${params.toString()}`);
-  };
 
   const overallCtr =
     totals.humanViews > 0
@@ -177,7 +168,7 @@ export function AnalyticsDashboard({ summaries, totals, period, adminKey }: Dash
             {periods.map(({ value, label }) => (
               <button
                 key={value}
-                onClick={() => switchPeriod(value)}
+                onClick={() => onPeriodChange(value)}
                 className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
                   period === value
                     ? "bg-pink-600 text-white"
