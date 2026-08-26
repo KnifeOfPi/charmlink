@@ -7,6 +7,14 @@ const DEV_SECRET =
 function getSecret(): string {
   const secret = process.env.CHARMLINK_LINK_TOKEN_SECRET;
   if (!secret) {
+    if (process.env.NODE_ENV === "production") {
+      // Never fall back to the public DEV_SECRET in production — it's
+      // committed to the repo, so falling back would make every link token
+      // forgeable by anyone who reads the source.
+      throw new Error(
+        "[link-token] CHARMLINK_LINK_TOKEN_SECRET is not set. Refusing to start in production."
+      );
+    }
     console.warn(
       "[link-token] CHARMLINK_LINK_TOKEN_SECRET is not set — using dev secret. Set this in Vercel before deploying."
     );
