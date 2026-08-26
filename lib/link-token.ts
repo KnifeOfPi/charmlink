@@ -23,22 +23,53 @@ function getSecret(): string {
   return secret;
 }
 
-export function generateLinkToken(
+// NOTE: the token is deliberately NOT bound to the client IP.
+//
+// It used to be (`slug|ip|bucket|age`). On mobile networks the IP that renders
+// the page and the IP that POSTs to /api/links/[creator] moments later are
+// frequently different — WiFi/cellular handoff, carrier NAT rotation, IPv6
+// privacy addressing, CF edge variance. Every one of those mismatches failed
+// verification and dropped a real visitor into the rejection path. That path
+// used to hand them a honeypot link that banned them for 24h; 86.6% of the
+// 33,517 honeypot hits carried mobile browser UAs.
+//
+// What the token still guarantees is what actually matters here: the caller
+// holds a value only our server could have minted, scoped to this creator
+// slug, issued within the last ~5-10 minutes, for this age-confirmation state.
+// Cross-origin abuse is blocked by the Origin === Host check in the route, and
+// per-IP rate limiting is unchanged. Dropping the IP term costs no meaningful
+// security and stops rejecting real users.
+function computeToken(
   slug: string,
-  ip: string,
-  ageConfirmed: boolean
+  bucket: number,
+  ageConfirmed: boolean,
+  legacyIp?: string
 ): string {
   const secret = getSecret();
-  const bucket = Math.floor(Date.now() / 300_000);
-  const data = `${slug}|${ip}|${bucket}|${ageConfirmed ? "1" : "0"}`;
+  const data =
+    legacyIp === undefined
+      ? `${slug}|${bucket}|${ageConfirmed ? "1" : "0"}`
+      : `${slug}|${legacyIp}|${bucket}|${ageConfirmed ? "1" : "0"}`;
   return createHmac("sha256", secret).update(data).digest("hex");
 }
 
+export function generateLinkToken(slug: string, ageConfirmed: boolean): string {
+  const bucket = Math.floor(Date.now() / 300_000);
+  return computeToken(slug, bucket, ageConfirmed);
+}
+
+/**
+ * @param legacyIp - Only used to accept tokens minted by the previous
+ *   IP-bound scheme, so pages already in a visitor's browser at deploy time
+ *   keep working. Safe to drop this parameter (and the fallback below) once
+ *   every in-flight page predating the deploy has expired — one bucket plus
+ *   the grace bucket, so ~10 minutes.
+ */
 export function verifyLinkToken(
   token: string,
   slug: string,
-  ip: string,
-  ageConfirmed: boolean
+  ageConfirmed: boolean,
+  legacyIp?: string
 ): boolean {
   if (!token) return false;
 
@@ -50,12 +81,15 @@ export function verifyLinkToken(
     return false;
   }
 
-  const secret = getSecret();
   const bucket = Math.floor(Date.now() / 300_000);
 
+  const candidates: string[] = [];
   for (const b of [bucket, bucket - 1]) {
-    const data = `${slug}|${ip}|${b}|${ageConfirmed ? "1" : "0"}`;
-    const expected = createHmac("sha256", secret).update(data).digest("hex");
+    candidates.push(computeToken(slug, b, ageConfirmed));
+    if (legacyIp) candidates.push(computeToken(slug, b, ageConfirmed, legacyIp));
+  }
+
+  for (const expected of candidates) {
     const expectedBuffer = Buffer.from(expected, "hex");
     try {
       if (timingSafeEqual(tokenBuffer, expectedBuffer)) return true;

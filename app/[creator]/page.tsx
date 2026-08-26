@@ -156,13 +156,12 @@ export default async function CreatorPageServer({ params }: PageProps) {
 
   const headersList = await headers();
   const isBot = headersList.get("x-is-bot") === "true";
-  const ip =
-    headersList.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "";
 
-  // Generate HMAC token bound to slug + IP + 5-min bucket + age confirmation.
+  // Generate HMAC token bound to slug + 5-min bucket + age confirmation.
   // Token is bound to the visitor's current age-confirmation state so that the
-  // links API can serve the appropriate (sanitized vs full) payload.
-  const linkToken = generateLinkToken(slug, ip, hasAgeCookie);
+  // links API can serve the appropriate (sanitized vs full) payload. It is
+  // deliberately NOT bound to the client IP — see lib/link-token.ts.
+  const linkToken = generateLinkToken(slug, hasAgeCookie);
 
   return (
     <>
