@@ -42,6 +42,14 @@ export default function DashboardPage() {
   const [period, setPeriod] = useState<"today" | "7d" | "30d" | "all">("7d");
   const [loading, setLoading] = useState(true);
 
+  // Honeypot ban list maintenance. A ban lasts 24h and causes middleware to
+  // serve that IP the decoy page instead of the creator page, so a stale
+  // backlog keeps real visitors locked out even after the honeypot itself is
+  // fixed. This surfaces the count and lets it be cleared without a terminal.
+  const [banCount, setBanCount] = useState<number | null>(null);
+  const [banBusy, setBanBusy] = useState(false);
+  const [banMsg, setBanMsg] = useState<string | null>(null);
+
   useEffect(() => {
     if (!ready) return;
     loadData();
@@ -74,6 +82,43 @@ export default function DashboardPage() {
       // silent
     } finally {
       setLoading(false);
+    }
+    void loadBanCount();
+  }
+
+  async function loadBanCount() {
+    try {
+      const res = await fetch("/api/admin/bans", { headers: authHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setBanCount(typeof data.banned === "number" ? data.banned : null);
+      } else {
+        setBanCount(null);
+      }
+    } catch {
+      setBanCount(null);
+    }
+  }
+
+  async function flushBans() {
+    setBanBusy(true);
+    setBanMsg(null);
+    try {
+      const res = await fetch("/api/admin/bans", {
+        method: "POST",
+        headers: authHeaders(),
+      });
+      const data = await res.json();
+      setBanMsg(
+        res.ok
+          ? data.message ?? `Cleared ${data.flushed ?? 0}.`
+          : data.error ?? "Failed to clear bans."
+      );
+      await loadBanCount();
+    } catch (err) {
+      setBanMsg(err instanceof Error ? err.message : "Failed to clear bans.");
+    } finally {
+      setBanBusy(false);
     }
   }
 
@@ -155,6 +200,48 @@ export default function DashboardPage() {
                     ))}
                   </div>
                 )}
+              </div>
+            </div>
+
+            {/* Blocked visitors — honeypot IP ban list */}
+            <div className="bg-[#1a1a1a] border border-[#333] rounded-2xl p-6 mt-6">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <h2 className="text-white font-semibold mb-1">Blocked Visitors</h2>
+                  <p className="text-gray-500 text-sm">
+                    IPs the honeypot has banned. A ban lasts 24 hours, and while it
+                    is active that visitor sees the decoy page instead of the creator
+                    page. Clearing is safe — genuine bots get re-banned on their next
+                    hit.
+                  </p>
+                  <p className="mt-3 text-3xl font-bold text-white">
+                    {banCount === null ? "—" : banCount.toLocaleString()}
+                    <span className="text-gray-600 text-sm font-normal ml-2">
+                      currently blocked
+                    </span>
+                  </p>
+                  {banMsg && (
+                    <p className="text-[#e91e8a] text-sm mt-3">{banMsg}</p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    onClick={() => void loadBanCount()}
+                    disabled={banBusy}
+                    className="px-3 py-2 rounded-lg text-sm font-medium bg-[#222] text-gray-300
+                               border border-[#333] hover:bg-[#2a2a2a] disabled:opacity-50"
+                  >
+                    Refresh
+                  </button>
+                  <button
+                    onClick={() => void flushBans()}
+                    disabled={banBusy || banCount === 0}
+                    className="px-4 py-2 rounded-lg text-sm font-bold bg-[#e91e8a] text-white
+                               hover:opacity-90 disabled:opacity-40"
+                  >
+                    {banBusy ? "Clearing…" : "Clear all bans"}
+                  </button>
+                </div>
               </div>
             </div>
           </>
