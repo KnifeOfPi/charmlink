@@ -215,6 +215,8 @@ export default async function CreatorPageServer({ params }: PageProps) {
         slug={slug}
         isBot={isBot}
         avatarId={chosenAvatar?.id ?? null}
+        avatarFocalX={chosenAvatar?.focalX}
+        avatarFocalY={chosenAvatar?.focalY}
       />
     </>
   );

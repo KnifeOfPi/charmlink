@@ -114,7 +114,7 @@ async function loadRotation(slug: string, creatorId: string): Promise<CacheEntry
 export async function pickAvatar(
   slug: string,
   creatorId: string
-): Promise<{ id: string; url: string } | null> {
+): Promise<{ id: string; url: string; focalX: number; focalY: number } | null> {
   let entry: CacheEntry;
   try {
     entry = await loadRotation(slug, creatorId);
@@ -126,7 +126,13 @@ export async function pickAvatar(
 
   const { avatars, stats } = entry;
   if (avatars.length === 0) return null;
-  if (avatars.length === 1) return { id: avatars[0].id, url: avatars[0].url };
+  const shape = (a: DBCreatorAvatar) => ({
+    id: a.id,
+    url: a.url,
+    focalX: a.focal_x,
+    focalY: a.focal_y,
+  });
+  if (avatars.length === 1) return shape(avatars[0]);
 
   let best = avatars[0];
   let bestDraw = -1;
@@ -145,7 +151,7 @@ export async function pickAvatar(
       best = avatar;
     }
   }
-  return { id: best.id, url: best.url };
+  return shape(best);
 }
 
 /** Drop a creator's cached rotation, so admin edits take effect immediately. */

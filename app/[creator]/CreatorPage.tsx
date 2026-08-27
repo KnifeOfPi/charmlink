@@ -235,7 +235,28 @@ interface AvatarProps {
   color2: string;
   color3: string;
   accentColor: string;
+  /** Crop focal point as percentages. See DEFAULT_AVATAR_FOCAL. */
+  focalX?: number;
+  focalY?: number;
 }
+
+// Where the circular crop keeps its detail.
+//
+// A circle is square, so a portrait photo loses its top and bottom. CSS
+// defaults `object-position` to 50% 50%, which on a 3:4 selfie centres on the
+// torso and cuts the face off — the exact failure this replaces.
+//
+// 25% is not a guess about one photo: the percentage is measured against the
+// *slack* being cropped away, not the image, so it adapts to aspect ratio on
+// its own. A 3:4 source has little slack and shifts up slightly; a 9:16 source
+// has much more and shifts up proportionally further, which is right because a
+// face occupies a smaller share of a taller frame. On a square photo there is
+// no slack, so the value is inert. That makes it a sound default for uploads
+// whose dimensions we never have to read.
+//
+// It is still a heuristic about where faces sit, so each carousel photo can
+// override it — see the focal picker in the avatar manager.
+const DEFAULT_AVATAR_FOCAL = { x: 50, y: 25 };
 
 // Avatar sizing. The avatar is the first thing a visitor judges, so it is sized
 // as a hero element rather than a thumbnail. Three terms, smallest wins:
@@ -260,7 +281,18 @@ const AVATAR_SIZE_PLAIN = "min(58vw, 32vh, 260px)";
 // connection that can least afford it.
 const AVATAR_IMAGE_SIZES = "(max-width: 640px) 62vw, 280px";
 
-function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, accentColor }: AvatarProps) {
+function AvatarWithBorder({
+  src,
+  name,
+  borderStyle,
+  color1,
+  color2,
+  color3,
+  accentColor,
+  focalX = DEFAULT_AVATAR_FOCAL.x,
+  focalY = DEFAULT_AVATAR_FOCAL.y,
+}: AvatarProps) {
+  const objectPosition = `${focalX}% ${focalY}%`;
   // The online dot tracks the avatar's size but is clamped at both ends: a
   // straight percentage would render a ~39px blob on the hero-sized avatar and
   // a speck on a landscape-constrained one.
@@ -333,7 +365,7 @@ function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, acce
               willChange: "transform",
             }}
           >
-            <Image src={src} alt={name} fill priority sizes={AVATAR_IMAGE_SIZES} className="object-cover" />
+            <Image src={src} alt={name} fill priority sizes={AVATAR_IMAGE_SIZES} style={{ objectPosition }} className="object-cover" />
           </div>
         </div>
         {online}
@@ -345,7 +377,7 @@ function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, acce
     return (
       <div className="relative" style={{ width: AVATAR_SIZE_PLAIN, height: AVATAR_SIZE_PLAIN }}>
         <div style={{ position: "absolute", inset: 0, borderRadius: "50%", overflow: "hidden" }}>
-          <Image src={src} alt={name} fill priority sizes={AVATAR_IMAGE_SIZES} className="object-cover" />
+          <Image src={src} alt={name} fill priority sizes={AVATAR_IMAGE_SIZES} style={{ objectPosition }} className="object-cover" />
         </div>
         {online}
       </div>
@@ -364,7 +396,7 @@ function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, acce
         }}
       />
       <div style={{ position: "absolute", inset: 0, borderRadius: "50%", overflow: "hidden" }}>
-        <Image src={src} alt={name} fill priority sizes={AVATAR_IMAGE_SIZES} className="object-cover" />
+        <Image src={src} alt={name} fill priority sizes={AVATAR_IMAGE_SIZES} style={{ objectPosition }} className="object-cover" />
       </div>
       {online}
     </div>
@@ -1271,9 +1303,21 @@ interface CreatorPageProps {
    *  session so its conversions attribute to the right photo. Null when the
    *  creator has no carousel. */
   avatarId?: string | null;
+  /** Focal point of the chosen carousel photo; undefined falls back to the
+   *  DEFAULT_AVATAR_FOCAL heuristic (which is also what legacy single-avatar
+   *  creators get). */
+  avatarFocalX?: number;
+  avatarFocalY?: number;
 }
 
-export function CreatorPage({ creator, slug, isBot, avatarId = null }: CreatorPageProps) {
+export function CreatorPage({
+  creator,
+  slug,
+  isBot,
+  avatarId = null,
+  avatarFocalX,
+  avatarFocalY,
+}: CreatorPageProps) {
   const [premiumLinks, setPremiumLinks] = useState<PremiumLink[]>([]);
   const [premiumVisible, setPremiumVisible] = useState(false);
   const [interacted, setInteracted] = useState(false);
@@ -1619,6 +1663,8 @@ export function CreatorPage({ creator, slug, isBot, avatarId = null }: CreatorPa
               color2={avColor2}
               color3={avColor3}
               accentColor={theme.accentColor}
+              focalX={avatarFocalX}
+              focalY={avatarFocalY}
             />
           </div>
 

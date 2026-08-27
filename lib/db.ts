@@ -393,6 +393,9 @@ export interface DBCreatorAvatar {
   is_active: boolean;
   is_pinned: boolean;
   sort_order: number;
+  /** Circular-crop focal point, percentages. See the focal-point migration. */
+  focal_x: number;
+  focal_y: number;
   created_at: string;
 }
 
@@ -458,12 +461,18 @@ export async function createCreatorAvatar(
 
 export async function updateCreatorAvatar(
   avatarId: string,
-  fields: { is_active?: boolean; is_pinned?: boolean; sort_order?: number }
+  fields: {
+    is_active?: boolean;
+    is_pinned?: boolean;
+    sort_order?: number;
+    focal_x?: number;
+    focal_y?: number;
+  }
 ): Promise<DBCreatorAvatar | null> {
   const setClauses: string[] = [];
   const values: unknown[] = [];
   let idx = 1;
-  for (const key of ["is_active", "is_pinned", "sort_order"] as const) {
+  for (const key of ["is_active", "is_pinned", "sort_order", "focal_x", "focal_y"] as const) {
     if (fields[key] !== undefined) {
       setClauses.push(`${key} = $${idx++}`);
       values.push(fields[key]);

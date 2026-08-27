@@ -305,9 +305,77 @@ interface CarouselAvatar {
   is_active: boolean;
   is_pinned: boolean;
   sort_order: number;
+  focal_x: number;
+  focal_y: number;
   impressions: number;
   premiumClicks: number;
   conversionRate: number;
+}
+
+/** Click-to-set crop focus.
+ *
+ *  The avatar is a circle, so a portrait photo loses its top and bottom. The
+ *  default focus sits high to suit selfies, but a photo that breaks that
+ *  assumption needs a manual fix, and the fastest way to say "keep this bit" is
+ *  to point at it. Clicking the full photo sets the focus; the circle beside it
+ *  previews the actual crop the page will render.
+ */
+function FocalPicker({
+  avatar,
+  onChange,
+}: {
+  avatar: CarouselAvatar;
+  onChange: (focal: { focal_x: number; focal_y: number }) => void;
+}) {
+  const [local, setLocal] = useState({ x: avatar.focal_x, y: avatar.focal_y });
+
+  function pick(e: React.MouseEvent<HTMLDivElement>) {
+    const r = e.currentTarget.getBoundingClientRect();
+    const x = Math.round(Math.min(100, Math.max(0, ((e.clientX - r.left) / r.width) * 100)));
+    const y = Math.round(Math.min(100, Math.max(0, ((e.clientY - r.top) / r.height) * 100)));
+    setLocal({ x, y });
+    onChange({ focal_x: x, focal_y: y });
+  }
+
+  return (
+    <div className="flex gap-3 items-start pt-2">
+      <div
+        onClick={pick}
+        className="relative rounded-md overflow-hidden cursor-crosshair border border-border flex-shrink-0"
+        style={{ width: 110 }}
+        title="Click the part of the photo to keep centred"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={avatar.url} alt="" className="w-full block" />
+        <div
+          className="absolute w-4 h-4 rounded-full border-2 border-white pointer-events-none"
+          style={{
+            left: `${local.x}%`,
+            top: `${local.y}%`,
+            transform: "translate(-50%, -50%)",
+            boxShadow: "0 0 0 1px rgba(0,0,0,.6)",
+          }}
+        />
+      </div>
+      <div className="space-y-1">
+        <div
+          className="rounded-full overflow-hidden border border-border"
+          style={{ width: 64, height: 64 }}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={avatar.url}
+            alt=""
+            className="w-full h-full object-cover"
+            style={{ objectPosition: `${local.x}% ${local.y}%` }}
+          />
+        </div>
+        <p className="text-muted-foreground text-[10px] leading-tight max-w-[90px]">
+          Click photo to re-centre
+        </p>
+      </div>
+    </div>
+  );
 }
 
 const MAX_AVATARS = 10;
@@ -510,15 +578,17 @@ function AvatarCarouselManager({
               return (
                 <div
                   key={a.id}
-                  className={`flex items-center gap-3 p-2 rounded-lg border ${
+                  className={`p-2 rounded-lg border ${
                     a.is_active ? "border-border bg-card" : "border-border/40 bg-muted/20 opacity-60"
                   }`}
                 >
+                <div className="flex items-center gap-3">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={a.url}
                     alt="Carousel avatar"
                     className="w-14 h-14 rounded-full object-cover flex-shrink-0"
+                    style={{ objectPosition: `${a.focal_x}% ${a.focal_y}%` }}
                   />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -589,6 +659,11 @@ function AvatarCarouselManager({
                   >
                     ✕
                   </button>
+                </div>
+                <FocalPicker
+                  avatar={a}
+                  onChange={(focal) => void patch(a.id, focal)}
+                />
                 </div>
               );
             })}

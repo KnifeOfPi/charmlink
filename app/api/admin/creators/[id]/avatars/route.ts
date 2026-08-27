@@ -98,14 +98,24 @@ export async function PUT(
       is_active?: boolean;
       is_pinned?: boolean;
       sort_order?: number;
+      focal_x?: number;
+      focal_y?: number;
     };
     if (!body.avatarId) {
       return NextResponse.json({ error: "avatarId required" }, { status: 400 });
     }
+    // Clamp rather than reject: the column has a 0-100 CHECK, and a value
+    // slightly outside it (a click on the very edge, a rounding artefact) should
+    // land on the boundary instead of failing the whole save.
+    const clampPct = (v: number | undefined) =>
+      v === undefined ? undefined : Math.min(100, Math.max(0, Math.round(v)));
+
     const updated = await updateCreatorAvatar(body.avatarId, {
       is_active: body.is_active,
       is_pinned: body.is_pinned,
       sort_order: body.sort_order,
+      focal_x: clampPct(body.focal_x),
+      focal_y: clampPct(body.focal_y),
     });
     if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
     await bustCache(creatorId);
