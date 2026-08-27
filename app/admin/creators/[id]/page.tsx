@@ -57,6 +57,7 @@ interface DBCreator {
   stars_count: number;
   stars_color: string;
   animation_speed: number;
+  avatar_shape: string;
   avatar_border_style: string;
   avatar_border_color_1: string;
   avatar_border_color_2: string;
@@ -1715,6 +1716,27 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
                       <CardDescription className="text-xs">Border style, verified badge</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
+                      <div className="space-y-1">
+                        <Label>Frame Shape</Label>
+                        <Select
+                          value={form.avatar_shape ?? "circle"}
+                          onValueChange={(v) => setField("avatar_shape", v ?? "circle")}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="circle">Circle</SelectItem>
+                            <SelectItem value="portrait">Portrait (3:4)</SelectItem>
+                            <SelectItem value="square">Rounded square</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          Portrait matches what phones shoot, so it crops almost nothing —
+                          best when the photo is a full-body or head-to-waist shot.
+                        </p>
+                      </div>
+
                       <div className="space-y-1">
                         <Label>Border Style</Label>
                         <Select

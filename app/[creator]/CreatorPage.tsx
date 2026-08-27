@@ -109,6 +109,10 @@ const ALL_KEYFRAMES = `
     0%   { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
   }
+  @keyframes borderFlow {
+    0%, 100% { background-position: 0% 50%; }
+    50%       { background-position: 100% 50%; }
+  }
   @keyframes statusPulse {
     0%, 100% { transform: scale(1);   opacity: 0.6; }
     50%       { transform: scale(1.8); opacity: 0; }
@@ -238,6 +242,8 @@ interface AvatarProps {
   /** Crop focal point as percentages. See DEFAULT_AVATAR_FOCAL. */
   focalX?: number;
   focalY?: number;
+  /** Frame geometry. See AVATAR_SHAPES. */
+  shape?: AvatarShape;
 }
 
 // Where the circular crop keeps its detail.
@@ -275,6 +281,45 @@ const DEFAULT_AVATAR_FOCAL = { x: 50, y: 25 };
 const AVATAR_SIZE_RINGED = "min(62vw, 34vh, 280px)";
 const AVATAR_SIZE_PLAIN = "min(58vw, 32vh, 260px)";
 
+export type AvatarShape = "circle" | "portrait" | "square";
+
+// Frame geometry per shape.
+//
+// A circle is a square window, so a 3:4 photo loses about a quarter of its
+// height however the focal point is aimed — face and body cannot both survive.
+// A portrait frame matches what phones actually shoot, so it crops almost
+// nothing while still filling the frame (no letterboxing).
+//
+// The portrait width looks small next to the circle's, but the frame is TALLER:
+// at 226px wide it stands 301px, against the circle's 242px. The vh terms are
+// what keep that honest — they are set so the rendered HEIGHT lands in the same
+// band for every shape, which is what decides whether the links stay above the
+// fold. Sizing portrait by width alone is the trap here.
+const AVATAR_SHAPES: Record<
+  AvatarShape,
+  { ringed: string; plain: string; ratio: string; radius: string }
+> = {
+  circle: {
+    ringed: AVATAR_SIZE_RINGED,
+    plain: AVATAR_SIZE_PLAIN,
+    ratio: "1 / 1",
+    radius: "50%",
+  },
+  portrait: {
+    // 31vh wide -> ~41vh tall once the 3:4 ratio is applied.
+    ringed: "min(58vw, 31vh, 260px)",
+    plain: "min(56vw, 30vh, 250px)",
+    ratio: "3 / 4",
+    radius: "26px",
+  },
+  square: {
+    ringed: AVATAR_SIZE_RINGED,
+    plain: AVATAR_SIZE_PLAIN,
+    ratio: "1 / 1",
+    radius: "26px",
+  },
+};
+
 // Tells next/image which srcset entry to fetch. Without it `fill` assumes the
 // image spans 100vw and pulls a needlessly large file on phones — the avatar is
 // the page's only blocking image, so that is wasted bandwidth on exactly the
@@ -291,6 +336,7 @@ function AvatarWithBorder({
   accentColor,
   focalX = DEFAULT_AVATAR_FOCAL.x,
   focalY = DEFAULT_AVATAR_FOCAL.y,
+  shape = "circle",
 }: AvatarProps) {
   const objectPosition = `${focalX}% ${focalY}%`;
   // The online dot tracks the avatar's size but is clamped at both ends: a
@@ -338,34 +384,68 @@ function AvatarWithBorder({
     </div>
   );
 
+  const geom = AVATAR_SHAPES[shape] ?? AVATAR_SHAPES.circle;
+  const isCircle = shape === "circle";
+  const photo = (
+    <Image
+      src={src}
+      alt={name}
+      fill
+      priority
+      sizes={AVATAR_IMAGE_SIZES}
+      style={{ objectPosition }}
+      className="object-cover"
+    />
+  );
+
   if (borderStyle === "gradient") {
     return (
-      <div className="relative" style={{ width: AVATAR_SIZE_RINGED, height: AVATAR_SIZE_RINGED }}>
-        {/* Spinning conic gradient ring */}
+      <div
+        className="relative"
+        style={{ width: geom.ringed, aspectRatio: geom.ratio }}
+      >
         <div
           style={{
             position: "absolute",
             inset: 0,
-            borderRadius: "50%",
+            borderRadius: geom.radius,
             padding: 5,
-            background: `conic-gradient(from 180deg, ${color1}, ${color2}, ${color3}, ${color1})`,
             boxShadow: `0 0 40px -8px ${accentColor}`,
-            animation: "auroraSpinRing 9s linear infinite",
-            willChange: "transform",
+            // The circle spins its whole ring, which is invisible on a circle
+            // but would visibly rotate a rectangle. Non-circular frames get a
+            // gradient that travels ALONG the border instead — same sense of
+            // motion, no rotating box.
+            ...(isCircle
+              ? {
+                  background: `conic-gradient(from 180deg, ${color1}, ${color2}, ${color3}, ${color1})`,
+                  animation: "auroraSpinRing 9s linear infinite",
+                  willChange: "transform",
+                }
+              : {
+                  background: `linear-gradient(115deg, ${color1}, ${color2}, ${color3}, ${color2}, ${color1})`,
+                  backgroundSize: "300% 300%",
+                  animation: "borderFlow 9s ease-in-out infinite",
+                  willChange: "background-position",
+                }),
           }}
         >
-          {/* Counter-rotating inner: dark gap + image */}
           <div
             style={{
+              position: "relative",
               width: "100%",
               height: "100%",
-              borderRadius: "50%",
+              borderRadius: `calc(${geom.radius} - 3px)`,
               overflow: "hidden",
-              animation: "auroraSpinRingRev 9s linear infinite",
-              willChange: "transform",
+              // Counter-rotation only makes sense against the spinning ring.
+              ...(isCircle
+                ? {
+                    animation: "auroraSpinRingRev 9s linear infinite",
+                    willChange: "transform",
+                  }
+                : {}),
             }}
           >
-            <Image src={src} alt={name} fill priority sizes={AVATAR_IMAGE_SIZES} style={{ objectPosition }} className="object-cover" />
+            {photo}
           </div>
         </div>
         {online}
@@ -375,9 +455,16 @@ function AvatarWithBorder({
 
   if (borderStyle === "none") {
     return (
-      <div className="relative" style={{ width: AVATAR_SIZE_PLAIN, height: AVATAR_SIZE_PLAIN }}>
-        <div style={{ position: "absolute", inset: 0, borderRadius: "50%", overflow: "hidden" }}>
-          <Image src={src} alt={name} fill priority sizes={AVATAR_IMAGE_SIZES} style={{ objectPosition }} className="object-cover" />
+      <div className="relative" style={{ width: geom.plain, aspectRatio: geom.ratio }}>
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            borderRadius: geom.radius,
+            overflow: "hidden",
+          }}
+        >
+          {photo}
         </div>
         {online}
       </div>
@@ -386,17 +473,24 @@ function AvatarWithBorder({
 
   // solid border (default)
   return (
-    <div className="relative" style={{ width: AVATAR_SIZE_PLAIN, height: AVATAR_SIZE_PLAIN }}>
+    <div className="relative" style={{ width: geom.plain, aspectRatio: geom.ratio }}>
       <div
         style={{
           position: "absolute",
           inset: -2,
-          borderRadius: "50%",
+          borderRadius: `calc(${geom.radius} + 2px)`,
           border: `2px solid ${color1 || accentColor}`,
         }}
       />
-      <div style={{ position: "absolute", inset: 0, borderRadius: "50%", overflow: "hidden" }}>
-        <Image src={src} alt={name} fill priority sizes={AVATAR_IMAGE_SIZES} style={{ objectPosition }} className="object-cover" />
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          borderRadius: geom.radius,
+          overflow: "hidden",
+        }}
+      >
+        {photo}
       </div>
       {online}
     </div>
@@ -1665,6 +1759,7 @@ export function CreatorPage({
               accentColor={theme.accentColor}
               focalX={avatarFocalX}
               focalY={avatarFocalY}
+              shape={(creator.avatar_shape as AvatarShape) ?? "circle"}
             />
           </div>
 

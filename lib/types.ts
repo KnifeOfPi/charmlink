@@ -76,6 +76,7 @@ export interface Creator {
   stars_color?: string;
   animation_speed?: number;
   // v3 avatar
+  avatar_shape?: string;
   avatar_border_style?: string;
   avatar_border_color_1?: string;
   avatar_border_color_2?: string;

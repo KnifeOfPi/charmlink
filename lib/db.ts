@@ -71,6 +71,7 @@ export interface DBCreator {
   stars_color: string;
   animation_speed: number;
   // v3 avatar border
+  avatar_shape: string;
   avatar_border_style: string;
   avatar_border_color_1: string;
   avatar_border_color_2: string;
@@ -139,6 +140,7 @@ export interface CreateCreatorInput {
   stars_count?: number;
   stars_color?: string;
   animation_speed?: number;
+  avatar_shape?: string;
   avatar_border_style?: string;
   avatar_border_color_1?: string;
   avatar_border_color_2?: string;
@@ -251,6 +253,7 @@ export async function updateCreator(input: UpdateCreatorInput): Promise<DBCreato
     "bg_type", "bg_gradient_type", "bg_gradient_direction", "bg_color_2", "bg_color_3",
     "show_floating_icons", "floating_icon", "floating_icon_count",
     "show_stars", "stars_count", "stars_color", "animation_speed",
+    "avatar_shape",
     "avatar_border_style", "avatar_border_color_1", "avatar_border_color_2", "avatar_border_color_3",
     "is_verified", "font", "location_pill_color",
   ] as const;

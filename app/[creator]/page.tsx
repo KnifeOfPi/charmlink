@@ -184,6 +184,7 @@ export default async function CreatorPageServer({ params }: PageProps) {
     stars_color: dbCreator.stars_color,
     animation_speed: dbCreator.animation_speed,
     // v3 avatar
+    avatar_shape: dbCreator.avatar_shape,
     avatar_border_style: dbCreator.avatar_border_style,
     avatar_border_color_1: dbCreator.avatar_border_color_1,
     avatar_border_color_2: dbCreator.avatar_border_color_2,
