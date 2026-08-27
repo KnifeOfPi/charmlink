@@ -12,6 +12,8 @@ interface TrackPayload {
   linkType: "social" | "premium";
   sessionId: string;
   isInstagram: boolean;
+  /** Carousel avatar on screen when this link was tapped. See /api/pageview. */
+  avatarId?: string | null;
 }
 
 export async function POST(request: NextRequest) {
@@ -47,6 +49,7 @@ export async function POST(request: NextRequest) {
       // Resolved server-side — never taken from the client. See lib/event-bot-flag.ts.
       is_bot: resolveIsBot(request),
       is_instagram: body.isInstagram || false,
+      avatar_id: body.avatarId ?? null,
     });
 
     console.log("[charmlink:click]", body.creator, body.linkLabel, body.linkType);

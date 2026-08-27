@@ -12,6 +12,11 @@ interface PageViewPayload {
   // NOTE: the client also sends `isBot`, but it is deliberately ignored — it
   // is hard-coded `false` there and a bot would never self-report anyway.
   // The flag is resolved server-side; see lib/event-bot-flag.ts.
+  //
+  // avatarId is echoed back from the server-rendered page. It is validated as a
+  // UUID and FK-checked on insert, so a forged value can at worst attribute a
+  // view to another real avatar of the same creator — not corrupt the table.
+  avatarId?: string | null;
 }
 
 export async function POST(request: NextRequest) {
@@ -43,6 +48,7 @@ export async function POST(request: NextRequest) {
       device: parseDeviceType(ua),
       is_bot: resolveIsBot(request),
       is_instagram: body.isInstagram || false,
+      avatar_id: body.avatarId ?? null,
     });
 
     return NextResponse.json({ ok: true });

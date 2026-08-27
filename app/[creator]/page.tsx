@@ -6,6 +6,7 @@ import { Creator } from "../../lib/types";
 import { CreatorPage } from "./CreatorPage";
 import { isLinkPreviewScraper } from "../../lib/scraper-detect";
 import { generateLinkToken } from "../../lib/link-token";
+import { pickAvatar } from "../../lib/avatar-rotation";
 
 export const dynamic = "force-dynamic";
 
@@ -123,10 +124,16 @@ export default async function CreatorPageServer({ params }: PageProps) {
   const socialLinks = links.filter((l) => l.link_type === "social").map(mapLink);
   const premiumLinks = links.filter((l) => l.link_type === "premium").map(mapLink);
 
+  // Avatar carousel: when the creator has candidate photos, one is chosen per
+  // render and its id rides along on this session's events so the conversion
+  // can be attributed back to the photo that was actually on screen. Creators
+  // without a carousel keep their single avatar_url and record no attribution.
+  const chosenAvatar = await pickAvatar(slug, dbCreator.id);
+
   const creator: Creator = {
     name: dbCreator.name,
     tagline: dbCreator.tagline,
-    avatar: dbCreator.avatar_url,
+    avatar: chosenAvatar?.url ?? dbCreator.avatar_url,
     socialLinks,
     premiumLinks,
     theme: {
@@ -179,7 +186,12 @@ export default async function CreatorPageServer({ params }: PageProps) {
         type="application/json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify({ token: linkToken, slug }) }}
       />
-      <CreatorPage creator={creator} slug={slug} isBot={isBot} />
+      <CreatorPage
+        creator={creator}
+        slug={slug}
+        isBot={isBot}
+        avatarId={chosenAvatar?.id ?? null}
+      />
     </>
   );
 }

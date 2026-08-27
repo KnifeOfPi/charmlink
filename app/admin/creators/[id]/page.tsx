@@ -143,15 +143,98 @@ function LinkRow({
   link,
   onDelete,
   onToggle,
+  onEdit,
 }: {
   link: DBLink;
   onDelete: (id: string) => void;
   onToggle: (id: string, active: boolean) => void;
+  onEdit: (
+    id: string,
+    fields: { label: string; subtitle: string; url: string }
+  ) => Promise<string | null>;
 }) {
   const icons: Record<string, string> = {
     twitter: "𝕏", tiktok: "♪", instagram: "📸", youtube: "▶",
     star: "⭐", crown: "👑", heart: "💖", link: "🔗",
   };
+
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [draft, setDraft] = useState({
+    label: link.label,
+    subtitle: link.subtitle ?? "",
+    url: link.url,
+  });
+
+  function startEdit() {
+    // Re-seed from the link each time, so a cancelled edit never leaves stale
+    // text behind for the next one.
+    setDraft({ label: link.label, subtitle: link.subtitle ?? "", url: link.url });
+    setEditError("");
+    setEditing(true);
+  }
+
+  async function save() {
+    if (!draft.label.trim() || !draft.url.trim()) {
+      setEditError("Label and URL are required");
+      return;
+    }
+    setSaving(true);
+    const err = await onEdit(link.id, {
+      label: draft.label.trim(),
+      subtitle: draft.subtitle.trim(),
+      url: draft.url.trim(),
+    });
+    setSaving(false);
+    if (err) setEditError(err);
+    else setEditing(false);
+  }
+
+  if (editing) {
+    return (
+      <div className="p-3 rounded-lg border border-primary/50 bg-card space-y-2">
+        <div className="space-y-1">
+          <Label className="text-xs">Label</Label>
+          <Input
+            value={draft.label}
+            onChange={(e) => setDraft((p) => ({ ...p, label: e.target.value }))}
+            className="text-sm"
+            autoFocus
+          />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Subtitle</Label>
+          <Input
+            value={draft.subtitle}
+            onChange={(e) => setDraft((p) => ({ ...p, subtitle: e.target.value }))}
+            placeholder="Secondary text"
+            className="text-sm"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">URL</Label>
+          <Input
+            value={draft.url}
+            onChange={(e) => setDraft((p) => ({ ...p, url: e.target.value }))}
+            className="text-sm"
+          />
+        </div>
+        {editError && <p className="text-destructive text-xs">{editError}</p>}
+        <div className="flex gap-2">
+          <Button size="sm" onClick={() => void save()} disabled={saving}>
+            {saving ? "Saving…" : "Save"}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setEditing(false)} disabled={saving}>
+            Cancel
+          </Button>
+        </div>
+        <p className="text-muted-foreground text-[11px]">
+          Icon, type, badge and advanced settings are unchanged by this edit.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -191,6 +274,13 @@ function LinkRow({
         {link.link_type}
       </Badge>
       <button
+        onClick={startEdit}
+        className="text-muted-foreground hover:text-foreground text-xs transition-colors flex-shrink-0"
+        title="Edit text"
+      >
+        ✎
+      </button>
+      <button
         onClick={() => onToggle(link.id, !link.is_active)}
         className="text-muted-foreground hover:text-foreground text-xs transition-colors flex-shrink-0"
         title={link.is_active ? "Deactivate" : "Activate"}
@@ -204,6 +294,308 @@ function LinkRow({
         ✕
       </button>
     </div>
+  );
+}
+
+// ── Avatar Carousel Manager ───────────────────────────────────────────────────
+
+interface CarouselAvatar {
+  id: string;
+  url: string;
+  is_active: boolean;
+  is_pinned: boolean;
+  sort_order: number;
+  impressions: number;
+  premiumClicks: number;
+  conversionRate: number;
+}
+
+const MAX_AVATARS = 10;
+const MAX_PINNED = 3;
+// Matches MIN_IMPRESSIONS_FOR_CONFIDENCE in lib/avatar-rotation.ts — below this
+// a photo's rate is still noise and the UI says so rather than inviting the
+// admin to act on it.
+const MIN_IMPRESSIONS = 200;
+
+function AvatarCarouselManager({
+  creatorId,
+  creatorSlug,
+  authHeaders,
+  token,
+}: {
+  creatorId: string;
+  creatorSlug: string;
+  authHeaders: () => Record<string, string>;
+  token: string | null;
+}) {
+  const [avatars, setAvatars] = useState<CarouselAvatar[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
+  const [dragOver, setDragOver] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/admin/creators/${creatorId}/avatars`, {
+        headers: authHeaders(),
+      });
+      if (res.ok) setAvatars(await res.json());
+    } finally {
+      setLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [creatorId, token]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function handleUpload(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    const room = MAX_AVATARS - avatars.length;
+    if (room <= 0) {
+      setError(`Limit is ${MAX_AVATARS} photos. Delete one before adding another.`);
+      return;
+    }
+    setUploading(true);
+    setError("");
+    try {
+      for (const file of Array.from(files).slice(0, room)) {
+        const ext = (file.name.split(".").pop() || "bin").toLowerCase();
+        const safeSlug =
+          creatorSlug.toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 64) || "unknown";
+        const blob = await upload(
+          `avatars/${safeSlug}/carousel-${Date.now()}.${ext}`,
+          file,
+          {
+            access: "public",
+            handleUploadUrl: "/api/admin/avatar",
+            contentType: file.type || undefined,
+            headers: token ? { "x-admin-key": token } : {},
+          }
+        );
+        const res = await fetch(`/api/admin/creators/${creatorId}/avatars`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          body: JSON.stringify({ url: blob.url }),
+        });
+        if (!res.ok) {
+          const e = await res.json();
+          throw new Error((e as { error?: string }).error ?? "Failed to save photo");
+        }
+      }
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function patch(avatarId: string, fields: Partial<CarouselAvatar>) {
+    setError("");
+    const res = await fetch(`/api/admin/creators/${creatorId}/avatars`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ avatarId, ...fields }),
+    });
+    if (!res.ok) {
+      const e = await res.json();
+      setError((e as { error?: string }).error ?? "Update failed");
+      return;
+    }
+    await load();
+  }
+
+  async function remove(avatarId: string) {
+    if (!confirm("Delete this photo? Its past stats stay in analytics but it stops rotating.")) {
+      return;
+    }
+    await fetch(`/api/admin/creators/${creatorId}/avatars`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ avatarId }),
+    });
+    await load();
+  }
+
+  const pinnedCount = avatars.filter((a) => a.is_pinned).length;
+  const rotating = avatars.filter((a) =>
+    pinnedCount > 0 ? a.is_pinned && a.is_active : a.is_active
+  );
+  // Best is only meaningful among photos that have earned enough impressions.
+  const ranked = [...avatars]
+    .filter((a) => a.impressions >= MIN_IMPRESSIONS)
+    .sort((a, b) => b.conversionRate - a.conversionRate);
+  const bestId = ranked[0]?.id;
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Photo Carousel (A/B test)</CardTitle>
+        <CardDescription className="text-xs">
+          Up to {MAX_AVATARS} photos. One is picked per visit and its conversions are tracked
+          back to it, so better performers automatically earn more traffic — losers keep a
+          small share so they can recover if tastes shift.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Rotation status */}
+        <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs">
+          {avatars.length === 0 ? (
+            <span className="text-muted-foreground">
+              No carousel photos — the single Avatar above is used for every visit.
+            </span>
+          ) : pinnedCount > 0 ? (
+            <span>
+              <span className="font-medium">{pinnedCount} pinned</span> — rotation is locked to
+              your pinned {pinnedCount === 1 ? "photo" : "photos"}. Unpin all to resume testing.
+            </span>
+          ) : (
+            <span>
+              <span className="font-medium">Testing {rotating.length}</span>{" "}
+              {rotating.length === 1 ? "photo" : "photos"}. Needs {MIN_IMPRESSIONS} views each
+              before results are reliable.
+            </span>
+          )}
+        </div>
+
+        {/* Upload */}
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragOver(false);
+            void handleUpload(e.dataTransfer.files);
+          }}
+          onClick={() => inputRef.current?.click()}
+          className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${
+            dragOver ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"
+          } ${avatars.length >= MAX_AVATARS ? "opacity-50 pointer-events-none" : ""}`}
+        >
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              void handleUpload(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          <p className="text-sm text-muted-foreground">
+            {uploading
+              ? "Uploading..."
+              : avatars.length >= MAX_AVATARS
+                ? `Limit reached (${MAX_AVATARS})`
+                : `Click or drag photos to add (${avatars.length}/${MAX_AVATARS})`}
+          </p>
+        </div>
+
+        {error && <p className="text-destructive text-xs">{error}</p>}
+
+        {/* Photo list */}
+        {loading ? (
+          <p className="text-muted-foreground text-sm">Loading…</p>
+        ) : (
+          <div className="space-y-2">
+            {avatars.map((a) => {
+              const provisional = a.impressions < MIN_IMPRESSIONS;
+              return (
+                <div
+                  key={a.id}
+                  className={`flex items-center gap-3 p-2 rounded-lg border ${
+                    a.is_active ? "border-border bg-card" : "border-border/40 bg-muted/20 opacity-60"
+                  }`}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={a.url}
+                    alt="Carousel avatar"
+                    className="w-14 h-14 rounded-full object-cover flex-shrink-0"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold tabular-nums">
+                        {a.conversionRate}%
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {a.premiumClicks} / {a.impressions} views
+                      </span>
+                      {provisional && (
+                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                          needs {MIN_IMPRESSIONS - a.impressions} more
+                        </Badge>
+                      )}
+                      {!provisional && a.id === bestId && (
+                        <Badge className="text-[10px] px-1.5 py-0 bg-green-600 text-white">
+                          best
+                        </Badge>
+                      )}
+                      {a.is_pinned && (
+                        <Badge className="text-[10px] px-1.5 py-0 bg-pink-600 text-white">
+                          pinned
+                        </Badge>
+                      )}
+                    </div>
+                    {/* Conversion bar, scaled to the best performer so the
+                        comparison is visual rather than arithmetic. */}
+                    <div className="mt-1.5 h-1.5 rounded-full bg-muted overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-pink-500"
+                        style={{
+                          width: `${
+                            ranked[0]?.conversionRate
+                              ? Math.min(100, (a.conversionRate / ranked[0].conversionRate) * 100)
+                              : 0
+                          }%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void patch(a.id, { is_pinned: !a.is_pinned })}
+                    disabled={!a.is_pinned && pinnedCount >= MAX_PINNED}
+                    title={
+                      a.is_pinned
+                        ? "Unpin"
+                        : pinnedCount >= MAX_PINNED
+                          ? `At most ${MAX_PINNED} pinned`
+                          : "Pin to permanent rotation"
+                    }
+                    className="text-xs flex-shrink-0 disabled:opacity-30"
+                  >
+                    {a.is_pinned ? "📌" : "📍"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void patch(a.id, { is_active: !a.is_active })}
+                    title={a.is_active ? "Pause" : "Resume"}
+                    className="text-muted-foreground hover:text-foreground text-xs flex-shrink-0"
+                  >
+                    {a.is_active ? "⏸" : "▶"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void remove(a.id)}
+                    className="text-destructive hover:text-destructive/70 text-xs flex-shrink-0"
+                  >
+                    ✕
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -721,6 +1113,25 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
     loadAll();
   }
 
+  /** Save an inline text edit on an existing link. Only the changed fields are
+   *  sent, so an edit never clobbers the link's advanced/v3 settings. */
+  async function handleEditLink(
+    linkId: string,
+    fields: { label: string; subtitle: string; url: string }
+  ): Promise<string | null> {
+    const res = await fetch(`/api/admin/creators/${id}/links`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ id: linkId, ...fields }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      return (err as { error?: string }).error ?? "Failed to save";
+    }
+    loadAll();
+    return null;
+  }
+
   async function handleAddToVercel() {
     const domain = form.custom_domain;
     if (!domain) return;
@@ -1215,7 +1626,14 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
                 </TabsContent>
 
                 {/* ── Avatar Tab ── */}
-                <TabsContent value="avatar">
+                <TabsContent value="avatar" className="space-y-4">
+                  <AvatarCarouselManager
+                    creatorId={id}
+                    creatorSlug={form.slug ?? ""}
+                    authHeaders={authHeaders}
+                    token={token}
+                  />
+
                   <Card>
                     <CardHeader className="pb-3">
                       <CardTitle className="text-base">Avatar & Identity</CardTitle>
@@ -1373,7 +1791,7 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
                   <p className="text-muted-foreground text-sm">No social links yet</p>
                 ) : (
                   socialLinks.map((l) => (
-                    <LinkRow key={l.id} link={l} onDelete={handleDeleteLink} onToggle={handleToggleLink} />
+                    <LinkRow key={l.id} link={l} onDelete={handleDeleteLink} onToggle={handleToggleLink} onEdit={handleEditLink} />
                   ))
                 )}
               </CardContent>
@@ -1391,7 +1809,7 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
                   <p className="text-muted-foreground text-sm">No premium links yet</p>
                 ) : (
                   premiumLinks.map((l) => (
-                    <LinkRow key={l.id} link={l} onDelete={handleDeleteLink} onToggle={handleToggleLink} />
+                    <LinkRow key={l.id} link={l} onDelete={handleDeleteLink} onToggle={handleToggleLink} onEdit={handleEditLink} />
                   ))
                 )}
               </CardContent>

@@ -384,6 +384,231 @@ export async function deleteLink(id: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+// ── Creator Avatars (carousel / A-B testing) ─────────────────────────────────
+
+export interface DBCreatorAvatar {
+  id: string;
+  creator_id: string;
+  url: string;
+  is_active: boolean;
+  is_pinned: boolean;
+  sort_order: number;
+  created_at: string;
+}
+
+/** Per-avatar performance, as measured by the events its impressions produced. */
+export interface AvatarStats {
+  avatar_id: string;
+  impressions: number; // human pageviews that rendered this avatar
+  premiumClicks: number;
+  conversionRate: number; // premiumClicks / impressions, as a percentage
+}
+
+/** Hard cap on candidate photos per creator. */
+export const MAX_CREATOR_AVATARS = 10;
+
+/** Most photos a creator may pin as their permanent rotation. */
+export const MAX_PINNED_AVATARS = 3;
+
+export async function getCreatorAvatars(creatorId: string): Promise<DBCreatorAvatar[]> {
+  return query<DBCreatorAvatar>(
+    `SELECT * FROM charmlink_creator_avatars
+     WHERE creator_id = $1
+     ORDER BY sort_order ASC, created_at ASC`,
+    [creatorId]
+  );
+}
+
+/** Rotation candidates for a slug, resolved in one round trip on the page's
+ *  hot path. Pinned avatars win outright when any exist — that is what
+ *  "pinned" means: the admin has locked the rotation to their proven set and
+ *  exploration stops until they unpin. */
+export async function getRotationAvatarsBySlug(
+  slug: string
+): Promise<DBCreatorAvatar[]> {
+  const rows = await query<DBCreatorAvatar>(
+    `SELECT a.* FROM charmlink_creator_avatars a
+     JOIN charmlink_creators c ON c.id = a.creator_id
+     WHERE c.slug = $1 AND a.is_active = true
+     ORDER BY a.sort_order ASC, a.created_at ASC`,
+    [slug]
+  );
+  const pinned = rows.filter((r) => r.is_pinned);
+  return pinned.length > 0 ? pinned : rows;
+}
+
+export async function createCreatorAvatar(
+  creatorId: string,
+  url: string
+): Promise<DBCreatorAvatar> {
+  const existing = await getCreatorAvatars(creatorId);
+  if (existing.length >= MAX_CREATOR_AVATARS) {
+    throw new Error(
+      `Avatar limit reached (${MAX_CREATOR_AVATARS}). Delete one before adding another.`
+    );
+  }
+  const nextOrder = existing.reduce((max, a) => Math.max(max, a.sort_order), -1) + 1;
+  const rows = await query<DBCreatorAvatar>(
+    `INSERT INTO charmlink_creator_avatars (creator_id, url, sort_order)
+     VALUES ($1, $2, $3) RETURNING *`,
+    [creatorId, url, nextOrder]
+  );
+  return rows[0];
+}
+
+export async function updateCreatorAvatar(
+  avatarId: string,
+  fields: { is_active?: boolean; is_pinned?: boolean; sort_order?: number }
+): Promise<DBCreatorAvatar | null> {
+  const setClauses: string[] = [];
+  const values: unknown[] = [];
+  let idx = 1;
+  for (const key of ["is_active", "is_pinned", "sort_order"] as const) {
+    if (fields[key] !== undefined) {
+      setClauses.push(`${key} = $${idx++}`);
+      values.push(fields[key]);
+    }
+  }
+  if (setClauses.length === 0) return null;
+
+  // Enforce the pin cap here rather than with a constraint, so the admin gets
+  // a readable message instead of a raw violation.
+  if (fields.is_pinned === true) {
+    const owner = await query<{ creator_id: string }>(
+      "SELECT creator_id FROM charmlink_creator_avatars WHERE id = $1",
+      [avatarId]
+    );
+    if (owner[0]) {
+      const siblings = await getCreatorAvatars(owner[0].creator_id);
+      const alreadyPinned = siblings.filter((a) => a.is_pinned && a.id !== avatarId);
+      if (alreadyPinned.length >= MAX_PINNED_AVATARS) {
+        throw new Error(
+          `At most ${MAX_PINNED_AVATARS} avatars can be pinned. Unpin one first.`
+        );
+      }
+    }
+  }
+
+  values.push(avatarId);
+  const rows = await query<DBCreatorAvatar>(
+    `UPDATE charmlink_creator_avatars SET ${setClauses.join(", ")}
+     WHERE id = $${idx} RETURNING *`,
+    values
+  );
+  return rows[0] ?? null;
+}
+
+export async function deleteCreatorAvatar(avatarId: string): Promise<boolean> {
+  const rows = await query<{ id: string }>(
+    "DELETE FROM charmlink_creator_avatars WHERE id = $1 RETURNING id",
+    [avatarId]
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Per-avatar impressions and premium clicks.
+ *
+ * Impressions count only non-bot pageviews, so a scraper storm can't make one
+ * photo look like it converts badly. Clicks reuse DEDUPED_CLICKS for the same
+ * one-row-per-journey rule the rest of analytics uses.
+ */
+export async function getAvatarStats(
+  creatorId: string,
+  period: "today" | "7d" | "30d" | "all" = "all"
+): Promise<AvatarStats[]> {
+  const cutoff = periodCutoff(period);
+  const params: unknown[] = cutoff ? [creatorId, cutoff] : [creatorId];
+  const viewFilter = cutoff ? "AND e.created_at >= $2" : "";
+
+  const rows = await query<{
+    avatar_id: string;
+    impressions: string;
+    premium_clicks: string;
+  }>(
+    `SELECT
+       a.id AS avatar_id,
+       COUNT(e.id) FILTER (WHERE e.type = 'pageview' AND NOT e.is_bot) AS impressions,
+       COUNT(e.id) FILTER (
+         WHERE ${DEDUPED_CLICKS} AND e.link_type = 'premium'
+       ) AS premium_clicks
+     FROM charmlink_creator_avatars a
+     LEFT JOIN charmlink_events e
+       ON e.avatar_id = a.id ${viewFilter}
+     WHERE a.creator_id = $1
+     GROUP BY a.id`,
+    params
+  );
+
+  return rows.map((r) => {
+    const impressions = parseInt(r.impressions);
+    const premiumClicks = parseInt(r.premium_clicks);
+    return {
+      avatar_id: r.avatar_id,
+      impressions,
+      premiumClicks,
+      conversionRate:
+        impressions > 0
+          ? Math.round((premiumClicks / impressions) * 10000) / 100
+          : 0,
+    };
+  });
+}
+
+/** Avatar stats for a slug, joined to the avatar rows, for the analytics page. */
+export async function getAvatarStatsBySlug(
+  slug: string,
+  period: "today" | "7d" | "30d" | "all"
+): Promise<Array<AvatarStats & { url: string; isPinned: boolean; isActive: boolean }>> {
+  const cutoff = periodCutoff(period);
+  const params: unknown[] = cutoff ? [slug, cutoff] : [slug];
+  const viewFilter = cutoff ? "AND e.created_at >= $2" : "";
+
+  const rows = await query<{
+    avatar_id: string;
+    url: string;
+    is_pinned: boolean;
+    is_active: boolean;
+    impressions: string;
+    premium_clicks: string;
+  }>(
+    `SELECT
+       a.id AS avatar_id,
+       a.url,
+       a.is_pinned,
+       a.is_active,
+       COUNT(e.id) FILTER (WHERE e.type = 'pageview' AND NOT e.is_bot) AS impressions,
+       COUNT(e.id) FILTER (
+         WHERE ${DEDUPED_CLICKS} AND e.link_type = 'premium'
+       ) AS premium_clicks
+     FROM charmlink_creator_avatars a
+     JOIN charmlink_creators c ON c.id = a.creator_id
+     LEFT JOIN charmlink_events e
+       ON e.avatar_id = a.id ${viewFilter}
+     WHERE c.slug = $1
+     GROUP BY a.id, a.url, a.is_pinned, a.is_active, a.sort_order, a.created_at
+     ORDER BY a.sort_order ASC, a.created_at ASC`,
+    params
+  );
+
+  return rows.map((r) => {
+    const impressions = parseInt(r.impressions);
+    const premiumClicks = parseInt(r.premium_clicks);
+    return {
+      avatar_id: r.avatar_id,
+      url: r.url,
+      isPinned: r.is_pinned,
+      isActive: r.is_active,
+      impressions,
+      premiumClicks,
+      conversionRate:
+        impressions > 0
+          ? Math.round((premiumClicks / impressions) * 10000) / 100
+          : 0,
+    };
+  });
+}
+
 // ── Event Recording ──────────────────────────────────────────────────────────
 
 export interface RecordEventInput {
@@ -400,15 +625,25 @@ export interface RecordEventInput {
   device?: string;
   is_bot?: boolean;
   is_instagram?: boolean;
+  /** Which carousel avatar was on screen. NULL when the creator has none. */
+  avatar_id?: string | null;
 }
+
+/** A client-supplied avatar id is only stored if it is a syntactically valid
+ *  UUID — the column is a FK, and a malformed string would make the whole
+ *  INSERT throw and silently drop the event. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function recordEvent(input: RecordEventInput): Promise<void> {
   try {
+    const avatarId =
+      input.avatar_id && UUID_RE.test(input.avatar_id) ? input.avatar_id : null;
     await query(
       `INSERT INTO charmlink_events
         (type, creator_id, creator_slug, link_label, link_url, link_type,
-         session_id, user_agent, referer, country, device, is_bot, is_instagram)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+         session_id, user_agent, referer, country, device, is_bot, is_instagram,
+         avatar_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
       [
         input.type,
         input.creator_id ?? null,
@@ -423,6 +658,7 @@ export async function recordEvent(input: RecordEventInput): Promise<void> {
         input.device ?? "desktop",
         input.is_bot ?? false,
         input.is_instagram ?? false,
+        avatarId,
       ]
     );
   } catch (err) {
@@ -592,6 +828,10 @@ export async function getAnalytics(
     [creatorSlug, bucketUnit, cutoff]
   );
 
+  // Avatar carousel results. Returns [] for the (currently typical) creator who
+  // has no candidate photos, so the analytics card simply omits the section.
+  const avatarRows = await getAvatarStatsBySlug(creatorSlug, period);
+
   const pv = pvRows[0];
   const clk = clkRows[0];
   const totalViews = parseInt(pv?.total ?? "0");
@@ -641,6 +881,15 @@ export async function getAnalytics(
       bucket: r.bucket,
       total: parseInt(r.total),
       premium: parseInt(r.premium),
+    })),
+    avatarPerformance: avatarRows.map((r) => ({
+      avatarId: r.avatar_id,
+      url: r.url,
+      isPinned: r.isPinned,
+      isActive: r.isActive,
+      impressions: r.impressions,
+      premiumClicks: r.premiumClicks,
+      conversionRate: r.conversionRate,
     })),
   };
 }

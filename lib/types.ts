@@ -143,4 +143,14 @@ export interface AnalyticsSummary {
   instagramTraffic: number;
   linkBreakdown: Array<{ label: string; url: string; type: string; clicks: number }>;
   clickTimeseries: Array<{ bucket: string; total: number; premium: number }>;
+  /** Per-photo results for creators running an avatar carousel. Empty otherwise. */
+  avatarPerformance: Array<{
+    avatarId: string;
+    url: string;
+    isPinned: boolean;
+    isActive: boolean;
+    impressions: number;
+    premiumClicks: number;
+    conversionRate: number;
+  }>;
 }

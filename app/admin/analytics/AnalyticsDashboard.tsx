@@ -218,6 +218,95 @@ function ClickTimeseriesChart({
   );
 }
 
+// Matches MIN_IMPRESSIONS_FOR_CONFIDENCE in lib/avatar-rotation.ts. Below this
+// a photo's rate is still noise, and the card says so rather than presenting a
+// number that invites a premature decision.
+const MIN_AVATAR_IMPRESSIONS = 200;
+
+function AvatarPerformance({
+  data,
+}: {
+  data: AnalyticsSummary["avatarPerformance"];
+}) {
+  // Rank only photos with enough evidence — a 100% rate off 3 views is not a
+  // winner, and showing it as one is how A/B tests get misread.
+  const settled = data.filter((a) => a.impressions >= MIN_AVATAR_IMPRESSIONS);
+  const bestRate = Math.max(...settled.map((a) => a.conversionRate), 0);
+  const sorted = [...data].sort((a, b) => {
+    const aReady = a.impressions >= MIN_AVATAR_IMPRESSIONS;
+    const bReady = b.impressions >= MIN_AVATAR_IMPRESSIONS;
+    if (aReady !== bReady) return aReady ? -1 : 1;
+    return b.conversionRate - a.conversionRate;
+  });
+
+  return (
+    <div className="mt-6">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-gray-400 text-xs uppercase tracking-wide">Photo performance</h3>
+        <span className="text-gray-600 text-[11px]">
+          premium clicks / views · {MIN_AVATAR_IMPRESSIONS} views to call it
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+        {sorted.map((a) => {
+          const provisional = a.impressions < MIN_AVATAR_IMPRESSIONS;
+          const isBest = !provisional && bestRate > 0 && a.conversionRate === bestRate;
+          return (
+            <div
+              key={a.avatarId}
+              className={`rounded-xl border p-3 ${
+                isBest ? "border-pink-500/60 bg-pink-500/5" : "border-gray-800 bg-gray-950/40"
+              } ${a.isActive ? "" : "opacity-50"}`}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={a.url}
+                  alt=""
+                  className="w-10 h-10 rounded-full object-cover flex-shrink-0"
+                />
+                <div className="min-w-0">
+                  <p
+                    className={`text-lg font-bold leading-none ${
+                      provisional ? "text-gray-500" : "text-white"
+                    }`}
+                  >
+                    {a.conversionRate}%
+                  </p>
+                  <p className="text-gray-500 text-[11px] mt-0.5 tabular-nums">
+                    {a.premiumClicks} / {a.impressions}
+                  </p>
+                </div>
+              </div>
+              {/* Bar is scaled to the best settled rate, so the comparison is
+                  visual; the number above carries the exact value. */}
+              <div className="h-1.5 rounded-full bg-gray-800 overflow-hidden">
+                <div
+                  className="h-full rounded-full"
+                  style={{
+                    width: bestRate > 0 ? `${Math.min(100, (a.conversionRate / bestRate) * 100)}%` : "0%",
+                    backgroundColor: provisional ? TOTAL_COLOR : PREMIUM_COLOR,
+                  }}
+                />
+              </div>
+              <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                {provisional && (
+                  <span className="text-[10px] text-gray-500">
+                    {MIN_AVATAR_IMPRESSIONS - a.impressions} more views
+                  </span>
+                )}
+                {isBest && <span className="text-[10px] text-pink-400 font-medium">best</span>}
+                {a.isPinned && <span className="text-[10px] text-gray-400">📌 pinned</span>}
+                {!a.isActive && <span className="text-[10px] text-gray-600">paused</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function CreatorCard({
   summary,
   period,
@@ -299,6 +388,11 @@ function CreatorCard({
           )}
         </div>
       </div>
+
+      {/* Photo carousel performance */}
+      {summary.avatarPerformance.length > 0 && (
+        <AvatarPerformance data={summary.avatarPerformance} />
+      )}
 
       {/* Country breakdown */}
       {summary.countryBreakdown.length > 0 && (

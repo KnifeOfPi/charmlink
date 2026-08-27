@@ -237,23 +237,33 @@ interface AvatarProps {
   accentColor: string;
 }
 
+// Avatar sizing. The old fixed 124/96px read small on a modern phone, where the
+// avatar is the first thing a visitor judges. These scale with the viewport and
+// cap out on desktop: on a 390px-wide iPhone the gradient avatar lands at ~172px
+// (was 124), and the floor keeps it sane on a 320px device.
+//
+// `min()` in a CSS length works in every browser this app targets, and because
+// the value is handed to width/height directly there is no layout shift — the
+// element is sized before paint, unlike a JS-measured breakpoint.
+const AVATAR_SIZE_RINGED = "min(44vw, 180px)";
+const AVATAR_SIZE_PLAIN = "min(38vw, 152px)";
+
 function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, accentColor }: AvatarProps) {
+  // The online dot scales with the avatar so it stays proportional rather than
+  // shrinking into a speck against the larger photo.
   const online = (
     <div
-      className="absolute bottom-0.5 right-0.5 z-20"
-      style={{ width: 18, height: 18 }}
+      className="absolute z-20"
+      style={{ width: "16%", height: "16%", bottom: "3%", right: "3%", minWidth: 18, minHeight: 18 }}
     >
       <div
         className="absolute inset-0 rounded-full"
-        style={{ backgroundColor: "white", width: 18, height: 18 }}
+        style={{ backgroundColor: "white" }}
       />
       <div
         className="absolute rounded-full"
         style={{
-          width: 14,
-          height: 14,
-          top: 2,
-          left: 2,
+          inset: "18%",
           backgroundColor: "#22c55e",
           filter: "blur(3px)",
           animation: "statusPulse 2s ease-in-out infinite",
@@ -263,10 +273,7 @@ function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, acce
       <div
         className="absolute rounded-full animate-ping"
         style={{
-          width: 12,
-          height: 12,
-          top: 3,
-          left: 3,
+          inset: "22%",
           backgroundColor: "#22c55e",
           opacity: 0.5,
         }}
@@ -274,10 +281,7 @@ function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, acce
       <div
         className="absolute rounded-full"
         style={{
-          width: 12,
-          height: 12,
-          top: 3,
-          left: 3,
+          inset: "22%",
           backgroundColor: "#22c55e",
         }}
       />
@@ -286,14 +290,14 @@ function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, acce
 
   if (borderStyle === "gradient") {
     return (
-      <div className="relative" style={{ width: 124, height: 124 }}>
+      <div className="relative" style={{ width: AVATAR_SIZE_RINGED, height: AVATAR_SIZE_RINGED }}>
         {/* Spinning conic gradient ring */}
         <div
           style={{
             position: "absolute",
             inset: 0,
             borderRadius: "50%",
-            padding: 3,
+            padding: 4,
             background: `conic-gradient(from 180deg, ${color1}, ${color2}, ${color3}, ${color1})`,
             boxShadow: `0 0 40px -8px ${accentColor}`,
             animation: "auroraSpinRing 9s linear infinite",
@@ -321,7 +325,7 @@ function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, acce
 
   if (borderStyle === "none") {
     return (
-      <div className="relative" style={{ width: 96, height: 96 }}>
+      <div className="relative" style={{ width: AVATAR_SIZE_PLAIN, height: AVATAR_SIZE_PLAIN }}>
         <div style={{ position: "absolute", inset: 0, borderRadius: "50%", overflow: "hidden" }}>
           <Image src={src} alt={name} fill className="object-cover" />
         </div>
@@ -332,7 +336,7 @@ function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, acce
 
   // solid border (default)
   return (
-    <div className="relative" style={{ width: 96, height: 96 }}>
+    <div className="relative" style={{ width: AVATAR_SIZE_PLAIN, height: AVATAR_SIZE_PLAIN }}>
       <div
         style={{
           position: "absolute",
@@ -1245,9 +1249,13 @@ interface CreatorPageProps {
   creator: Creator;
   slug: string;
   isBot: boolean;
+  /** Carousel avatar shown on this render, stamped on every event from this
+   *  session so its conversions attribute to the right photo. Null when the
+   *  creator has no carousel. */
+  avatarId?: string | null;
 }
 
-export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
+export function CreatorPage({ creator, slug, isBot, avatarId = null }: CreatorPageProps) {
   const [premiumLinks, setPremiumLinks] = useState<PremiumLink[]>([]);
   const [premiumVisible, setPremiumVisible] = useState(false);
   const [interacted, setInteracted] = useState(false);
@@ -1357,6 +1365,7 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
         sessionId: sid,
         isInstagram: igDetected,
         isBot: false,
+        avatarId,
       });
     }
 
@@ -1364,7 +1373,7 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
       setInteracted(true);
       void fetchPremiumLinks();
     }
-  }, [isBot, fetchPremiumLinks, slug]);
+  }, [isBot, fetchPremiumLinks, slug, avatarId]);
 
   // ── Click Handlers ──────────────────────────────────────────────────────────
 
@@ -1394,6 +1403,7 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
       linkType: "social",
       sessionId: sessionIdRef.current,
       isInstagram,
+      avatarId,
     });
     setTimeout(() => navigate(link), 50);
   };
@@ -1406,6 +1416,7 @@ export function CreatorPage({ creator, slug, isBot }: CreatorPageProps) {
       linkType: "premium",
       sessionId: sessionIdRef.current,
       isInstagram,
+      avatarId,
     });
     // Android only: `intent://` reliably pops the click out of the Instagram
     // WebView into Chrome. There is deliberately NO iOS branch here — this

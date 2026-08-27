@@ -127,6 +127,7 @@ export function buildSummary(
     instagramTraffic,
     linkBreakdown,
     clickTimeseries: [],
+    avatarPerformance: [],
   };
 }
 
