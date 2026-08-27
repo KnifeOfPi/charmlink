@@ -16,13 +16,13 @@ CharmLink solves this by serving **completely clean pages** to bots while showin
 
 2. **Client-side-only premium links** — Premium links (OnlyFans, Fanvue, etc.) are never in the page source. They're fetched via a separate API call (`POST /api/links/[creator]`) that also filters bots, then injected into the DOM via React state.
 
-3. **HMAC-locked links API** — Premium links load automatically on mount via `POST /api/links/[creator]`, but the request must carry a server-minted HMAC token (bound to slug + IP + a 5-minute time bucket) plus a matching `Origin`/`Sec-Fetch-Site`. Any check that fails gets an identical-shape decoy payload instead of an error, so scraping the endpoint directly never reveals real links.
+3. **HMAC-locked links API** — Premium links load automatically on mount via `POST /api/links/[creator]`, but the request must carry a server-minted HMAC token (bound to slug + a 5-minute time bucket + age-confirmation state) plus a matching `Origin`/`Sec-Fetch-Site`. Any check that fails gets an empty `{ links: [] }` payload instead of an error, so scraping the endpoint directly never reveals real links. The token is deliberately **not** bound to the client IP — see the note in [Security Considerations](#security-considerations) about why that used to reject real visitors.
 
 4. **Per-link age gate** — Sensitive links (not the whole page) route through a `/r/[linkId]` interstitial. The real destination URL is never rendered until the visitor confirms 18+, which sets a server-side `cl_age` cookie; non-sensitive links redirect immediately with no friction.
 
-5. **Honeypot link** — An invisible link in the DOM (`/api/honeypot`) that only bots would discover and follow. Visits are logged with User-Agent, IP, and referer for monitoring.
+5. **Honeypot link** — An invisible, `aria-hidden`, non-tabbable link in the DOM (`/api/honeypot`) that a real visitor cannot see or reach by keyboard, so only something crawling the raw HTML would ever follow it. A hit bans the caller's IP for 24h **only when the request itself looks automated** (empty/bot User-Agent, or no `Sec-Fetch-*`/HTML `Accept`) — plain hits are still logged for monitoring either way. See [Security Considerations](#security-considerations) for why that gate exists.
 
-6. **Rate limiting** — The premium links API limits requests to 30/minute per IP. Over-limit and rejected requests receive the same identical-shape decoy payload as a failed auth check — no error messages that would tip off a bot.
+6. **Rate limiting** — The premium links API limits requests to 30/minute per IP. Over-limit and rejected requests receive the same empty `{ links: [] }` payload as a failed auth check — no error messages, and nothing left to tap, that would tip off a bot or trap a human.
 
 7. **Clean OG meta tags** — `<meta>` tags contain only the creator's name and clean tagline — no NSFW keywords, no adult platform references. Metadata stays generic until the visitor's `cl_age` cookie is set, and always stays generic for link-preview scrapers.
 
@@ -36,9 +36,10 @@ Domain-to-creator mapping is cached in-memory with a 5-minute TTL for performanc
 
 ### Instagram In-App Browser Breakout
 
-When a visitor opens the link from Instagram (which uses an in-app WebView), a banner appears with platform-specific instructions:
-- **iOS**: Attempts to open via `x-safari-https://` scheme, falls back to `window.open`
-- **Android**: Uses `intent://` scheme to open in Chrome
+Instagram's WebView can't launch the system browser via any documented API — `x-safari-https://` was killed by Apple in iOS 14.5 and never replaced, and `window.open`/`window.location.href` to a `https://` URL just stays inside the WebView on every in-app browser (IG, FB, TikTok, LinkedIn). CharmLink combines an automatic attempt with a manual fallback:
+
+- **On page load** — fires `instagram://extbrowser/?url=<current>` once per Instagram session (undocumented, but triggers IG's native "Open in External Browser" handoff on iOS). This is what surfaces the OS-level "this webpage is trying to open [App]" confirmation some visitors see — that dialog is the platform's own gate on custom-scheme handoffs, not something CharmLink can suppress from web code.
+- **Banner, user-initiated** — a hot-pink banner offers a manual escape: **Android** uses `intent://…#Intent;scheme=https;package=com.android.chrome;end` to open Chrome directly; **iOS** copies the URL to the clipboard with instructions to paste into Safari, since no scheme reliably launches it. Per-link clicks add an Android-only `intent://` attempt (with a 500ms fallback to normal navigation) — there is deliberately no iOS branch here.
 
 ## v2 Features — Link Intelligence
 
@@ -137,7 +138,7 @@ styling, bot decoy path, on-mount premium-link fetch).
 - **Serverless PG pool cap** — Postgres pool `max=3` with the Supabase transaction pooler
   (`:6543`) to survive Vercel serverless fan-out without exhausting connections.
 
-### Domain health & cursor fixes (latest)
+### Domain health & cursor fixes
 - **Server-side domain health probe** — the admin domains list used to probe each row with a
   browser-side `fetch()`, which threw on cross-origin policy errors and falsely flagged
   **every** domain as "SSL broken." Health is now probed server-side in
@@ -147,6 +148,29 @@ styling, bot decoy path, on-mount premium-link fetch).
   interactive elements (`button`, `a[href]`, `[role=button]`, tabs/menu items, `select`,
   `summary`, `label[for]`, `.cursor-pointer`) and `cursor: not-allowed` to disabled/`aria-disabled`
   elements. Covers both the admin dashboard and the public CreatorPage.
+
+### Conversion-funnel fixes (2026-08-26, latest)
+Found while investigating a "clicks are up, subs aren't" report. Measured against
+production: **12.6% of all recorded premium clicks** were taps on a dead link the
+links API used to hand out on rejection, which then banned the visitor's IP for
+24h — 86.6% of those bans hit ordinary mobile browsers, not bots.
+- **Rejection payload is inert** — `POST /api/links/[creator]` now returns
+  `{ links: [] }` on any failed check instead of a followable honeypot link.
+- **Link token no longer bound to client IP** — the IP a page renders with and
+  the IP its links-fetch arrives from routinely differ on mobile (carrier NAT,
+  WiFi/cellular handoff), and every mismatch used to trigger the ban above.
+  Old tokens still verify for a grace window so open pages don't break on deploy.
+- **Honeypot bans selectively** — only when the hit itself looks automated
+  (empty/bot UA, or missing both `Sec-Fetch-*` and an HTML `Accept`), not on
+  every visit.
+- **Blocked Visitors card** (`/admin/dashboard`) — count + one-click flush for
+  the ban backlog the old behavior left behind, since fixing the honeypot
+  doesn't retroactively un-ban anyone.
+- **Click counting deduplicated**, **`is_bot` resolved server-side** instead of
+  hardcoded `false`, and **creator-page 404s no longer logged as database
+  errors** — three analytics-correctness bugs found along the way.
+- **Dead `x-safari-https://` scheme removed** from the per-link click handler
+  (Apple killed it in iOS 14.5; it was only adding a 500ms stall).
 
 ## Tech Stack
 
@@ -164,78 +188,88 @@ styling, bot decoy path, on-mount premium-link fetch).
 ```
 charmlink/
 ├── app/
-│   ├── [creator]/              # Public creator pages
-│   │   ├── page.tsx            # Server component — fetches from DB, passes to client
-│   │   └── CreatorPage.tsx     # Client component — all visual effects, age gate, bot evasion
-│   ├── admin/                  # Admin dashboard (shadcn/ui)
-│   │   ├── page.tsx            # Login page
-│   │   ├── layout.tsx          # Admin layout with navigation
-│   │   ├── AdminNav.tsx        # Sidebar navigation
-│   │   ├── useAdminAuth.ts     # Auth hook (localStorage token)
-│   │   ├── dashboard/          # Overview stats + recent activity
-│   │   ├── creators/           # Creator CRUD + link management
-│   │   │   ├── page.tsx        # Creator list + add/delete
-│   │   │   └── [id]/page.tsx   # 5-tab editor (Profile/Theme/Effects/Avatar/Misc)
-│   │   ├── analytics/          # Analytics dashboard
-│   │   │   ├── page.tsx        # Analytics page wrapper
-│   │   │   └── AnalyticsDashboard.tsx  # Charts + stats
-│   │   └── domains/            # Domain management
-│   │       └── page.tsx        # Add/remove domains, DNS instructions
+│   ├── [creator]/               # Public creator pages
+│   │   ├── page.tsx             # Server component — fetches from DB, mints link token, passes to client
+│   │   ├── CreatorPage.tsx      # Client component — visual effects, IG escape, click/beacon handlers
+│   │   ├── AgeGateScreen.tsx    # 18+ confirmation shell, reused by /r/[linkId]
+│   │   └── AgeConfirmButton.tsx # Posts /api/age-confirm, then redirects or reloads
+│   ├── r/[linkId]/page.tsx      # Per-link interstitial — age-gates sensitive links, then redirects
+│   ├── admin/                   # Admin dashboard (shadcn/ui)
+│   │   ├── page.tsx             # Login page
+│   │   ├── layout.tsx           # Admin layout with navigation
+│   │   ├── AdminNav.tsx         # Sidebar navigation
+│   │   ├── CopyButton.tsx       # Copy/open buttons for slug + domain
+│   │   ├── useAdminAuth.ts      # Auth hook (localStorage token)
+│   │   ├── dashboard/           # Overview stats + recent activity + Blocked Visitors card
+│   │   ├── creators/            # Creator CRUD + link management
+│   │   │   ├── page.tsx         # Creator list + add/delete
+│   │   │   └── [id]/page.tsx    # 5-tab editor (Profile/Theme/Effects/Avatar/Misc)
+│   │   ├── analytics/           # Analytics dashboard
+│   │   │   ├── page.tsx         # Analytics page wrapper — owns `period` state
+│   │   │   └── AnalyticsDashboard.tsx  # Charts + stats (controlled by page.tsx via onPeriodChange)
+│   │   └── domains/             # Domain management
+│   │       └── page.tsx         # Add/remove domains, health badges, Heal button
 │   ├── api/
-│   │   ├── admin/              # Protected admin API routes
-│   │   │   ├── creators/       # CRUD for creators
-│   │   │   │   ├── route.ts    # GET (list) / POST (create)
-│   │   │   │   └── [id]/
-│   │   │   │       ├── route.ts      # GET / PUT / DELETE
-│   │   │   │       └── links/
-│   │   │   │           └── route.ts  # GET / POST / PUT / DELETE links
-│   │   │   ├── domains/        # Vercel + Cloudflare domain management
-│   │   │   │   ├── route.ts    # POST (add) / DELETE (remove)
-│   │   │   │   └── status/
-│   │   │   │       └── route.ts      # GET verification status
-│   │   │   └── recent-events/
-│   │   │       └── route.ts    # GET recent analytics events
-│   │   ├── analytics/          # Analytics API (admin-key protected)
+│   │   ├── admin/               # Protected admin API routes (CHARMLINK_ADMIN_KEY)
+│   │   │   ├── creators/        # CRUD for creators (+ [id]/links/ for link CRUD)
+│   │   │   ├── domains/         # Vercel + Cloudflare domain management (+ status/, heal/)
+│   │   │   ├── avatar/          # Client-direct Vercel Blob upload token minting
+│   │   │   ├── bans/            # GET count / POST flush the honeypot ban list
+│   │   │   ├── themes/          # GET built-in theme presets (no auth)
+│   │   │   └── recent-events/   # GET last 20 analytics events
+│   │   ├── analytics/           # Analytics API (admin-key protected)
 │   │   │   ├── [creator]/route.ts    # Per-creator stats
 │   │   │   └── overview/route.ts     # All-creators summary
-│   │   ├── creators/route.ts   # GET list of creator slugs
-│   │   ├── honeypot/route.ts   # Bot honeypot endpoint
-│   │   ├── links/[creator]/route.ts  # GET premium links (bot-filtered, rate-limited)
-│   │   ├── pageview/route.ts   # POST pageview tracking
-│   │   ├── redirect/[linkId]/route.ts  # Click tracking + 302 redirect
-│   │   ├── resolve-domain/route.ts   # Internal domain → slug resolution
-│   │   └── track/route.ts      # POST click tracking
+│   │   ├── creators/route.ts    # GET list of creator slugs
+│   │   ├── links/[creator]/route.ts  # POST premium links — HMAC token + Origin check + rate limit
+│   │   ├── redirect/[linkId]/route.ts  # Records the click, issues the real 302
+│   │   ├── age-confirm/route.ts # Sets the cl_age cookie
+│   │   ├── honeypot/route.ts    # Bot trap — bans only requests that look automated
+│   │   ├── pageview/route.ts    # POST pageview tracking (is_bot resolved server-side)
+│   │   ├── track/route.ts       # POST click tracking (is_bot resolved server-side)
+│   │   ├── resolve-domain/route.ts       # Internal: custom domain → creator slug (middleware)
+│   │   └── resolve-creator-meta/route.ts # Internal: creator existence + cloak_enabled (middleware)
 │   ├── globals.css
 │   ├── layout.tsx
-│   └── page.tsx                # Default landing page
-├── components/ui/              # shadcn/ui components
-│   ├── badge.tsx
-│   ├── button.tsx
-│   ├── card.tsx
-│   ├── dialog.tsx
-│   ├── dropdown-menu.tsx
-│   ├── input.tsx
-│   ├── label.tsx
-│   ├── popover.tsx
-│   ├── select.tsx
-│   ├── separator.tsx
-│   ├── switch.tsx
-│   ├── tabs.tsx
-│   └── tooltip.tsx
+│   ├── robots.ts                # noindex everywhere
+│   └── page.tsx                 # Default landing page
+├── components/ui/                # shadcn/ui components (badge, button, card, dialog,
+│                                  #   dropdown-menu, input, label, popover, select,
+│                                  #   separator, switch, tabs, tooltip)
 ├── lib/
-│   ├── analytics.ts            # Legacy file-based analytics (kept for reference)
-│   ├── bot-detect.ts           # Bot UA detection
-│   ├── cloudflare-dns.ts       # Cloudflare DNS API client
-│   ├── db.ts                   # Database layer — all CRUD + analytics queries
-│   ├── types.ts                # TypeScript interfaces
-│   ├── utils.ts                # shadcn/ui utility (cn helper)
-│   └── vercel-domains.ts       # Vercel Domains API client
-├── middleware.ts                # Bot detection + custom domain routing
+│   ├── bot-detect.ts             # Layered detection: isbot + Meta-2026 UAs + ASN + KV ban list
+│   ├── scraper-detect.ts         # Link-preview scraper UA patterns (for the decoy bypass)
+│   ├── datacenter-asns.ts        # Hosting-provider ASN list
+│   ├── event-bot-flag.ts         # Resolves is_bot for analytics events from middleware's x-is-bot
+│   ├── rate-limit.ts             # Vercel KV sliding-window limiter
+│   ├── kv-ban.ts                 # Honeypot IP ban list (24h TTL)
+│   ├── link-token.ts             # HMAC link token mint/verify — NOT bound to client IP
+│   ├── turnstile.ts              # Server-side Turnstile verification
+│   ├── turnstile-admin.ts        # Widget hostname auto-sync to Cloudflare
+│   ├── cloudflare.ts             # Zone provisioning (WAF rules, settings, gray→orange flip)
+│   ├── cloudflare-dns.ts         # CNAME + orange-cloud DNS record management
+│   ├── vercel-domains.ts         # Vercel Domains API client
+│   ├── decoy/
+│   │   ├── themes.ts             # Wholesome decoy theme bundles, slug-deterministic
+│   │   └── cloak.ts              # Scraper bypass renderer for middleware
+│   ├── themes.ts                 # Visual theme presets for real creator pages
+│   ├── fonts.ts                  # Google Fonts dynamic loader
+│   ├── db.ts                     # Database layer — all CRUD + analytics queries
+│   ├── analytics.ts              # Legacy file-based analytics (kept for reference)
+│   ├── types.ts                  # TypeScript interfaces
+│   └── utils.ts                  # shadcn/ui utility (cn helper)
+├── middleware.ts                  # Bot decoy bypass, custom-domain routing, CSP + header stripping
+├── next.config.ts                 # Image remotePatterns (Supabase, Blob, OnlyFans, Imgur)
 ├── scripts/
-│   ├── migrate.ts              # DB schema creation + seed from creators.json
-│   ├── migrate-v2.ts           # v2 ALTER TABLE migration (links + location)
-│   └── migrate-v3.ts           # v3 ALTER TABLE migration (visual design system)
-├── creators.json               # Sample creator data (used for seeding only)
+│   ├── migrate.ts, migrate-v2.ts, migrate-v3.ts  # Schema migrations
+│   ├── cf-backfill.ts            # Provision/repair Cloudflare state across all domains
+│   └── cf-heal.ts                # CLI: heal a single stuck domain (or --all)
+├── supabase/migrations/           # Raw SQL migrations (creators/links schema lives in
+│                                   #   scripts/migrate.ts; this dir covers what was
+│                                   #   added out-of-band — honeypot_logs, cloak_enabled,
+│                                   #   charmlink_creator_domains + its sync trigger)
+├── creators.json                  # Sample creator data (used for seeding only)
+├── docs/                          # See below
 ├── package.json
 └── tsconfig.json
 ```
@@ -412,6 +446,7 @@ Access at `/admin` with your `CHARMLINK_ADMIN_KEY`.
 ### Dashboard (`/admin/dashboard`)
 - Total creators, views, clicks, CTR
 - Recent activity feed (last 20 events)
+- **Blocked Visitors card** — shows how many IPs the honeypot currently has banned (24h TTL each), with a one-click **Clear all bans** to flush the whole list immediately. A stale backlog otherwise keeps real visitors seeing the decoy page until their ban expires on its own; genuine bots get re-banned on their next hit, so clearing is safe
 
 ### Creators (`/admin/creators`)
 - View all creators with quick stats
@@ -566,15 +601,19 @@ Tested architecture supports 100+ creators with custom domains from a single dep
 | `POST` | `/api/admin/avatar` | Mint a scoped client-direct upload token for Vercel Blob (browser uploads straight to Blob, not through this route) |
 | `GET` | `/api/admin/recent-events` | Last 20 analytics events |
 | `GET` | `/api/admin/themes` | List built-in theme presets (no auth — static data only) |
+| `GET` | `/api/admin/bans` | Count IPs currently on the honeypot ban list (read-only) |
+| `POST` | `/api/admin/bans` | Delete every honeypot ban, immediately un-blocking everyone (also available as a button on `/admin/dashboard`) |
 
 ## Security Considerations
 
 - **Admin key**: All admin routes require `CHARMLINK_ADMIN_KEY` via Bearer token. Set a strong, random key.
-- **No credentials in code**: All secrets are environment variables.
+- **No credentials in code**: All secrets are environment variables. `CHARMLINK_LINK_TOKEN_SECRET` is the one exception worth knowing about: there's a hardcoded dev fallback for local development, but the app refuses to start in production (`NODE_ENV=production`) if the real secret isn't set, rather than silently signing tokens with a value that's public in this repo.
 - **Bot detection is defense-in-depth**: Multiple layers (UA matching, ASN checks, HMAC-locked links API, decoy cloaking, honeypot, rate limiting, Turnstile escalation) make it progressively harder for bots to access premium links.
 - **Rate limiting**: The links API limits to 30 requests/minute per IP to prevent scraping.
 - **No NSFW in HTML source**: Premium link URLs never appear in server-rendered HTML, page source, or OG meta tags.
-- **Honeypot monitoring**: Check Vercel function logs for `[honeypot]` entries to identify bot IPs.
+- **Honeypot monitoring**: Check Vercel function logs for `[honeypot]` entries (each one now says `banned: true|false`) to identify bot IPs, or read `GET /api/admin/bans` for the current ban count.
+- **Ban gate is deliberately narrow**: the honeypot only bans a hit that itself looks automated (empty/bot User-Agent, or missing both `Sec-Fetch-*` and an HTML `Accept`). Measured against production before this shipped, an earlier, unconditional version banned every hit — 86.6% of them carried ordinary mobile browser User-Agents and only 0.12% carried a bot signature, so it was mostly locking out real visitors rather than catching scrapers. If you ever loosen this gate again, check that ratio in `honeypot_logs` before shipping it.
+- **The links-API rejection payload is inert on purpose**: a failed check returns `{ links: [] }`, never a followable URL. An earlier version pointed rejected callers at the honeypot itself, which turned every false rejection (e.g. a mobile IP change between page load and the links fetch) into a 24h ban — see the point above.
 
 ## Roadmap
 

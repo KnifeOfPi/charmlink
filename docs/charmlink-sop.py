@@ -185,8 +185,8 @@ body("CharmLink is a link-in-bio platform built specifically for OnlyFans and Fa
 spacer()
 body("<b>How it works:</b>")
 bullet("Each creator gets a landing page (e.g., <font color='#EC1CA4'>hollybae.me</font>) that shows their social links and premium links")
-bullet("When Instagram's bot crawls the page, it only sees clean social links (Twitter, TikTok, etc.)")
-bullet("When a real human visits and interacts with the page, premium links (OnlyFans, Fanvue) appear")
+bullet("When Instagram's bot crawls the page, it only sees clean social links (Twitter, TikTok, etc.) — premium links are never in the page source at all")
+bullet("When a real human's browser loads the page, premium links load automatically a moment later, gated by a signed token and bot checks — not by waiting for the visitor to click or scroll")
 bullet("The bot never sees the adult content links → Instagram doesn't ban the account")
 
 spacer()
@@ -498,8 +498,15 @@ spacer()
 tip("The most important metric is <b>CTR (Click-Through Rate)</b>. If a creator has high views but low CTR, "
     "their premium links might need better labels, badges, or positioning.")
 
-tip("If <b>Bot Views</b> are much higher than Human Views, that's normal — it means the bot protection is working. "
-    "Instagram and Google crawl frequently.")
+tip("Some nonzero <b>Bot Views</b> alongside Human Views is normal — it means the bot protection is working and "
+    "Instagram/Google crawl activity is being correctly separated out, not counted as real traffic.")
+
+spacer()
+subhead("Blocked Visitors (Dashboard)")
+body("The main Dashboard page has a <b>Blocked Visitors</b> card showing how many visitors are currently blocked "
+     "by the bot trap, with a <b>Clear all bans</b> button. A block normally clears itself after 24 hours, but if "
+     "a creator reports someone genuinely real can't see their premium links, check this card first and clear it "
+     "if the count looks high — it's a one-click, safe action.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 9: SECURITY RULES
@@ -544,9 +551,13 @@ bullet("Wait 5–10 minutes — Vercel needs time to provision the cert")
 bullet("Check the domain status in the Domains admin page")
 
 subhead("Premium links not showing")
-bullet("This is by design — premium links only appear after user interaction (scroll, click, tap)")
+bullet("Check the <b>Blocked Visitors</b> card on the Dashboard — if that visitor's IP was flagged by the bot trap, "
+       "they'll see a blank/generic page instead of premium links until the block clears. You can clear it yourself "
+       "with the button there; it's safe to click anytime.")
 bullet("Make sure you're testing on a real device, not a bot/crawler")
 bullet("Check that the links are set to type <b>'premium'</b> and are <b>active</b>")
+bullet("Premium links load automatically a moment after the page opens — if they never appear at all (not just "
+       "delayed), it's not a waiting problem; escalate to Nate")
 
 subhead("Analytics showing zero")
 bullet("Analytics require real traffic — check that someone has actually visited the page")
