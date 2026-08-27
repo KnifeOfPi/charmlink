@@ -1,6 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import { AnalyticsSummary } from "../../../lib/types";
+
+const PREMIUM_COLOR = "#e91e8a";
+const TOTAL_COLOR = "#6b7280"; // gray-500 — context bar, not an identity color
 
 interface TotalsData {
   totalViews: number;
@@ -50,7 +54,177 @@ function BarChart({ data, max }: { data: Array<{ label: string; count: number }>
   );
 }
 
-function CreatorCard({ summary, period }: { summary: AnalyticsSummary; period: string }) {
+function formatCompact(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, "")}K`;
+  return `${n}`;
+}
+
+function bucketLabel(bucket: string, period: "today" | "7d" | "30d" | "all"): string {
+  const d = new Date(bucket);
+  if (period === "today") return d.toLocaleTimeString("en-US", { hour: "numeric" });
+  if (period === "7d") return d.toLocaleDateString("en-US", { weekday: "short" });
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function bucketLabelFull(bucket: string, period: "today" | "7d" | "30d" | "all"): string {
+  const d = new Date(bucket);
+  return period === "today"
+    ? d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric" })
+    : d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function ClickTimeseriesChart({
+  data,
+  period,
+}: {
+  data: AnalyticsSummary["clickTimeseries"];
+  period: "today" | "7d" | "30d" | "all";
+}) {
+  const [hovered, setHovered] = useState<number | null>(null);
+  const [showTable, setShowTable] = useState(false);
+
+  const hasData = data.length > 0 && data.some((d) => d.total > 0);
+  const max = Math.max(...data.map((d) => d.total), 1);
+  const labelStep = Math.max(1, Math.ceil(data.length / 8));
+  const chartHeight = 100;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-gray-400 text-xs uppercase tracking-wide">Clicks over time</h3>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3 text-xs text-gray-400">
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: TOTAL_COLOR }} />
+              Total
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: PREMIUM_COLOR }} />
+              Premium
+            </span>
+          </div>
+          {hasData && (
+            <button
+              type="button"
+              onClick={() => setShowTable((v) => !v)}
+              className="text-xs text-gray-500 hover:text-gray-300 underline underline-offset-2"
+            >
+              {showTable ? "View chart" : "View table"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {!hasData ? (
+        <p className="text-gray-600 text-sm">No data</p>
+      ) : showTable ? (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs text-left">
+            <thead>
+              <tr className="text-gray-500 border-b border-gray-800">
+                <th className="py-1.5 pr-3 font-normal">Period</th>
+                <th className="py-1.5 pr-3 font-normal">Total clicks</th>
+                <th className="py-1.5 font-normal">Premium clicks</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.map((d, i) => (
+                <tr key={i} className="border-b border-gray-900 text-gray-300">
+                  <td className="py-1.5 pr-3">{bucketLabelFull(d.bucket, period)}</td>
+                  <td className="py-1.5 pr-3 tabular-nums">{d.total}</td>
+                  <td className="py-1.5 tabular-nums">{d.premium}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="relative">
+          {hovered !== null && (
+            <div
+              className="absolute z-10 bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-xs shadow-lg pointer-events-none whitespace-nowrap"
+              style={{
+                bottom: chartHeight + 28,
+                left: `${Math.min(92, Math.max(8, ((hovered + 0.5) / data.length) * 100))}%`,
+                transform: "translateX(-50%)",
+              }}
+            >
+              <p className="text-white font-semibold mb-1">{bucketLabelFull(data[hovered].bucket, period)}</p>
+              <p className="text-gray-300">
+                <span style={{ color: PREMIUM_COLOR }} className="font-bold">
+                  {data[hovered].premium}
+                </span>{" "}
+                premium
+              </p>
+              <p className="text-gray-400">
+                <span className="text-gray-300 font-bold">{data[hovered].total}</span> total
+              </p>
+            </div>
+          )}
+
+          {/* Gridlines */}
+          <div className="absolute inset-x-0 top-0 flex flex-col justify-between text-[10px] text-gray-600 pointer-events-none" style={{ height: chartHeight }}>
+            <div className="border-t border-gray-800/70 relative">
+              <span className="absolute -top-2.5 right-0 bg-gray-900 pl-1">{formatCompact(max)}</span>
+            </div>
+            <div className="border-t border-gray-800/50" />
+            <div className="border-t border-gray-800/70 relative">
+              <span className="absolute -top-2.5 right-0 bg-gray-900 pl-1">0</span>
+            </div>
+          </div>
+
+          <div className="flex items-end gap-[3px]" style={{ height: chartHeight }}>
+            {data.map((d, i) => (
+              <div
+                key={i}
+                tabIndex={0}
+                role="img"
+                aria-label={`${bucketLabelFull(d.bucket, period)}: ${d.total} total clicks, ${d.premium} premium`}
+                onMouseEnter={() => setHovered(i)}
+                onMouseLeave={() => setHovered(null)}
+                onFocus={() => setHovered(i)}
+                onBlur={() => setHovered(null)}
+                className="relative flex-1 h-full flex items-end justify-center outline-none focus-visible:ring-2 focus-visible:ring-pink-500 rounded"
+              >
+                <div
+                  className="absolute bottom-0 w-full max-w-[18px] rounded-t-[4px] transition-all"
+                  style={{
+                    height: `${(d.total / max) * 100}%`,
+                    backgroundColor: hovered === i ? "#8b95a6" : TOTAL_COLOR,
+                    opacity: hovered === i ? 1 : 0.7,
+                  }}
+                />
+                <div
+                  className="absolute bottom-0 w-[45%] max-w-[8px] rounded-t-[4px] transition-all"
+                  style={{ height: `${(d.premium / max) * 100}%`, backgroundColor: PREMIUM_COLOR }}
+                />
+              </div>
+            ))}
+          </div>
+
+          <div className="flex gap-[3px] mt-1.5">
+            {data.map((d, i) => (
+              <div key={i} className="flex-1 text-center">
+                {i % labelStep === 0 && (
+                  <span className="text-[10px] text-gray-600">{bucketLabel(d.bucket, period)}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CreatorCard({
+  summary,
+  period,
+}: {
+  summary: AnalyticsSummary;
+  period: "today" | "7d" | "30d" | "all";
+}) {
   const deviceData = [
     { label: "Mobile", count: summary.deviceBreakdown.mobile },
     { label: "Desktop", count: summary.deviceBreakdown.desktop },
@@ -83,6 +257,11 @@ function CreatorCard({ summary, period }: { summary: AnalyticsSummary; period: s
           sub="premium / human views"
         />
         <StatCard label="IG Traffic" value={summary.instagramTraffic} sub="from Instagram" />
+      </div>
+
+      {/* Clicks over time */}
+      <div className="mb-6">
+        <ClickTimeseriesChart data={summary.clickTimeseries} period={period} />
       </div>
 
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">

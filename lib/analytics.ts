@@ -126,6 +126,7 @@ export function buildSummary(
     countryBreakdown,
     instagramTraffic,
     linkBreakdown,
+    clickTimeseries: [],
   };
 }
 

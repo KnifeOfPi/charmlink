@@ -467,6 +467,13 @@ function periodCutoff(period: "today" | "7d" | "30d" | "all"): string | null {
   return now.toISOString();
 }
 
+/** Bucket granularity for the clicks-over-time chart, keyed to the period filter. */
+function timeseriesBucketUnit(period: "today" | "7d" | "30d" | "all"): "hour" | "day" | "week" {
+  if (period === "today") return "hour";
+  if (period === "all") return "week";
+  return "day";
+}
+
 export async function getAnalytics(
   creatorSlug: string,
   period: "today" | "7d" | "30d" | "all"
@@ -554,6 +561,37 @@ export async function getAnalytics(
     params
   );
 
+  // Clicks over time — bucketed by hour/day/week depending on period, zero-filled
+  // via generate_series so gaps in traffic show as flat gaps rather than a
+  // shortened axis. When cutoff is null ("all"), the range starts at the
+  // creator's first-ever event instead of an arbitrary lookback.
+  const bucketUnit = timeseriesBucketUnit(period);
+  const tsRows = await query<{ bucket: string; total: string; premium: string }>(
+    `WITH bounds AS (
+       SELECT
+         date_trunc($2, COALESCE($3::timestamptz, (
+           SELECT MIN(created_at) FROM charmlink_events WHERE creator_slug = $1
+         ))) AS start_ts,
+         date_trunc($2, now()) AS end_ts
+     ),
+     buckets AS (
+       SELECT generate_series(start_ts, end_ts, ('1 ' || $2)::interval) AS bucket
+       FROM bounds
+       WHERE start_ts IS NOT NULL
+     )
+     SELECT
+       b.bucket,
+       COUNT(e.id) AS total,
+       COUNT(e.id) FILTER (WHERE e.link_type = 'premium') AS premium
+     FROM buckets b
+     LEFT JOIN charmlink_events e
+       ON e.creator_slug = $1 AND ${DEDUPED_CLICKS}
+       AND date_trunc($2, e.created_at) = b.bucket
+     GROUP BY b.bucket
+     ORDER BY b.bucket`,
+    [creatorSlug, bucketUnit, cutoff]
+  );
+
   const pv = pvRows[0];
   const clk = clkRows[0];
   const totalViews = parseInt(pv?.total ?? "0");
@@ -598,6 +636,11 @@ export async function getAnalytics(
       url: r.link_url,
       type: r.link_type,
       clicks: parseInt(r.count),
+    })),
+    clickTimeseries: tsRows.map((r) => ({
+      bucket: r.bucket,
+      total: parseInt(r.total),
+      premium: parseInt(r.premium),
     })),
   };
 }

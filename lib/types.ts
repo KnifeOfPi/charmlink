@@ -142,4 +142,5 @@ export interface AnalyticsSummary {
   countryBreakdown: Array<{ country: string; count: number }>;
   instagramTraffic: number;
   linkBreakdown: Array<{ label: string; url: string; type: string; clicks: number }>;
+  clickTimeseries: Array<{ bucket: string; total: number; premium: number }>;
 }
