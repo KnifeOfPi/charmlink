@@ -509,12 +509,21 @@ export async function getAnalytics(
     params
   );
 
-  // Top referrers
+  // Top referrers — grouped by hostname, not the raw referer string. The raw
+  // Referer header includes path/query (e.g. https://fav-site.com/post/123,
+  // https://fav-site.com/?utm=x), so grouping on the exact string split what
+  // is really one traffic source into many rows that all *display* the same
+  // (the frontend already strips to hostname for the label) — the "top 10"
+  // ended up being fragments of one source rather than the top 10 sources.
   const refRows = await query<{ referer: string; count: string }>(
-    `SELECT referer, COUNT(*) AS count
+    `SELECT
+      CASE WHEN referer = '' THEN ''
+           ELSE regexp_replace(referer, '^https?://([^/]+).*$', '\\1')
+      END AS referer,
+      COUNT(*) AS count
      FROM charmlink_events e
      WHERE e.creator_slug = $1 AND e.type = 'pageview' ${timeFilter}
-     GROUP BY referer ORDER BY count DESC LIMIT 10`,
+     GROUP BY 1 ORDER BY count DESC LIMIT 10`,
     params
   );
 
