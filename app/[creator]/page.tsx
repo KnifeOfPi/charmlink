@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { notFound } from "next/navigation";
 import { headers, cookies } from "next/headers";
 import { Metadata } from "next";
@@ -30,6 +31,21 @@ const GENERIC_METADATA: Metadata = {
   robots: { index: false, follow: false },
 };
 
+/** The share-preview payload — the part a crawler actually surfaces. Kept
+ *  generic for anyone who hasn't confirmed their age (which is every bot, since
+ *  bots carry no cookies). */
+const GENERIC_PREVIEW: Pick<Metadata, "description" | "openGraph" | "twitter" | "robots"> = {
+  description: GENERIC_METADATA.description,
+  openGraph: GENERIC_METADATA.openGraph,
+  twitter: GENERIC_METADATA.twitter,
+  robots: GENERIC_METADATA.robots,
+};
+
+// generateMetadata and the page body both need the creator row. React's
+// per-request cache collapses them into a single query — without it, giving the
+// tab a real title would have added a second DB round trip to every pageview.
+const getCreatorCached = cache(getCreatorBySlug);
+
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { creator: slug } = await params;
 
@@ -38,17 +54,25 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const cookieStore = await cookies();
   const hasAgeCookie = cookieStore.get("cl_age")?.value === "1";
 
-  // Generic metadata for scrapers and unconfirmed visitors
-  if (isLinkPreviewScraper(ua) || !hasAgeCookie) {
+  // A recognised link-preview crawler gets nothing identifying, title included.
+  if (isLinkPreviewScraper(ua)) {
     return GENERIC_METADATA;
   }
 
   try {
-    const creator = await getCreatorBySlug(slug);
+    const creator = await getCreatorCached(slug);
     if (!creator) return { title: "Not Found" };
 
+    // The browser tab shows the creator's name for everyone. The share preview
+    // (og:image, og:description) stays generic until the visitor is age
+    // confirmed — that payload is what a crawler republishes, and the avatar
+    // and tagline in it are far more identifying than a name in a <title>.
+    if (!hasAgeCookie) {
+      return { title: creator.name, ...GENERIC_PREVIEW };
+    }
+
     return {
-      title: `${creator.name} | Creator`,
+      title: creator.name,
       description: creator.tagline,
       openGraph: {
         title: creator.name,
@@ -87,7 +111,7 @@ export default async function CreatorPageServer({ params }: PageProps) {
   let links: Awaited<ReturnType<typeof getCreatorLinks>>;
 
   try {
-    dbCreator = await getCreatorBySlug(slug);
+    dbCreator = await getCreatorCached(slug);
     links = dbCreator ? await getCreatorLinks(dbCreator.id) : [];
   } catch (err) {
     // A genuine DB/connection failure. Worth logging loudly.
