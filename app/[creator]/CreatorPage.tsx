@@ -237,24 +237,42 @@ interface AvatarProps {
   accentColor: string;
 }
 
-// Avatar sizing. The old fixed 124/96px read small on a modern phone, where the
-// avatar is the first thing a visitor judges. These scale with the viewport and
-// cap out on desktop: on a 390px-wide iPhone the gradient avatar lands at ~172px
-// (was 124), and the floor keeps it sane on a 320px device.
+// Avatar sizing. The avatar is the first thing a visitor judges, so it is sized
+// as a hero element rather than a thumbnail. Three terms, smallest wins:
 //
-// `min()` in a CSS length works in every browser this app targets, and because
-// the value is handed to width/height directly there is no layout shift — the
-// element is sized before paint, unlike a JS-measured breakpoint.
-const AVATAR_SIZE_RINGED = "min(44vw, 180px)";
-const AVATAR_SIZE_PLAIN = "min(38vw, 152px)";
+//   vw  — the real driver in portrait. 62vw puts the ringed avatar at ~242px on
+//         a 390px iPhone (the original fixed size was 124px).
+//   vh  — a guard, not the usual binder. It stops the photo from eating the
+//         screen where height is short: landscape, a small phone, or Instagram's
+//         in-app browser with its chrome overlaying the viewport. On a tall
+//         phone it never binds; on a rotated one it takes over and keeps the
+//         name and links above the fold.
+//   px  — the desktop cap, so a wide window doesn't render an absurd circle.
+//
+// `min()` is resolved by the browser at layout time, so unlike a JS-measured
+// breakpoint there is no flash of a wrong size before paint.
+const AVATAR_SIZE_RINGED = "min(62vw, 34vh, 280px)";
+const AVATAR_SIZE_PLAIN = "min(58vw, 32vh, 260px)";
+
+// Tells next/image which srcset entry to fetch. Without it `fill` assumes the
+// image spans 100vw and pulls a needlessly large file on phones — the avatar is
+// the page's only blocking image, so that is wasted bandwidth on exactly the
+// connection that can least afford it.
+const AVATAR_IMAGE_SIZES = "(max-width: 640px) 62vw, 280px";
 
 function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, accentColor }: AvatarProps) {
-  // The online dot scales with the avatar so it stays proportional rather than
-  // shrinking into a speck against the larger photo.
+  // The online dot tracks the avatar's size but is clamped at both ends: a
+  // straight percentage would render a ~39px blob on the hero-sized avatar and
+  // a speck on a landscape-constrained one.
   const online = (
     <div
       className="absolute z-20"
-      style={{ width: "16%", height: "16%", bottom: "3%", right: "3%", minWidth: 18, minHeight: 18 }}
+      style={{
+        width: "clamp(16px, 13%, 28px)",
+        height: "clamp(16px, 13%, 28px)",
+        bottom: "4%",
+        right: "4%",
+      }}
     >
       <div
         className="absolute inset-0 rounded-full"
@@ -297,7 +315,7 @@ function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, acce
             position: "absolute",
             inset: 0,
             borderRadius: "50%",
-            padding: 4,
+            padding: 5,
             background: `conic-gradient(from 180deg, ${color1}, ${color2}, ${color3}, ${color1})`,
             boxShadow: `0 0 40px -8px ${accentColor}`,
             animation: "auroraSpinRing 9s linear infinite",
@@ -315,7 +333,7 @@ function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, acce
               willChange: "transform",
             }}
           >
-            <Image src={src} alt={name} fill className="object-cover" />
+            <Image src={src} alt={name} fill priority sizes={AVATAR_IMAGE_SIZES} className="object-cover" />
           </div>
         </div>
         {online}
@@ -327,7 +345,7 @@ function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, acce
     return (
       <div className="relative" style={{ width: AVATAR_SIZE_PLAIN, height: AVATAR_SIZE_PLAIN }}>
         <div style={{ position: "absolute", inset: 0, borderRadius: "50%", overflow: "hidden" }}>
-          <Image src={src} alt={name} fill className="object-cover" />
+          <Image src={src} alt={name} fill priority sizes={AVATAR_IMAGE_SIZES} className="object-cover" />
         </div>
         {online}
       </div>
@@ -346,7 +364,7 @@ function AvatarWithBorder({ src, name, borderStyle, color1, color2, color3, acce
         }}
       />
       <div style={{ position: "absolute", inset: 0, borderRadius: "50%", overflow: "hidden" }}>
-        <Image src={src} alt={name} fill className="object-cover" />
+        <Image src={src} alt={name} fill priority sizes={AVATAR_IMAGE_SIZES} className="object-cover" />
       </div>
       {online}
     </div>
