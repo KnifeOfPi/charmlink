@@ -774,7 +774,7 @@ function handleDeepLink(url: string, recoveryUrl: string) {
 
 const IG_DISMISS_KEY = "cl_ig_dismiss";
 
-function InstagramBrowserBanner() {
+function InstagramBrowserBanner({ surface }: { surface: "instagram" | "threads" }) {
   const [platform, setPlatform] = useState<"ios" | "android" | "unknown">("unknown");
   const [dismissed, setDismissed] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -867,7 +867,7 @@ function InstagramBrowserBanner() {
         ✕
       </button>
       <p style={{ fontSize: 12, fontWeight: 600, paddingRight: 20, color: GLASS.muted }}>
-        Tap below to open this page outside Instagram:
+        Tap below to open this page outside {surface === "threads" ? "Threads" : "Instagram"}:
       </p>
       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
         <button
@@ -1416,6 +1416,7 @@ export function CreatorPage({
   const [premiumVisible, setPremiumVisible] = useState(false);
   const [interacted, setInteracted] = useState(false);
   const [isInstagram, setIsInstagram] = useState(false);
+  const [inAppSurface, setInAppSurface] = useState<"instagram" | "threads" | null>(null);
   const [turnstileChallenge, setTurnstileChallenge] = useState<{
     siteKey: string;
   } | null>(null);
@@ -1471,11 +1472,21 @@ export function CreatorPage({
 
   useEffect(() => {
     const ua = navigator.userAgent;
-    const igDetected = ua.includes("Instagram");
+    const uaLower = ua.toLowerCase();
+    const isIG      = ua.includes("Instagram");
+    const isThreads = uaLower.includes("threads") || uaLower.includes("barcelona");
+    // IG is checked FIRST: some Threads builds are derived from the IG codebase and
+    // may carry BOTH tokens. Treating those as Instagram preserves today's exact
+    // (working, verified-on-device) behaviour and avoids regressing IG traffic.
+    const surface: "instagram" | "threads" | null = isIG ? "instagram" : isThreads ? "threads" : null;
+    // `isInstagram` == "in a Meta in-app webview". Keeping this name/shape means
+    // Threads now registers as in-app traffic with zero API/DB/type changes.
+    const igDetected = surface !== null;
     setIsInstagram(igDetected);
+    setInAppSurface(surface);
 
-    // ── IG WebView auto-escape ─────────────────────────────────────────────────
-    if (igDetected && !isBot) {
+    // ── IG / Threads WebView auto-escape ───────────────────────────────────────
+    if (surface && !isBot) {
       try {
         if (!sessionStorage.getItem("cl_escape_fired")) {
           sessionStorage.setItem("cl_escape_fired", "1");
@@ -1483,13 +1494,23 @@ export function CreatorPage({
           const bare = full.replace(/^https?:\/\//, "");
           const isIOS = /iPad|iPhone|iPod/.test(ua) && !(window as unknown as { MSStream?: unknown }).MSStream;
           const fire = () => {
-            try {
-              window.location.href =
-                "instagram://extbrowser/?url=" + encodeURIComponent(full);
-            } catch {
-              /* noop */
+            if (surface === "instagram") {
+              try {
+                window.location.href =
+                  "instagram://extbrowser/?url=" + encodeURIComponent(full);
+              } catch {
+                /* noop */
+              }
+              if (isIOS) return;
+            } else {
+              // Threads. NEVER fire instagram:// here — from inside Threads it
+              // hands off to the Instagram app, not a browser (strictly worse
+              // than doing nothing). On iOS there is no safe scheme to fire
+              // (x-safari- was removed in iOS 14.5) — show the banner only.
+              if (isIOS) return;
+              // Android: intent:// is app-agnostic and safe from Threads.
+              try { window.location.href = "intent://" + bare + "#Intent;scheme=https;end"; } catch { /* noop */ }
             }
-            if (isIOS) return;
             setTimeout(() => {
               try { window.location.href = "googlechromes://" + bare; } catch { /* noop */ }
             }, 1500);
@@ -1511,6 +1532,10 @@ export function CreatorPage({
           // delay, it did NOT take. Success unloads the page and this never fires;
           // absence of a beacon = success. Do not log successes from the client.
           const escPlatform = isIOS ? "ios" : /Android/.test(ua) ? "android" : "other";
+          // Threads-on-iOS fires no scheme (see above), so its beacon will always
+          // report a "failure" — that is expected, not a bug: there was no escape
+          // attempt to succeed. IG and Threads escape-failure rates are separated
+          // by this `surface` field.
           setTimeout(() => {
             try {
               if (document.visibilityState === "visible") {
@@ -1518,7 +1543,7 @@ export function CreatorPage({
                   creator: slug,
                   sessionId: sessionIdRef.current,
                   platform: escPlatform,
-                  surface: "instagram",
+                  surface,
                   userAgent: navigator.userAgent,
                 });
               }
@@ -1714,8 +1739,8 @@ export function CreatorPage({
         }}
       />
 
-      {/* IG banner */}
-      {isInstagram && <InstagramBrowserBanner />}
+      {/* IG / Threads banner */}
+      {inAppSurface && <InstagramBrowserBanner surface={inAppSurface} />}
 
       {/* Background effects */}
       {creator.show_floating_icons && (
@@ -1744,7 +1769,7 @@ export function CreatorPage({
           paddingLeft: 18,
           paddingRight: 18,
           paddingBottom: 48,
-          paddingTop: isInstagram ? "8rem" : "52px",
+          paddingTop: inAppSurface ? "8rem" : "52px",
           color: theme.textColor,
           fontFamily,
         }}
