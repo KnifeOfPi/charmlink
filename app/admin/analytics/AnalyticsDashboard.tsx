@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { AnalyticsSummary } from "../../../lib/types";
+import type { ModelAnalytics } from "../../../lib/analytics-rollup";
 
 const PREMIUM_COLOR = "#e91e8a";
 const TOTAL_COLOR = "#6b7280"; // gray-500 — context bar, not an identity color
@@ -16,7 +17,7 @@ interface TotalsData {
 }
 
 interface DashboardProps {
-  summaries: AnalyticsSummary[];
+  summaries: ModelAnalytics[];
   totals: TotalsData;
   period: "today" | "7d" | "30d" | "all";
   onPeriodChange: (period: "today" | "7d" | "30d" | "all") => void;
@@ -307,11 +308,59 @@ function AvatarPerformance({
   );
 }
 
+/** Per-domain breakdown under a model card. Collapsed by default: the point of
+ *  rolling up is that the person is the unit you read, with domains available
+ *  when a number needs explaining. */
+function SiteBreakdown({ sites }: { sites: ModelAnalytics["sites"] }) {
+  const [open, setOpen] = useState(false);
+  if (sites.length <= 1) return null;
+
+  return (
+    <div className="mt-6">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="text-gray-400 hover:text-gray-200 text-xs uppercase tracking-wide flex items-center gap-1.5"
+      >
+        <span className={`transition-transform ${open ? "rotate-90" : ""}`}>▶</span>
+        {sites.length} domains
+      </button>
+      {open && (
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full text-xs text-left">
+            <thead>
+              <tr className="text-gray-500 border-b border-gray-800">
+                <th className="py-1.5 pr-3 font-normal">Domain</th>
+                <th className="py-1.5 pr-3 font-normal">Views</th>
+                <th className="py-1.5 pr-3 font-normal">Premium</th>
+                <th className="py-1.5 font-normal">CTR</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sites.map((s) => (
+                <tr key={s.creator} className="border-b border-gray-900 text-gray-300">
+                  <td className="py-1.5 pr-3">
+                    {s.customDomain ?? `/${s.creator}`}
+                    <span className="text-gray-600 ml-1.5">/{s.creator}</span>
+                  </td>
+                  <td className="py-1.5 pr-3 tabular-nums">{s.totalViews.toLocaleString()}</td>
+                  <td className="py-1.5 pr-3 tabular-nums">{s.premiumClicks.toLocaleString()}</td>
+                  <td className="py-1.5 tabular-nums">{s.ctr}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CreatorCard({
   summary,
   period,
 }: {
-  summary: AnalyticsSummary;
+  summary: ModelAnalytics;
   period: "today" | "7d" | "30d" | "all";
 }) {
   const deviceData = [
@@ -332,7 +381,14 @@ function CreatorCard({
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-bold text-white capitalize">{summary.creator}</h2>
+        <div>
+          <h2 className="text-xl font-bold text-white capitalize">{summary.modelName}</h2>
+          {summary.sites.length > 1 && (
+            <p className="text-gray-500 text-xs mt-0.5">
+              combined across {summary.sites.length} domains
+            </p>
+          )}
+        </div>
         <span className="text-xs bg-gray-800 text-gray-400 px-2 py-1 rounded-full">{period}</span>
       </div>
 
@@ -393,6 +449,8 @@ function CreatorCard({
       {summary.avatarPerformance.length > 0 && (
         <AvatarPerformance data={summary.avatarPerformance} />
       )}
+
+      <SiteBreakdown sites={summary.sites} />
 
       {/* Country breakdown */}
       {summary.countryBreakdown.length > 0 && (
@@ -467,7 +525,7 @@ export function AnalyticsDashboard({ summaries, totals, period, onPeriodChange }
         {/* Per-Creator Cards */}
         <div className="space-y-6">
           {summaries.map((summary) => (
-            <CreatorCard key={summary.creator} summary={summary} period={period} />
+            <CreatorCard key={summary.modelId ?? summary.creator} summary={summary} period={period} />
           ))}
         </div>
 

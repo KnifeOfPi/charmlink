@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useAdminAuth } from "../useAdminAuth";
 import { AdminNav } from "../AdminNav";
 import { AnalyticsDashboard } from "./AnalyticsDashboard";
-import { AnalyticsSummary } from "../../../lib/types";
+import type { ModelAnalytics } from "../../../lib/analytics-rollup";
 
 interface TotalsData {
   totalViews: number;
@@ -17,7 +17,7 @@ interface TotalsData {
 
 export default function AnalyticsPage() {
   const { ready, authHeaders } = useAdminAuth();
-  const [summaries, setSummaries] = useState<AnalyticsSummary[]>([]);
+  const [summaries, setSummaries] = useState<ModelAnalytics[]>([]);
   const [totals, setTotals] = useState<TotalsData>({
     totalViews: 0, humanViews: 0, botViews: 0,
     totalClicks: 0, premiumClicks: 0, uniqueSessions: 0,
@@ -39,7 +39,7 @@ export default function AnalyticsPage() {
       });
       if (res.ok) {
         const data = await res.json();
-        setSummaries(data.creators ?? []);
+        setSummaries(data.models ?? data.creators ?? []);
         setTotals(data.totals ?? {
           totalViews: 0, humanViews: 0, botViews: 0,
           totalClicks: 0, premiumClicks: 0, uniqueSessions: 0,

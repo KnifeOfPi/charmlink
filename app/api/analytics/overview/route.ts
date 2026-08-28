@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAnalyticsBatch, getAnalyticsOverview } from "../../../../lib/db";
+import {
+  getAnalyticsBatch,
+  getAnalyticsOverview,
+  getAllCreators,
+  getAllModels,
+} from "../../../../lib/db";
+import { rollupByModel } from "../../../../lib/analytics-rollup";
 
 export const runtime = "nodejs";
 
@@ -28,7 +34,27 @@ export async function GET(request: NextRequest) {
     const totals = await getAnalyticsOverview(period);
     const summaries = await getAnalyticsBatch(period);
 
-    return NextResponse.json({ period, creators: summaries, totals });
+    // Roll the per-site rows up to one per person, matching how the creators
+    // list reads. Sites stay nested so a domain can still be inspected.
+    const [creators, models] = await Promise.all([getAllCreators(), getAllModels()]);
+    const modelName = new Map(models.map((m) => [m.id, m.name]));
+    const siteMeta = new Map(
+      creators.map((c) => [
+        c.slug,
+        {
+          modelId: c.model_id,
+          modelName: (c.model_id && modelName.get(c.model_id)) || c.name,
+          customDomain: c.custom_domain,
+        },
+      ])
+    );
+
+    return NextResponse.json({
+      period,
+      models: rollupByModel(summaries, siteMeta),
+      creators: summaries,
+      totals,
+    });
   } catch (err) {
     console.error("[analytics:overview] DB error", err);
     return NextResponse.json({ error: "DB error" }, { status: 500 });
