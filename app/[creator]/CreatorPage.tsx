@@ -1505,6 +1505,27 @@ export function CreatorPage({
           } else {
             setTimeout(fire, 50);
           }
+
+          // ── Escape-failure measurement (beacon-only) ─────────────────────────
+          // The escape works by navigating away. If we're still visible after a
+          // delay, it did NOT take. Success unloads the page and this never fires;
+          // absence of a beacon = success. Do not log successes from the client.
+          const escPlatform = isIOS ? "ios" : /Android/.test(ua) ? "android" : "other";
+          setTimeout(() => {
+            try {
+              if (document.visibilityState === "visible") {
+                sendBeacon("/api/escape-fallback", {
+                  creator: slug,
+                  sessionId: sessionIdRef.current,
+                  platform: escPlatform,
+                  surface: "instagram",
+                  userAgent: navigator.userAgent,
+                });
+              }
+            } catch {
+              /* noop */
+            }
+          }, 2500);
         }
       } catch {
         // sessionStorage blocked — silently skip

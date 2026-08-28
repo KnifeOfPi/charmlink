@@ -826,7 +826,7 @@ export async function getAvatarStatsBySlug(
 // ── Event Recording ──────────────────────────────────────────────────────────
 
 export interface RecordEventInput {
-  type: "pageview" | "click";
+  type: "pageview" | "click" | "escape_fallback";
   creator_id?: string | null;
   creator_slug: string;
   link_label?: string | null;
