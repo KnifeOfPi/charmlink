@@ -43,6 +43,7 @@ async function query<T = Record<string, unknown>>(
 
 export interface DBCreator {
   id: string;
+  model_id: string | null;
   slug: string;
   name: string;
   tagline: string;
@@ -83,6 +84,40 @@ export interface DBCreator {
   created_at: string;
   updated_at: string;
 }
+
+/** A model is the person. Creator rows are her individual sites. */
+export interface DBModel {
+  id: string;
+  name: string;
+  tagline: string;
+  theme_bg: string;
+  theme_accent: string;
+  theme_text: string;
+  bg_type: string;
+  bg_gradient_type: string;
+  bg_gradient_direction: string;
+  bg_color_2: string;
+  bg_color_3: string | null;
+  avatar_shape: string;
+  avatar_border_style: string;
+  avatar_border_color_1: string;
+  avatar_border_color_2: string;
+  avatar_border_color_3: string;
+  is_verified: boolean;
+  font: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Fields a model owns on behalf of all its sites. A creator row still HAS
+ *  these columns; they are simply overridden while it belongs to a model, so
+ *  unassigning restores the site's own values rather than blanking it. */
+export const MODEL_OWNED_FIELDS = [
+  "name", "tagline", "theme_bg", "theme_accent", "theme_text",
+  "bg_type", "bg_gradient_type", "bg_gradient_direction", "bg_color_2", "bg_color_3",
+  "avatar_shape", "avatar_border_style", "avatar_border_color_1",
+  "avatar_border_color_2", "avatar_border_color_3", "is_verified", "font",
+] as const;
 
 export interface DBLink {
   id: string;
@@ -186,22 +221,187 @@ export interface UpdateLinkInput extends Partial<Omit<CreateLinkInput, "creator_
   id: string;
 }
 
-// ── Creator CRUD ──────────────────────────────────────────────────────────────
+// ── Model CRUD ───────────────────────────────────────────────────────────────
 
-export async function getCreatorBySlug(slug: string): Promise<DBCreator | null> {
-  const rows = await query<DBCreator>(
-    "SELECT * FROM charmlink_creators WHERE slug = $1 AND is_active = true",
-    [slug]
+export async function getAllModels(): Promise<DBModel[]> {
+  return query<DBModel>("SELECT * FROM charmlink_models ORDER BY name ASC");
+}
+
+export async function getModelById(id: string): Promise<DBModel | null> {
+  const rows = await query<DBModel>("SELECT * FROM charmlink_models WHERE id = $1", [id]);
+  return rows[0] ?? null;
+}
+
+export async function createModel(name: string): Promise<DBModel> {
+  const rows = await query<DBModel>(
+    "INSERT INTO charmlink_models (name) VALUES ($1) RETURNING *",
+    [name]
+  );
+  return rows[0];
+}
+
+export async function updateModel(
+  input: { id: string } & Partial<Record<(typeof MODEL_OWNED_FIELDS)[number], unknown>>
+): Promise<DBModel | null> {
+  const { id, ...fields } = input;
+  const setClauses: string[] = [];
+  const values: unknown[] = [];
+  let idx = 1;
+  for (const key of MODEL_OWNED_FIELDS) {
+    if (key in fields && fields[key] !== undefined) {
+      setClauses.push(`${key} = $${idx++}`);
+      values.push(fields[key]);
+    }
+  }
+  if (setClauses.length === 0) return getModelById(id);
+  setClauses.push("updated_at = now()");
+  values.push(id);
+  const rows = await query<DBModel>(
+    `UPDATE charmlink_models SET ${setClauses.join(", ")} WHERE id = $${idx} RETURNING *`,
+    values
   );
   return rows[0] ?? null;
 }
 
-export async function getCreatorByDomain(domain: string): Promise<DBCreator | null> {
-  const rows = await query<DBCreator>(
-    "SELECT * FROM charmlink_creators WHERE custom_domain = $1 AND is_active = true",
-    [domain]
+export async function deleteModel(id: string): Promise<boolean> {
+  const rows = await query<{ id: string }>(
+    "DELETE FROM charmlink_models WHERE id = $1 RETURNING id",
+    [id]
   );
-  return rows[0] ?? null;
+  return rows.length > 0;
+}
+
+/** Assign a site to a model, or detach it with null. */
+export async function setCreatorModel(
+  creatorId: string,
+  modelId: string | null
+): Promise<void> {
+  await query("UPDATE charmlink_creators SET model_id = $1 WHERE id = $2", [modelId, creatorId]);
+}
+
+/** Slugs of every site under a model — used to invalidate all their rotation
+ *  caches together when the shared photo pool changes. */
+export async function getModelSlugs(modelId: string): Promise<string[]> {
+  const rows = await query<{ slug: string }>(
+    "SELECT slug FROM charmlink_creators WHERE model_id = $1",
+    [modelId]
+  );
+  return rows.map((r) => r.slug);
+}
+
+export interface ModelWithSites extends DBModel {
+  sites: Array<{
+    id: string;
+    slug: string;
+    custom_domain: string | null;
+    is_active: boolean;
+    avatar_url: string;
+    views: number;
+    premium_clicks: number;
+  }>;
+  photo_count: number;
+}
+
+/** The admin creators list: one row per person, her sites nested underneath.
+ *  Traffic is aggregated in SQL rather than per-site round trips, so the page
+ *  is two queries regardless of how many sites exist. */
+export async function getModelsWithSites(): Promise<ModelWithSites[]> {
+  const models = await getAllModels();
+  if (models.length === 0) return [];
+
+  const sites = await query<{
+    model_id: string | null;
+    id: string;
+    slug: string;
+    custom_domain: string | null;
+    is_active: boolean;
+    avatar_url: string;
+    views: string;
+    premium_clicks: string;
+  }>(
+    `SELECT c.model_id, c.id, c.slug, c.custom_domain, c.is_active, c.avatar_url,
+            COALESCE(v.views, 0) AS views,
+            COALESCE(v.premium_clicks, 0) AS premium_clicks
+     FROM charmlink_creators c
+     LEFT JOIN (
+       SELECT creator_slug,
+              COUNT(*) FILTER (WHERE type = 'pageview') AS views,
+              COUNT(*) FILTER (WHERE ${DEDUPED_CLICKS} AND link_type = 'premium') AS premium_clicks
+       FROM charmlink_events e
+       GROUP BY creator_slug
+     ) v ON v.creator_slug = c.slug
+     ORDER BY c.created_at ASC`
+  );
+
+  const photos = await query<{ model_id: string; n: string }>(
+    `SELECT model_id, COUNT(*) AS n FROM charmlink_creator_avatars
+     WHERE model_id IS NOT NULL GROUP BY model_id`
+  );
+  const photoByModel = new Map(photos.map((p) => [p.model_id, parseInt(p.n)]));
+
+  return models.map((m) => ({
+    ...m,
+    photo_count: photoByModel.get(m.id) ?? 0,
+    sites: sites
+      .filter((s) => s.model_id === m.id)
+      .map((s) => ({
+        id: s.id,
+        slug: s.slug,
+        custom_domain: s.custom_domain,
+        is_active: s.is_active,
+        avatar_url: s.avatar_url,
+        views: parseInt(s.views),
+        premium_clicks: parseInt(s.premium_clicks),
+      })),
+  }));
+}
+
+// ── Creator CRUD ──────────────────────────────────────────────────────────────
+
+/** Overlay the model's shared identity onto a site row.
+ *
+ *  The model wins for the fields it owns, so editing "Hanna Zuki" once updates
+ *  all six of her domains. The site's own columns are left intact underneath —
+ *  detaching it from the model restores them rather than blanking the page.
+ *  Site-specific fields (slug, custom_domain, links, location) are untouched. */
+function applyModelOverlay(
+  creator: DBCreator & Record<string, unknown>,
+  model: DBModel | null
+): DBCreator {
+  if (!model) return creator;
+  const merged: Record<string, unknown> = { ...creator };
+  for (const key of MODEL_OWNED_FIELDS) {
+    const v = (model as unknown as Record<string, unknown>)[key];
+    if (v !== undefined && v !== null) merged[key] = v;
+  }
+  return merged as unknown as DBCreator;
+}
+
+/** A site plus its model's shared identity, in one round trip. */
+async function selectCreatorWithModel(
+  where: string,
+  params: unknown[]
+): Promise<DBCreator | null> {
+  const rows = await query<DBCreator & Record<string, unknown>>(
+    `SELECT c.*, to_jsonb(m.*) AS __model
+     FROM charmlink_creators c
+     LEFT JOIN charmlink_models m ON m.id = c.model_id
+     WHERE ${where}`,
+    params
+  );
+  const row = rows[0];
+  if (!row) return null;
+  const model = (row.__model as DBModel | null) ?? null;
+  delete (row as Record<string, unknown>).__model;
+  return applyModelOverlay(row, model);
+}
+
+export async function getCreatorBySlug(slug: string): Promise<DBCreator | null> {
+  return selectCreatorWithModel("c.slug = $1 AND c.is_active = true", [slug]);
+}
+
+export async function getCreatorByDomain(domain: string): Promise<DBCreator | null> {
+  return selectCreatorWithModel("c.custom_domain = $1 AND c.is_active = true", [domain]);
 }
 
 export async function getCreatorById(id: string): Promise<DBCreator | null> {
@@ -416,12 +616,12 @@ export const MAX_CREATOR_AVATARS = 10;
 /** Most photos a creator may pin as their permanent rotation. */
 export const MAX_PINNED_AVATARS = 3;
 
-export async function getCreatorAvatars(creatorId: string): Promise<DBCreatorAvatar[]> {
+export async function getModelAvatars(modelId: string): Promise<DBCreatorAvatar[]> {
   return query<DBCreatorAvatar>(
     `SELECT * FROM charmlink_creator_avatars
-     WHERE creator_id = $1
+     WHERE model_id = $1
      ORDER BY sort_order ASC, created_at ASC`,
-    [creatorId]
+    [modelId]
   );
 }
 
@@ -432,9 +632,11 @@ export async function getCreatorAvatars(creatorId: string): Promise<DBCreatorAva
 export async function getRotationAvatarsBySlug(
   slug: string
 ): Promise<DBCreatorAvatar[]> {
+  // Joined through the model, so every one of a person's domains rotates the
+  // same pool and their stats pool with it.
   const rows = await query<DBCreatorAvatar>(
     `SELECT a.* FROM charmlink_creator_avatars a
-     JOIN charmlink_creators c ON c.id = a.creator_id
+     JOIN charmlink_creators c ON c.model_id = a.model_id
      WHERE c.slug = $1 AND a.is_active = true
      ORDER BY a.sort_order ASC, a.created_at ASC`,
     [slug]
@@ -444,10 +646,10 @@ export async function getRotationAvatarsBySlug(
 }
 
 export async function createCreatorAvatar(
-  creatorId: string,
+  modelId: string,
   url: string
 ): Promise<DBCreatorAvatar> {
-  const existing = await getCreatorAvatars(creatorId);
+  const existing = await getModelAvatars(modelId);
   if (existing.length >= MAX_CREATOR_AVATARS) {
     throw new Error(
       `Avatar limit reached (${MAX_CREATOR_AVATARS}). Delete one before adding another.`
@@ -455,9 +657,9 @@ export async function createCreatorAvatar(
   }
   const nextOrder = existing.reduce((max, a) => Math.max(max, a.sort_order), -1) + 1;
   const rows = await query<DBCreatorAvatar>(
-    `INSERT INTO charmlink_creator_avatars (creator_id, url, sort_order)
+    `INSERT INTO charmlink_creator_avatars (model_id, url, sort_order)
      VALUES ($1, $2, $3) RETURNING *`,
-    [creatorId, url, nextOrder]
+    [modelId, url, nextOrder]
   );
   return rows[0];
 }
@@ -486,12 +688,12 @@ export async function updateCreatorAvatar(
   // Enforce the pin cap here rather than with a constraint, so the admin gets
   // a readable message instead of a raw violation.
   if (fields.is_pinned === true) {
-    const owner = await query<{ creator_id: string }>(
-      "SELECT creator_id FROM charmlink_creator_avatars WHERE id = $1",
+    const owner = await query<{ model_id: string | null }>(
+      "SELECT model_id FROM charmlink_creator_avatars WHERE id = $1",
       [avatarId]
     );
-    if (owner[0]) {
-      const siblings = await getCreatorAvatars(owner[0].creator_id);
+    if (owner[0]?.model_id) {
+      const siblings = await getModelAvatars(owner[0].model_id);
       const alreadyPinned = siblings.filter((a) => a.is_pinned && a.id !== avatarId);
       if (alreadyPinned.length >= MAX_PINNED_AVATARS) {
         throw new Error(
@@ -526,11 +728,11 @@ export async function deleteCreatorAvatar(avatarId: string): Promise<boolean> {
  * one-row-per-journey rule the rest of analytics uses.
  */
 export async function getAvatarStats(
-  creatorId: string,
+  modelId: string,
   period: "today" | "7d" | "30d" | "all" = "all"
 ): Promise<AvatarStats[]> {
   const cutoff = periodCutoff(period);
-  const params: unknown[] = cutoff ? [creatorId, cutoff] : [creatorId];
+  const params: unknown[] = cutoff ? [modelId, cutoff] : [modelId];
   const viewFilter = cutoff ? "AND e.created_at >= $2" : "";
 
   const rows = await query<{
@@ -547,7 +749,7 @@ export async function getAvatarStats(
      FROM charmlink_creator_avatars a
      LEFT JOIN charmlink_events e
        ON e.avatar_id = a.id ${viewFilter}
-     WHERE a.creator_id = $1
+     WHERE a.model_id = $1
      GROUP BY a.id`,
     params
   );
@@ -594,7 +796,7 @@ export async function getAvatarStatsBySlug(
          WHERE ${DEDUPED_CLICKS} AND e.link_type = 'premium'
        ) AS premium_clicks
      FROM charmlink_creator_avatars a
-     JOIN charmlink_creators c ON c.id = a.creator_id
+     JOIN charmlink_creators c ON c.model_id = a.model_id
      LEFT JOIN charmlink_events e
        ON e.avatar_id = a.id ${viewFilter}
      WHERE c.slug = $1

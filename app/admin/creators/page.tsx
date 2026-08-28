@@ -14,19 +14,24 @@ function publicUrl(slug: string, customDomain: string | null): string {
   return `${origin}/${slug}`;
 }
 
-interface DBCreator {
+interface ModelSite {
   id: string;
   slug: string;
-  name: string;
-  tagline: string;
-  avatar_url: string;
   custom_domain: string | null;
+  is_active: boolean;
+  avatar_url: string;
+  views: number;
+  premium_clicks: number;
+}
+
+interface ModelRow {
+  id: string;
+  name: string;
   theme_bg: string;
   theme_accent: string;
   theme_text: string;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
+  photo_count: number;
+  sites: ModelSite[];
 }
 
 interface CreatorFormData {
@@ -181,7 +186,8 @@ function CreatorForm({
 export default function CreatorsPage() {
   const { ready, authHeaders } = useAdminAuth();
   const router = useRouter();
-  const [creators, setCreators] = useState<DBCreator[]>([]);
+  const [models, setModels] = useState<ModelRow[]>([]);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [formLoading, setFormLoading] = useState(false);
@@ -193,13 +199,22 @@ export default function CreatorsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready]);
 
+  function toggle(id: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   async function loadCreators() {
     setLoading(true);
     try {
-      const res = await fetch("/api/admin/creators", { headers: authHeaders() });
-      if (res.ok) {
-        setCreators(await res.json());
-      }
+      // One request returns each person with her sites and their traffic
+      // already aggregated, so the list does not fan out per site.
+      const res = await fetch("/api/admin/models", { headers: authHeaders() });
+      if (res.ok) setModels(await res.json());
     } finally {
       setLoading(false);
     }
@@ -248,7 +263,10 @@ export default function CreatorsPage() {
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-2xl font-bold text-white">Creators</h1>
-            <p className="text-gray-500 text-sm mt-1">{creators.length} creator{creators.length !== 1 ? "s" : ""}</p>
+            <p className="text-gray-500 text-sm mt-1">
+              {models.length} {models.length === 1 ? "model" : "models"} ·{" "}
+              {models.reduce((n, m) => n + m.sites.length, 0)} sites
+            </p>
           </div>
           <button
             onClick={() => setShowAdd(true)}
@@ -260,109 +278,105 @@ export default function CreatorsPage() {
 
         {loading ? (
           <p className="text-gray-500 text-center py-16">Loading...</p>
-        ) : creators.length === 0 ? (
+        ) : models.length === 0 ? (
           <div className="text-center py-16 text-gray-600">
             <p className="text-4xl mb-3">👤</p>
             <p>No creators yet. Add one to get started.</p>
           </div>
         ) : (
-          <div className="bg-[#1a1a1a] border border-[#333] rounded-2xl overflow-hidden">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-[#333]">
-                  <th className="text-left text-gray-500 text-xs uppercase tracking-wider px-4 py-3">Creator</th>
-                  <th className="text-left text-gray-500 text-xs uppercase tracking-wider px-4 py-3 hidden md:table-cell">Domain</th>
-                  <th className="text-left text-gray-500 text-xs uppercase tracking-wider px-4 py-3 hidden sm:table-cell">Theme</th>
-                  <th className="text-left text-gray-500 text-xs uppercase tracking-wider px-4 py-3">Status</th>
-                  <th className="text-right text-gray-500 text-xs uppercase tracking-wider px-4 py-3">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {creators.map((creator) => (
-                  <tr key={creator.id} className="border-b border-[#222] last:border-0 hover:bg-[#222] transition-colors">
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        {creator.avatar_url ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={creator.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
-                        ) : (
-                          <div className="w-8 h-8 rounded-full bg-[#333] flex items-center justify-center flex-shrink-0">
-                            <span className="text-gray-500 text-xs">{creator.name[0]}</span>
+          <div className="space-y-3">
+            {models.map((m) => {
+              const open = expanded.has(m.id);
+              const totalViews = m.sites.reduce((n, s) => n + s.views, 0);
+              const totalPrem = m.sites.reduce((n, s) => n + s.premium_clicks, 0);
+              const cover = m.sites.find((s) => s.avatar_url)?.avatar_url ?? "";
+              return (
+                <div key={m.id} className="bg-[#1a1a1a] border border-[#333] rounded-2xl overflow-hidden">
+                  {/* Model header — the person */}
+                  <div
+                    onClick={() => toggle(m.id)}
+                    className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-[#222] transition-colors"
+                  >
+                    <span className={`text-gray-500 text-xs w-3 transition-transform ${open ? "rotate-90" : ""}`}>▶</span>
+                    {cover ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={cover} alt="" className="w-9 h-9 rounded-full object-cover flex-shrink-0" />
+                    ) : (
+                      <div className="w-9 h-9 rounded-full bg-[#333] flex items-center justify-center flex-shrink-0">
+                        <span className="text-gray-500 text-xs">{m.name[0]}</span>
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white text-sm font-semibold">{m.name}</p>
+                      <p className="text-gray-500 text-xs">
+                        {m.sites.length} {m.sites.length === 1 ? "site" : "sites"}
+                        {m.photo_count > 0 && ` · ${m.photo_count} photos`}
+                        {totalViews > 0 && ` · ${totalViews.toLocaleString()} views · ${totalPrem.toLocaleString()} premium`}
+                      </p>
+                    </div>
+                    <div className="hidden sm:flex items-center gap-1">
+                      <span className="w-4 h-4 rounded" style={{ background: m.theme_bg, border: "1px solid #444" }} title="Background" />
+                      <span className="w-4 h-4 rounded" style={{ background: m.theme_accent }} title="Accent" />
+                      <span className="w-4 h-4 rounded" style={{ background: m.theme_text, border: "1px solid #444" }} title="Text" />
+                    </div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); router.push(`/admin/models/${m.id}`); }}
+                      className="text-xs bg-[#e91e8a] hover:bg-[#d01577] text-white rounded-lg px-3 py-1.5 transition-colors flex-shrink-0"
+                      title="Photos, name, tagline and theme for every one of her sites"
+                    >
+                      Manage
+                    </button>
+                  </div>
+
+                  {/* Sites — one row per domain, each with its own links */}
+                  {open && (
+                    <div className="border-t border-[#333]">
+                      {m.sites.length === 0 ? (
+                        <p className="text-gray-600 text-sm px-4 py-3">No sites assigned yet.</p>
+                      ) : m.sites.map((site) => (
+                        <div key={site.id} className="flex items-center gap-3 px-4 py-2.5 border-b border-[#222] last:border-0 hover:bg-[#222] transition-colors">
+                          <span className="w-3 flex-shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-gray-300 text-sm">
+                                {site.custom_domain ?? `/${site.slug}`}
+                              </span>
+                              <CopyButton value={publicUrl(site.slug, site.custom_domain)} title="Copy public URL" />
+                              <a
+                                href={publicUrl(site.slug, site.custom_domain)}
+                                target="_blank" rel="noopener noreferrer"
+                                className="text-xs text-gray-500 hover:text-[#e91e8a] border border-[#333] hover:border-[#e91e8a] rounded px-1.5 py-0.5 transition-colors"
+                              >
+                                Open ↗
+                              </a>
+                              {!site.is_active && (
+                                <span className="text-xs px-2 py-0.5 rounded-full bg-gray-800 text-gray-500">Inactive</span>
+                              )}
+                            </div>
+                            <p className="text-gray-600 text-xs mt-0.5">
+                              /{site.slug} · {site.views.toLocaleString()} views · {site.premium_clicks.toLocaleString()} premium clicks
+                            </p>
                           </div>
-                        )}
-                        <div>
-                          <p className="text-white text-sm font-medium">{creator.name}</p>
-                          <div className="flex items-center gap-1.5 mt-0.5">
-                            <p className="text-gray-500 text-xs">/{creator.slug}</p>
-                            <CopyButton
-                              value={publicUrl(creator.slug, creator.custom_domain)}
-                              title="Copy public URL"
-                            />
-                            <a
-                              href={publicUrl(creator.slug, creator.custom_domain)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="text-xs text-gray-500 hover:text-[#e91e8a] border border-[#333] hover:border-[#e91e8a] rounded px-1.5 py-0.5 transition-colors"
-                              title="Open page in new tab"
-                            >
-                              Open ↗
-                            </a>
-                          </div>
+                          <button
+                            onClick={() => router.push(`/admin/creators/${site.id}`)}
+                            className="text-gray-400 hover:text-white text-sm transition-colors px-2 py-1"
+                            title="Links and settings for this domain"
+                          >
+                            Links
+                          </button>
+                          <button
+                            onClick={() => handleDelete(site.id, `${m.name} (${site.custom_domain ?? site.slug})`)}
+                            className="text-red-600 hover:text-red-400 text-sm transition-colors px-2 py-1"
+                          >
+                            Del
+                          </button>
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 hidden md:table-cell">
-                      {creator.custom_domain ? (
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-gray-400 text-sm">{creator.custom_domain}</span>
-                          <CopyButton value={creator.custom_domain} title="Copy domain" />
-                        </div>
-                      ) : (
-                        <span className="text-gray-700">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 hidden sm:table-cell">
-                      <div className="flex items-center gap-1">
-                        <span className="w-4 h-4 rounded" style={{ background: creator.theme_bg, border: "1px solid #444" }} title="Background" />
-                        <span className="w-4 h-4 rounded" style={{ background: creator.theme_accent }} title="Accent" />
-                        <span className="w-4 h-4 rounded" style={{ background: creator.theme_text, border: "1px solid #444" }} title="Text" />
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`text-xs px-2 py-0.5 rounded-full ${creator.is_active ? "bg-green-900 text-green-300" : "bg-gray-800 text-gray-500"}`}>
-                        {creator.is_active ? "Active" : "Inactive"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-2">
-                        <a
-                          href={publicUrl(creator.slug, creator.custom_domain)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-gray-400 hover:text-white text-sm transition-colors px-2 py-1"
-                          title="Open public page"
-                        >
-                          Open ↗
-                        </a>
-                        <button
-                          onClick={() => router.push(`/admin/creators/${creator.id}`)}
-                          className="text-gray-400 hover:text-white text-sm transition-colors px-2 py-1"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => handleDelete(creator.id, creator.name)}
-                          className="text-red-600 hover:text-red-400 text-sm transition-colors px-2 py-1"
-                        >
-                          Del
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </main>

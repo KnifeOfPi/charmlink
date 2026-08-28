@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  getCreatorAvatars,
+  getModelAvatars,
   createCreatorAvatar,
   updateCreatorAvatar,
   deleteCreatorAvatar,
   getAvatarStats,
-  getCreatorById,
+  getModelSlugs,
 } from "../../../../../../lib/db";
 import { invalidateAvatarCache } from "../../../../../../lib/avatar-rotation";
 
@@ -17,14 +17,14 @@ function checkAuth(request: NextRequest): boolean {
   return request.headers.get("authorization") === `Bearer ${adminKey}`;
 }
 
-/** Drop the rotation cache for this creator so admin edits show up on the next
- *  page render instead of up to 5 minutes later. */
-async function bustCache(creatorId: string): Promise<void> {
+/** Drop the rotation cache for EVERY site under this model, so an admin edit
+ *  shows up on the next render of any of her domains rather than up to 5
+ *  minutes later on some of them and immediately on others. */
+async function bustCache(modelId: string): Promise<void> {
   try {
-    const creator = await getCreatorById(creatorId);
-    if (creator) invalidateAvatarCache(creator.slug);
+    for (const slug of await getModelSlugs(modelId)) invalidateAvatarCache(slug);
   } catch {
-    // Cache invalidation is best-effort; the TTL bounds the staleness anyway.
+    // Best-effort; the TTL bounds the staleness anyway.
   }
 }
 
@@ -36,7 +36,7 @@ export async function GET(
   if (!checkAuth(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const { id: creatorId } = await params;
+  const { id: modelId } = await params;
   const period = (new URL(request.url).searchParams.get("period") || "all") as
     | "today"
     | "7d"
@@ -44,8 +44,8 @@ export async function GET(
     | "all";
   try {
     const [avatars, stats] = await Promise.all([
-      getCreatorAvatars(creatorId),
-      getAvatarStats(creatorId, period),
+      getModelAvatars(modelId),
+      getAvatarStats(modelId, period),
     ]);
     const byId = new Map(stats.map((s) => [s.avatar_id, s]));
     return NextResponse.json(
@@ -69,14 +69,14 @@ export async function POST(
   if (!checkAuth(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const { id: creatorId } = await params;
+  const { id: modelId } = await params;
   try {
     const { url } = (await request.json()) as { url?: string };
     if (!url || !/^https?:\/\//i.test(url)) {
       return NextResponse.json({ error: "A valid image URL is required" }, { status: 400 });
     }
-    const avatar = await createCreatorAvatar(creatorId, url);
-    await bustCache(creatorId);
+    const avatar = await createCreatorAvatar(modelId, url);
+    await bustCache(modelId);
     return NextResponse.json(avatar, { status: 201 });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "DB error";
@@ -91,7 +91,7 @@ export async function PUT(
   if (!checkAuth(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const { id: creatorId } = await params;
+  const { id: modelId } = await params;
   try {
     const body = (await request.json()) as {
       avatarId?: string;
@@ -118,7 +118,7 @@ export async function PUT(
       focal_y: clampPct(body.focal_y),
     });
     if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    await bustCache(creatorId);
+    await bustCache(modelId);
     return NextResponse.json(updated);
   } catch (err) {
     const msg = err instanceof Error ? err.message : "DB error";
@@ -133,7 +133,7 @@ export async function DELETE(
   if (!checkAuth(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const { id: creatorId } = await params;
+  const { id: modelId } = await params;
   try {
     const { avatarId } = (await request.json()) as { avatarId?: string };
     if (!avatarId) {
@@ -141,7 +141,7 @@ export async function DELETE(
     }
     const deleted = await deleteCreatorAvatar(avatarId);
     if (!deleted) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    await bustCache(creatorId);
+    await bustCache(modelId);
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("[admin:avatars:delete]", err);
