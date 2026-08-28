@@ -109,20 +109,28 @@ export function rollupByModel(
         (l) => `${l.type}|${l.label}`, (l) => l.clicks,
         (k, clicks, sample) => ({ label: sample.label, url: sample.url, type: sample.type, clicks })
       ),
-      clickTimeseries: mergeCounts(
-        sites.map((s) => s.clickTimeseries),
-        (t) => t.bucket, (t) => t.total,
-        (bucket, total, sample) => ({ bucket, total, premium: sample.premium })
-      )
-        // Premium has to be summed on its own pass; mergeCounts folds one metric.
-        .map((point) => ({
-          ...point,
-          premium: sites.reduce(
-            (n, s) => n + (s.clickTimeseries.find((t) => t.bucket === point.bucket)?.premium ?? 0),
-            0
-          ),
-        }))
-        .sort((a, b) => a.bucket.localeCompare(b.bucket)),
+      // Both metrics fold in one pass. mergeCounts only carries a single count,
+      // and reaching back for `premium` with a find() was both O(n^2) and
+      // dependent on bucket identity comparing equal across sites.
+      clickTimeseries: (() => {
+        const byBucket = new Map<string, { bucket: string; total: number; premium: number }>();
+        for (const s2 of sites) {
+          for (const t of s2.clickTimeseries) {
+            const prev = byBucket.get(t.bucket);
+            if (prev) {
+              prev.total += t.total;
+              prev.premium += t.premium;
+            } else {
+              byBucket.set(t.bucket, { bucket: t.bucket, total: t.total, premium: t.premium });
+            }
+          }
+        }
+        // Sort by instant, not lexically: the value is a timestamp, and string
+        // ordering only coincidentally agrees with it.
+        return [...byBucket.values()].sort(
+          (a, b) => new Date(a.bucket).getTime() - new Date(b.bucket).getTime()
+        );
+      })(),
       avatarPerformance,
       sites: sites
         .map((s) => ({ ...s, customDomain: siteMeta.get(s.creator)?.customDomain ?? null }))

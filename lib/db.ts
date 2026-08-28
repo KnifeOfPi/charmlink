@@ -1092,7 +1092,9 @@ export async function getAnalytics(
       clicks: parseInt(r.count),
     })),
     clickTimeseries: tsRows.map((r) => ({
-      bucket: r.bucket,
+      // pg returns date_trunc() as a Date, not a string. Normalise here so the
+      // declared type is honest and callers can use it as a stable map key.
+      bucket: new Date(r.bucket).toISOString(),
       total: parseInt(r.total),
       premium: parseInt(r.premium),
     })),
@@ -1221,7 +1223,9 @@ export async function getAnalyticsBatch(
         label: r.link_label, url: r.link_url, type: r.link_type, clicks: parseInt(r.count),
       })),
       clickTimeseries: (tsBy.get(c.slug) ?? []).map((r) => ({
-        bucket: r.bucket, total: parseInt(r.total), premium: parseInt(r.premium),
+        bucket: new Date(r.bucket).toISOString(),
+        total: parseInt(r.total),
+        premium: parseInt(r.premium),
       })),
       avatarPerformance: (avBy.get(c.slug) ?? []).map((r) => {
         const impressions = parseInt(r.impressions);
