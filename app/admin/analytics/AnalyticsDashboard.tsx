@@ -480,6 +480,19 @@ export function AnalyticsDashboard({ summaries, totals, period, onPeriodChange }
     { value: "all", label: "All Time" },
   ];
 
+  const [search, setSearch] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  const filtered = summaries.filter((m) =>
+    m.modelName.toLowerCase().includes(search.trim().toLowerCase())
+  );
+
+  // Fall back to the top row rather than showing an empty pane: `summaries` is
+  // sorted by traffic, and the selected id can go stale when the period changes
+  // or the search excludes the current pick.
+  const selected =
+    filtered.find((m) => (m.modelId ?? m.creator) === selectedId) ?? filtered[0] ?? null;
+
   const overallCtr =
     totals.humanViews > 0
       ? Math.round((totals.premiumClicks / totals.humanViews) * 10000) / 100
@@ -487,7 +500,7 @@ export function AnalyticsDashboard({ summaries, totals, period, onPeriodChange }
 
   return (
     <main className="min-h-screen bg-[#0a0a0a] text-white px-4 py-8">
-      <div className="max-w-5xl mx-auto">
+      <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div>
@@ -522,16 +535,58 @@ export function AnalyticsDashboard({ summaries, totals, period, onPeriodChange }
           <StatCard label="Sessions" value={totals.uniqueSessions} />
         </div>
 
-        {/* Per-Creator Cards */}
-        <div className="space-y-6">
-          {summaries.map((summary) => (
-            <CreatorCard key={summary.modelId ?? summary.creator} summary={summary} period={period} />
-          ))}
-        </div>
+        {/* Roster + detail. Thirty stacked cards meant scrolling to find anyone;
+            the list is now the index and only one card renders at a time. */}
+        <div className="grid gap-6 lg:grid-cols-[260px_1fr] items-start">
+          <aside className="lg:sticky lg:top-8">
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search creators…"
+              aria-label="Search creators"
+              className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 outline-none focus:border-pink-600 transition-colors"
+            />
+            <div className="mt-2 lg:max-h-[calc(100vh-13rem)] lg:overflow-y-auto rounded-xl border border-gray-800 divide-y divide-gray-900">
+              {filtered.length === 0 ? (
+                <p className="text-gray-600 text-sm px-3 py-4">No creator matches “{search}”.</p>
+              ) : (
+                filtered.map((m) => {
+                  const id = m.modelId ?? m.creator;
+                  const active = id === selectedId;
+                  return (
+                    <button
+                      key={id}
+                      onClick={() => setSelectedId(id)}
+                      className={`w-full text-left px-3 py-2.5 transition-colors ${
+                        active ? "bg-pink-600/15 border-l-2 border-l-pink-500" : "hover:bg-gray-900 border-l-2 border-l-transparent"
+                      }`}
+                    >
+                      <p className={`text-sm truncate ${active ? "text-white font-semibold" : "text-gray-300"}`}>
+                        {m.modelName}
+                      </p>
+                      <p className="text-gray-500 text-xs mt-0.5 tabular-nums">
+                        {m.totalViews.toLocaleString()} views · {m.premiumClicks.toLocaleString()} prem
+                        {m.sites.length > 1 && ` · ${m.sites.length} sites`}
+                      </p>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+            <p className="text-gray-600 text-[11px] mt-2 px-1">
+              {filtered.length} of {summaries.length} creators
+            </p>
+          </aside>
 
-        <p className="text-center text-gray-700 text-xs mt-8">
-          CharmLink v1 · Data stored in data/analytics.json · Migrate to Postgres when needed
-        </p>
+          <div>
+            {selected ? (
+              <CreatorCard summary={selected} period={period} />
+            ) : (
+              <p className="text-gray-600 text-sm">Select a creator to see their stats.</p>
+            )}
+          </div>
+        </div>
       </div>
     </main>
   );
