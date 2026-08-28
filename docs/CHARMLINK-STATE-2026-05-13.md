@@ -2,10 +2,14 @@
 
 This is the "pick it up cold weeks later" doc. Reads top-to-bottom and assumes
 no prior context. For deep history per phase, see `memory/` daily logs
-referenced inline. **Last updated:** 2026-08-26 (Phase 8 — the conversion-funnel
-incident: the honeypot was banning real mobile visitors, not bots, for ~3.5
-months; three root causes found and fixed, verified live by an accidental
-natural experiment. See §2 Phase 8 row and §7.9–7.10 for the full story).
+referenced inline. **Last updated:** 2026-08-28 (Phase 9 — model grouping: a creator row was
+really a site, not a person, so a model with several domains had her avatars
+uploaded and her stats read N times over; also the avatar carousel A/B test
+feature, and two production outages in the analytics endpoint this same
+phase introduced and then fixed. See §2 Phase 9 row and §7.11–7.14 for the
+full story. The Phase 8 honeypot fix's 24h checkpoint also landed: zero
+trapped clicks confirmed, but the predicted conversion uplift did **not**
+materialize — see §7.15).
 
 ---
 
@@ -35,7 +39,7 @@ in-app WebView.
 
 ## 2. Current Production Status
 
-Phases 1–8 are **shipped + live**. Last sweep: 2026-08-26, verified against
+Phases 1–9 are **shipped + live**. Last sweep: 2026-08-28, verified against
 production DB queries and live Vercel deployment/runtime-log checks (not just
 "the commit merged") — see §7.9 for how that verification worked.
 Branch `main` clean, no pending PRs.
@@ -54,6 +58,7 @@ Branch `main` clean, no pending PRs.
 | 7.6 | **2026-06-01** `cf-heal` auto-resolves `VERCEL_TEAM_ID` in 3 tiers (env → file → `/v2/teams`). Missing team id was the silent root cause of `/v4/certs` 403s that made `cf-heal` "fail" on every domain. | `5cfb2e9` (PR #11) |
 | 7.7 | **2026-06-02** Self-serve **Heal button** in `/admin/domains` + **auto-heal on domain add**. Button POSTs `/api/admin/domains/heal` → runs the same idempotent `provisionZone()` flow as the `cf-heal` CLI (pre-probe → gray → Vercel cert → re-orange). Returns `{ok, noop, preStatus, postStatus, steps}`. Eliminates the manual unproxy/remove/re-add loop and lets creators/VAs heal their own domains with no engineer. | `d596f62` (PR #12) |
 | 8 | **2026-08-26** The conversion-funnel incident. Measured against production: 12.6% of "premium clicks" since 2026-05-10 were taps on a dead honeypot link the links API handed out on rejection, which then banned the visitor's IP for 24h — 86.6% of those bans hit ordinary mobile UAs, 0.12% hit actual bots. Root cause of the false rejections: link tokens were bound to client IP, which drifts on mobile between page render and the links fetch. Fixed all three (rejection payload is now inert, tokens no longer IP-bound, honeypot only bans requests that look automated), added a self-serve ban-flush (`/api/admin/bans` + dashboard card), fixed three analytics-correctness bugs found along the way (double-counted clicks, `is_bot` hardcoded false, 404s logged as DB errors), and verified the fix live via an accidental revert/restore that doubled as a natural experiment. See §7.9–§7.10 for the full incident writeup. | `c7460a7`, `8109fa3`, `f3e0c7f`, `ee524cb`, `84b57c9` (+ `deb8ee7`/`ebb505a` — a deliberate temporary revert and restore for on-device testing, see §7.9) |
+| 9 | **2026-08-28** Model grouping + avatar A/B testing. A creator row was really a *site*, not a *person* — Hanna Zuki alone had 6 rows for one model. New `charmlink_models` table is the person; sites overlay her shared identity (name/tagline/theme/avatar frame) and share one 10-photo carousel, Thompson-sampled per visit with per-photo conversion tracking, attributed via `avatar_id` on events. 70 sites merged down to 30 models (49 by exact-name backfill, then 12 more by hand-reviewed fuzzy match — see §7.11). Also: per-photo focal point + 3 frame shapes (circle/portrait/square) fixing a circle-crop-loses-the-face complaint; inline link editing; hero-sized avatar; tab shows the creator's name (cloaking re-verified safe, see §7.13); analytics grouped per model with a searchable sidebar; admin dark mode fixed at the root. **Shipped two production outages in the same phase** — an N+1 pool-exhaustion 500 (§7.12) and a pg `Date`-vs-`string` type crash (§7.14) — both on `/api/analytics/overview`, both caught by the user within minutes, both fixed same-session. | `940e174`, `365ae8c`, `d902017`, `6f4827c`, `30f2b9f`, `4f5e605`, `012f07f`, `49fa104`, `4036915`, `6b1f0ed` (+ the merge/backfill was data-only SQL against prod, no migration commit) |
 
 See `memory/archive-2026-05-10.md` for Phase 1–3 ship-day notes and
 `memory/2026-05-11.md` for everything Phase 4 + 5 day-of.
@@ -208,25 +213,46 @@ Shared instance with CharmaSutra. Tables:
 
 - `charmlink_creators` — slug, name, avatar_url, custom_domain, theme JSON,
   effects JSON, `show_location`, `location_type`, `sensitive_default`,
-  `cloak_enabled` (Phase 5, default true), `active`, `verified`, `font`, etc.
+  `cloak_enabled` (Phase 5, default true), `active`, `verified`, `font`,
+  `avatar_shape` (Phase 9), `model_id` (Phase 9, FK → `charmlink_models`,
+  nullable, `SET NULL` on delete) etc.
 - `charmlink_links` — creator_id, label, subtitle, url, image_url,
   `deeplink_enabled`, `recovery_url`, `redirect_url`, `sensitive`, `badge`,
   `notes`, `tags`, visual override fields, ordering
 - `charmlink_events` — pageviews + clicks + honeypot hits (used by analytics
-  dashboard)
+  dashboard). Phase 9 adds `avatar_id` (FK → `charmlink_creator_avatars`,
+  nullable, `SET NULL` on delete) — which carousel photo was on screen for
+  this event; null on every historical row.
 - `charmlink_creator_domains` — join table for multi-domain creators
   (`creator_id`, `domain`, `is_primary`); a trigger syncs the primary row back
   to `charmlink_creators.custom_domain` — never write that column directly
+- `charmlink_models` (Phase 9) — the person behind one or more
+  `charmlink_creators` rows. Owns `name`, `tagline`, theme colors,
+  `avatar_shape`, avatar border config, `is_verified`, `font` — these
+  **overlay** the attached creator row's own columns (which are left intact
+  underneath) rather than replacing them, so detaching a site restores its
+  own identity. See §7.11 for how the 70→30 backfill/merge was done.
+- `charmlink_creator_avatars` (Phase 9) — carousel candidate photos. Owned by
+  exactly one of `model_id` or `creator_id` (`CHECK (num_nonnulls(...)=1)`,
+  never both) — `model_id` is the shared-pool path every current row uses,
+  `creator_id` is a legacy single-site path. `is_active`, `is_pinned`
+  (max 3, locks rotation), `sort_order`, `focal_x`/`focal_y` (0–100, crop
+  focal point, default 50/25).
 - `kv_*` (Vercel KV) — rate limit counters, ban list
 
-Migrations live in `supabase/migrations/`. Three so far: honeypot logs
+Migrations live in `supabase/migrations/`: honeypot logs
 (`20260508000000_create_honeypot_logs.sql`), Phase-5 cloak toggle
-(`20260511000000_add_cloak_enabled.sql`), and the Phase-6/7
+(`20260511000000_add_cloak_enabled.sql`), the Phase-6/7
 `charmlink_creator_domains` table + sync trigger
-(`20260529000000_create_creator_domains.sql`, most recent — this table had been
-applied out-of-band and was undocumented in-repo until this migration was
-added). Run via Vercel-deployed migration script or feed SQL to Nate (no local
-DATABASE_URL on Cepheus machine).
+(`20260529000000_create_creator_domains.sql` — this table had been applied
+out-of-band and was undocumented in-repo until that migration was added),
+and three Phase-9 migrations dated 2026-08-27/28: `create_creator_avatars`,
+`add_avatar_focal_point`, `add_avatar_shape`, `create_models_grouping`. The
+Phase-9 **data** migration (backfilling `charmlink_models` and merging
+duplicate models) was executed as raw SQL directly against production and is
+**not** captured in a migration file — see §7.11 for why and what ran. Run
+schema migrations via Vercel-deployed migration script or the Supabase MCP
+`apply_migration` tool.
 
 ---
 
@@ -468,14 +494,145 @@ this data going forward. Fixed alongside the main fix (`8109fa3`, `f3e0c7f`):
 
 ---
 
-## 8. Recent Commit Sequence (2026-05-11 → 2026-08-26)
+### 7.11 Grouping duplicate rows by name needs a human, not a regex
+- 70 creator rows, ~half of them duplicate people (one per domain). Exact-name
+  backfill got 49 models cleanly, but the data also had `Hanna Zuki` (6 sites)
+  next to `Hanna` (2 sites) next to `Hanna ♥` (1 site) — same person, three
+  names — and separately `Kai` (3 sites) next to `Kaia` (2 sites) — **different
+  people**, where `kai` is just a string-prefix of `kaia`.
+- Naive fuzzy matching (edit distance, prefix match) would have merged Kai
+  into Kaia. A wrong merge blends two people's photos and stats
+  irreversibly — there's no clean undo once the avatar pool and event
+  attribution have mixed.
+- **What worked:** generate candidates via normalised-name equality/prefix
+  overlap, but require independent evidence (a slug or domain that literally
+  spells the fuller name — `hannazuki`, `moreofivyem`) before treating a pair
+  as safe. Present every candidate pair to the human with the evidence
+  visible; merge only what's confirmed, tier by tier (exact-normalized-match
+  first, evidence-backed second, "plausible but unproven" last and only on
+  explicit request).
+- One name (`Holly`) turned out to have **four** duplicate rows, not the two
+  originally spotted — a first pass undercounted it. Always re-run the
+  candidate query right before executing a merge, not from memory of an
+  earlier pass.
+- "Fullest name wins" as a canonicalization rule needs a sanity check too —
+  it would have elected `Hollys World` (a site name) over `Holly` (her name)
+  purely on string length. Applied the naive rule everywhere except where a
+  human said otherwise.
+
+### 7.12 Fan-out-per-creator breaks the moment query count grows (production outage #1)
+- `/api/analytics/overview` called `getAnalytics()` once per creator inside a
+  `Promise.all`. This was flagged as an N+1 risk *before* it was made worse,
+  then made worse anyway: adding the clicks-over-time chart and per-photo
+  performance took the per-creator query count from ~5 to ~7. At 70 creators
+  that's ~490 simultaneous queries against a pool capped at `max: 3`
+  (deliberate — see the pool comment in `lib/db.ts`, Supabase-pooler
+  fan-out safety). They queued past `connectionTimeoutMillis` and the whole
+  endpoint 500'd.
+- **User-visible symptom looked exactly like data loss** — the dashboard
+  rendered every stat as 0. It wasn't; 716k events were still recording the
+  whole time. A failed-fetch zero and an empty-dataset zero are visually
+  identical to a non-technical user, so **always check the data before
+  explaining the UI** when someone reports "everything is gone."
+- **Fix:** `getAnalyticsBatch()` (`lib/db.ts`) does the same aggregation
+  grouped by `creator_slug` in a fixed 8 queries total, using
+  `ROW_NUMBER() OVER (PARTITION BY creator_slug ...)` windows to keep the
+  existing top-10 limits on referrers/countries. Cost is now flat in
+  creator count instead of linear.
+- **Rule going forward:** any endpoint that loops `Promise.all(creators.map(...))`
+  calling a multi-query function is a future outage waiting on either more
+  creators or more queries per creator. Group by the loop key in SQL instead.
+
+### 7.13 Re-verify a cloaking change against the actual code path, not the last analysis
+- Loosening title visibility (showing the creator's name in `<title>` for
+  non-scraper visitors) was initially defended by re-explaining the same
+  reasoning from memory on a second question. The honest answer required
+  re-reading `middleware.ts`'s `shouldCloak` logic and `CreatorPage.tsx`'s
+  render output *again*, which surfaced a correction: the earlier framing
+  ("this opens a small gap") overstated it — any UA that reaches
+  `generateMetadata` at all was already being served the creator's name in
+  the page `<h1>` and footer, since it survived every upstream bot gate. The
+  title is a third copy of a signal the page already leaked, not a new one.
+- **Rule:** when re-asked "are you sure," re-verify against the code, don't
+  restate the prior conclusion with more confidence.
+
+### 7.14 pg returns `timestamptz` as a JS `Date`, not a string (production outage #2)
+- `date_trunc()` results were typed as `string` in `AnalyticsSummary`, and
+  that lie was harmless for months because the value only ever got
+  `JSON.stringify`'d, where a `Date` silently serializes to an ISO string. The
+  model-rollup fold was the first code to actually *treat* the value as a
+  string (`.localeCompare()`), which threw — `/api/analytics/overview` 500'd
+  a second time in the same session, right after the pool-exhaustion fix
+  shipped.
+- It was also hiding a second, quieter bug: the fold keyed a `Map` on
+  `bucket`, and two distinct `Date` objects for the same instant are never
+  `===` and never the same Map key — so even without the crash, a model's
+  per-site timeseries would never have merged; every bucket would have
+  appeared once per site instead of summed.
+- **Fix:** coerce with `new Date(r.bucket).toISOString()` at the query
+  boundary in `lib/db.ts`, so the declared `string` type is actually true by
+  the time it leaves the DB layer, rather than defending every downstream
+  consumer against the driver's real type.
+- **Test gap that let this ship:** the pre-deploy check for the rollup fed
+  synthetic **string** buckets — it exercised the assumption, not the
+  driver's actual behavior. `pg`'s real output should have been the fixture,
+  not a plausible-looking stand-in. Fixed the test to use realistic values
+  and assert cross-site merging actually happens, not just that it doesn't
+  crash.
+- **Pattern across both outages:** this repo cannot execute
+  `/api/analytics/overview` from the coding sandbox (admin-key gated, DB
+  reachable only via the Supabase MCP tool, and the proxy blocks live
+  custom domains) — typecheck/lint/build/deploy-health all passed both times
+  while the actual route logic was broken. Any change to that endpoint's
+  data shape needs either a synthetic-payload smoke test that matches the
+  driver's real types, or a live post-deploy log check for that specific
+  path before calling it done — not just "build succeeded."
+
+### 7.15 Phase 8 24h checkpoint: the fix worked, the predicted uplift didn't
+- Scheduled 24h checkpoint (trigger `trig_012yLy9neEWbjN6HRzqnW5qj`) fired and
+  was run against production: **trapped clicks are confirmed 0** across
+  7,109 views / 28.8h post-restore — the honeypot bug is dead, no regression.
+- **The predicted headline number did not show up.** Baseline reached-OF-per-
+  100-views was 32.48–32.97 (two slightly different measurement windows);
+  post-fix it's 32.80 — statistically flat, not the ~38 predicted rise.
+- **Why the prediction was wrong:** it assumed every trapped click was a real
+  customer who would otherwise have converted. The flat result says that's
+  false — the ~5.4/100 clicks that used to hit the honeypot were mostly
+  automated/curiosity traffic, not lost revenue. Reported premium clicks
+  dropping from 37.86 to 32.80 per 100 views is exactly that phantom-click
+  removal (37.86 − 5.38 ≈ 32.48), and matches.
+- **Correction, not a regression:** the real, measured value of the fix is
+  "your analytics stopped counting ~14% phantom premium clicks," not "you
+  gained X% more subscribers." Don't let the earlier "clicks saved" framing
+  stand uncorrected if it resurfaces.
+- 72h checkpoint not yet re-armed as of this doc's last edit — if picking
+  this up, re-arm it with the corrected expectation (track phantom-click
+  removal, not conversion uplift) rather than the original prediction.
+
+---
+
+## 8. Recent Commit Sequence (2026-05-11 → 2026-08-28)
 
 In reverse chronological order. All on `main`. The 2026-08-26 block includes
 a deliberate revert (`deb8ee7`) and restore (`ebb505a`) — see §7.9 for why;
 they're kept in history rather than squashed so the round-trip stays
-auditable.
+auditable. The 2026-08-28 (Phase 9) merge/backfill was executed as raw SQL
+directly against production, not a migration commit — see §7.11.
 
 ```
+6b1f0ed feat(admin): dark mode fixed at the root, searchable analytics roster, drop dead avatar card  ← Phase 9
+4036915 fix(analytics): bucket is a Date from pg, not a string — 2nd outage same phase, see §7.14      ← Phase 9
+49fa104 feat(analytics): report per model, not per domain (rollup, weighted rates not averaged)        ← Phase 9
+012f07f fix(analytics): overview exhausted the connection pool and 500'd — 1st outage, see §7.12       ← Phase 9
+365ae8c feat(charmlink): group a model's domains under one identity (charmlink_models + overlay)       ← Phase 9
+d902017 feat(charmlink): portrait and rounded-square avatar frames                                     ← Phase 9
+6f4827c feat(charmlink): aim the avatar crop at the face instead of the centre (focal_x/y)              ← Phase 9
+30f2b9f feat(charmlink): show the creator's name in the browser tab — see §7.13                        ← Phase 9
+4f5e605 feat(charmlink): size the creator avatar as a hero element                                      ← Phase 9
+940e174 feat(charmlink): avatar carousel A/B testing, bigger avatar, inline link editing                ← Phase 9
+0a110b1 feat(analytics): clicks-over-time chart per creator, total vs premium
+ab0e3e4 fix(charmlink): Top Referrers grouped the raw referer string, not the source
+d544e7d docs(charmlink): comprehensive sweep — README, resume doc, and admin SOP catch up to Phase 8
 84b57c9 feat(admin): Blocked Visitors card — see/clear honeypot bans from the dashboard  ← Phase 8
 ee524cb feat(admin): GET/POST /api/admin/bans — count + flush the honeypot ban list      ← Phase 8
 ebb505a Revert "revert: TEMPORARY rollback ... for Instagram testing" — restores the fix  ← Phase 8
@@ -565,6 +722,35 @@ creator page from an actual phone to close that gap.
   reading this after that fired, check whether it actually got reported and
   re-arm the 72h one if not.
 
+### 9.2 Verified Working (2026-08-28, Phase 9)
+
+Same caveat as §9.1 — no shell access to live production domains from this
+session; Vercel API + Supabase MCP telemetry only.
+
+- Final deployment `dpl_FGk3wXxhPCEw7JVgKhTyAUoc3FD6`-and-later (through
+  `6b1f0ed`) — `READY`, `aliasError: null`, all domains aliased.
+- Runtime logs post-fix: sustained `200`s on `/`, `/api/pageview`,
+  `/api/track`, `/api/resolve-domain`, `/api/links/[creator]` throughout —
+  **public traffic was never interrupted by either outage** (§7.12, §7.14);
+  both were isolated to `/api/analytics/overview`, an admin-only route.
+- Direct `charmlink_events` query confirmed data was never lost during
+  either outage — 716,841 events, most recent within seconds of the check,
+  the whole time the dashboard was rendering zeros. Confirmed *before*
+  responding to the "did we just wipe our analytics" question, not after.
+- Model-rollup math verified against synthetic fixtures before shipping
+  (not just typecheck/build): weighted-CTR-not-averaged, photo-pool
+  deduplication (not multiplied by site count), and cross-site timeseries
+  bucket merging using realistic `pg`-shaped values — see §7.14 for why the
+  first version of that test wasn't enough.
+- Post-merge integrity check on the model backfill: 70 sites / 0 orphaned,
+  8 photos / 0 orphaned, 0 duplicate model names, 0 stray-whitespace names,
+  Kai/Kaia and Ivy Eros/Ivy Ember confirmed still separate models after the
+  fuzzy-merge pass (§7.11).
+- User-facing confirmation via screenshot: Hanna Zuki's model card showing
+  654 views / 73 premium clicks / 11.16% CTR combined across her (then) 10
+  sites, matching what direct SQL against `charmlink_events` for the same
+  window independently computed.
+
 ---
 
 ## 10. Known Open / Future Items
@@ -590,13 +776,15 @@ These were on the radar but not done. Pick up as needed.
   - A/B testing per link
 - **Hannazuki avatar** — pointing at `public.onlyfans.com`; verified working
   post-`910f445`. If OF rotates that CDN host, whitelist update needed.
-- **Phase 8 24h/72h effectiveness check** — scheduled (see §9.1), not yet
-  resolved as of this doc's last edit. Success looks like: zero trapped
-  clicks sustained, reached-OF-per-100-views up from the 32.97 baseline
-  toward ~38, reported premium clicks *down* ~16% (phantom clicks leaving
-  the count — that's success, not a regression, don't let anyone read it
-  the other way), honeypot bot-UA share up from 0.12%, Blocked Visitors
-  count staying low rather than climbing back into the thousands.
+- **Phase 8 24h check — resolved, see §7.15.** Zero trapped clicks confirmed
+  sustained. Reached-OF-per-100-views did **not** rise toward ~38 as
+  predicted — it's flat at ~32.8, essentially unchanged from baseline.
+  Reported premium clicks dropped ~13% as predicted (phantom clicks leaving
+  the count — that part of the prediction held). Net: the fix's real value
+  is analytics-correctness (stop counting phantom clicks), not a
+  conversion lift. **72h checkpoint not yet re-armed** — do that with the
+  corrected expectation before trusting a future "it worked" from this
+  thread.
 - **The Instagram "open an app outside" dialog** — unresolved, and per
   §7.9's negative result, not attributable to any Phase 8 code. If it
   recurs and is confirmed to affect more than one device, the next lever to
@@ -606,6 +794,33 @@ These were on the radar but not done. Pick up as needed.
   unprompted on load. Not built; would need its own testing pass before
   shipping given how load-bearing the current auto-escape is for premium
   clicks arriving from Instagram at all.
+- **Two Tier-3 merge review pairs were resolved this session, none left
+  pending** — all Tier-1/2/3 candidate models the user asked to merge (§7.11)
+  are merged as of Phase 9. If new duplicate-looking models show up later
+  (a slug fragment, an emoji variant), re-run the candidate query in §7.11
+  rather than eyeballing the list — it caught a 4-way duplicate (`Holly`)
+  that a first manual pass had only counted as 2.
+- **`getAnalyticsBatch` and `rollupByModel` are a second implementation of
+  the per-creator aggregation rules** (dedup predicate, hostname grouping,
+  bot exclusion) alongside the older per-creator `getAnalytics()`, which
+  the legacy per-creator analytics API route (`/api/analytics/[creator]`)
+  still calls directly. Both were checked against production for identical
+  output before shipping, but two readers of one rule set is a drift risk —
+  worth consolidating if `getAnalytics()` and `getAnalyticsBatch()` are ever
+  edited separately and start disagreeing.
+- **Real face detection for the avatar focal point** was considered and
+  explicitly not built — the `focal_x`/`focal_y` columns exist and the admin
+  has a manual click-to-set picker, but the default is a heuristic (top-25%
+  bias, adaptive to aspect ratio) not a detector. If manual tuning across
+  many photos becomes a real time cost, a detection model at upload time
+  could write to the same columns with no other changes needed.
+- **`.claude/settings.json` allowlists `mcp__Supabase__execute_sql`** to stop
+  per-query permission prompts. That tool can run arbitrary SQL, including
+  writes — broader than "read-only," even though every actual use this
+  session was read/verify/one-off-fix. Deny rules cover the destructive
+  Supabase project operations and force-pushes as a backstop. Revisit if the
+  scope ever feels too wide.
+
 - **Historical trapped clicks are not backfilled.** The ~25,522 pre-fix
   honeypot-trap clicks and the ~6,358 pre-fix double-counted redirect clicks
   (§7.9, §7.10) remain in `charmlink_events` as real rows — correctly, since
@@ -631,6 +846,14 @@ These were on the radar but not done. Pick up as needed.
 5. Anything CF-related: check both legacy `/zones/<id>/firewall/rules` AND
    modern `/zones/<id>/rulesets` — edge rules can silently block what app code
    expects to handle.
+6. **Phase 9 provenance note:** the 2026-08-27/28 work (avatar carousel,
+   model grouping, analytics fixes) was done from a different tool/session
+   context than the OpenClaw Vela/Cepheus/Aquila setup steps 1–5 describe —
+   no local `~/.openclaw/...` checkout, direct git push to `main` instead of
+   a PR, and Supabase access via an MCP tool rather than a local
+   `DATABASE_URL`. The resulting code, schema, and this doc are the same
+   artifacts either way; steps 1–5 above are still the right way to resume
+   if you're operating as Vela specifically.
 
 ---
 

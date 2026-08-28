@@ -172,6 +172,87 @@ links API used to hand out on rejection, which then banned the visitor's IP for
 - **Dead `x-safari-https://` scheme removed** from the per-link click handler
   (Apple killed it in iOS 14.5; it was only adding a 500ms stall).
 
+## v5 Features — Model Grouping & Avatar A/B Testing (live)
+
+A creator row was really a *site* (slug + domain), not a person — a model
+running several domains (common: IG bans one, she opens another) showed up as
+that many disconnected rows, each needing its own avatar upload, its own theme
+edits, and its own analytics card added up by hand.
+
+### Model grouping
+- **`charmlink_models`** is the person; `charmlink_creators` rows point at one
+  via `model_id`. The model owns shared identity — name, tagline, theme
+  colors, avatar frame shape/border, verified badge — while each site keeps
+  its own slug, custom domain, and links.
+- **Overlay, not migration.** A site's own columns are left intact underneath;
+  the model's values win only while attached. Detaching restores the site's
+  own identity instead of blanking it.
+- **`/admin/creators` groups by model** — one row per person, expandable to
+  her sites, each showing its own views/premium/CTR. **Manage** opens
+  `/admin/models/[id]` for shared photos + identity; **Links** opens the
+  per-site editor for that domain's own tracking links.
+- Backfill matched by **exact name only** — it does not fuzzy-match
+  automatically, since e.g. "Kai" and "Kaia" are different people and a wrong
+  auto-merge blends two people's photos and stats irreversibly. Emoji/spacing
+  duplicates and name variants provable from slug/domain evidence were merged
+  by hand after review; ambiguous pairs were left split.
+
+### Avatar carousel (A/B testing)
+- Up to **10 candidate photos per model**, shared across every one of her
+  sites. One is chosen per page render and its id rides along on that
+  session's pageview + click events, so a conversion rate attributes back to
+  the exact photo shown.
+- **Selection is Thompson sampling** over each photo's Beta(1+clicks,
+  1+misses) posterior — new photos get explored automatically, traffic
+  concentrates on leaders as evidence builds, and a weak photo is never
+  dropped to zero so it can recover if the audience shifts. No threshold to
+  tune. Pinning 1–3 photos locks the rotation to that set and stops
+  exploration.
+- **200 impressions per photo** is the point the UI stops calling a
+  conversion rate provisional (`MIN_IMPRESSIONS_FOR_CONFIDENCE`,
+  `lib/avatar-rotation.ts`) — below it, both the manager and analytics show
+  how many more views are needed rather than a number worth acting on.
+  Because the pool is shared across a model's sites, this bar is reached
+  roughly *N×* faster for a model with *N* domains than it would be per-site.
+- **Per-photo focal point** (`focal_x`/`focal_y`, default 50/25 — biased
+  toward the top of the frame since most uploads are selfies) plus **3 frame
+  shapes** (circle / portrait 3:4 / rounded square) fix the classic
+  circle-crop failure where a 3:4 photo loses the subject's face to a square
+  window. Portrait crops almost nothing; the admin has a click-to-set focal
+  picker with a live preview of the real crop.
+- Rotation stats are cached 5 minutes per serverless instance; an admin
+  edit (upload/pin/pause) busts the cache for every site under the model
+  immediately rather than waiting out the TTL.
+
+### Admin analytics — now grouped, and rewritten for scale
+- `/admin/analytics` reads like the creators list: **one card per model**,
+  numbers summed across her sites, with a "N domains" toggle for the
+  per-site breakdown. Left sidebar lists every model with a live search box;
+  one card renders at a time instead of scrolling a stack of thirty.
+- Rates are **recomputed from the summed numerator/denominator, never
+  averaged across sites** — averaging a 40,000-view domain at 30% CTR with a
+  40-view domain at 100% would report 65%, more than double the true ~30%.
+- **`getAnalyticsBatch`** (`lib/db.ts`) replaced a per-creator
+  `Promise.all(creators.map(getAnalytics))` fan-out that, once the per-creator
+  query count grew past ~5, exceeded the serverless Postgres pool (`max: 3`)
+  and 500'd the whole endpoint — the dashboard rendered zeros while the
+  underlying data was untouched. The batched version groups every metric by
+  `creator_slug` in a fixed number of queries, so cost no longer scales with
+  creator count.
+- A **clicks-over-time chart** (hour/day/week buckets depending on the period
+  filter) sits on every model card, gray "Total" bars with pink "Premium"
+  overlaid, alongside the existing device/referrer/link breakdowns.
+
+### Also
+- **Inline link editing** — a ✎ on each link edits label/subtitle/URL in
+  place; no more delete-and-re-add for a text fix. Icon/type/badge/advanced
+  settings are untouched by the edit.
+- **Admin dark mode fixed at the root** — `bg-background`/`bg-card` and other
+  shadcn tokens were resolving to the *light* palette because nothing ever
+  applied Tailwind's `.dark` class; the dark values were in `globals.css` the
+  whole time, just unreachable. Applied once at `app/admin/layout.tsx` so
+  every token-based admin page inherits it.
+
 ## Tech Stack
 
 - **Framework**: Next.js 16 (App Router)
@@ -196,22 +277,29 @@ charmlink/
 │   ├── r/[linkId]/page.tsx      # Per-link interstitial — age-gates sensitive links, then redirects
 │   ├── admin/                   # Admin dashboard (shadcn/ui)
 │   │   ├── page.tsx             # Login page
-│   │   ├── layout.tsx           # Admin layout with navigation
+│   │   ├── layout.tsx           # Applies Tailwind `.dark` to the whole admin (v5) — see note below
 │   │   ├── AdminNav.tsx         # Sidebar navigation
 │   │   ├── CopyButton.tsx       # Copy/open buttons for slug + domain
+│   │   ├── AvatarCarouselManager.tsx  # (v5) Shared photo-carousel manager, model-scoped;
+│   │   │                        #   used by both the model page and (legacy path) a creator page
 │   │   ├── useAdminAuth.ts      # Auth hook (localStorage token)
 │   │   ├── dashboard/           # Overview stats + recent activity + Blocked Visitors card
-│   │   ├── creators/            # Creator CRUD + link management
-│   │   │   ├── page.tsx         # Creator list + add/delete
-│   │   │   └── [id]/page.tsx    # 5-tab editor (Profile/Theme/Effects/Avatar/Misc)
-│   │   ├── analytics/           # Analytics dashboard
+│   │   ├── creators/            # Site (domain) list — grouped by model (v5) + link management
+│   │   │   ├── page.tsx         # Grouped creator list: one row per model, expands to her sites
+│   │   │   └── [id]/page.tsx    # Per-site editor (Profile/Theme/Effects/Misc + Links; Avatar tab
+│   │   │                        #   now just links out to the model page — see v5)
+│   │   ├── models/[id]/page.tsx # (v5) Photo carousel + shared identity for one model, all her sites
+│   │   ├── analytics/           # Analytics dashboard — grouped by model (v5), searchable sidebar
 │   │   │   ├── page.tsx         # Analytics page wrapper — owns `period` state
 │   │   │   └── AnalyticsDashboard.tsx  # Charts + stats (controlled by page.tsx via onPeriodChange)
 │   │   └── domains/             # Domain management
 │   │       └── page.tsx         # Add/remove domains, health badges, Heal button
 │   ├── api/
 │   │   ├── admin/               # Protected admin API routes (CHARMLINK_ADMIN_KEY)
-│   │   │   ├── creators/        # CRUD for creators (+ [id]/links/ for link CRUD)
+│   │   │   ├── creators/        # CRUD for creator sites (+ [id]/links/ for link CRUD)
+│   │   │   ├── models/          # (v5) CRUD for models + re-parenting sites (+ [id]/avatars/
+│   │   │   │                    #   for the shared photo carousel — moved here from
+│   │   │   │                    #   creators/[id]/avatars/ once avatars became model-owned)
 │   │   │   ├── domains/         # Vercel + Cloudflare domain management (+ status/, heal/)
 │   │   │   ├── avatar/          # Client-direct Vercel Blob upload token minting
 │   │   │   ├── bans/            # GET count / POST flush the honeypot ban list
@@ -254,7 +342,10 @@ charmlink/
 │   │   └── cloak.ts              # Scraper bypass renderer for middleware
 │   ├── themes.ts                 # Visual theme presets for real creator pages
 │   ├── fonts.ts                  # Google Fonts dynamic loader
-│   ├── db.ts                     # Database layer — all CRUD + analytics queries
+│   ├── db.ts                     # Database layer — all CRUD + analytics queries, incl.
+│   │                              #   getAnalyticsBatch (v5, replaces a per-creator N+1 fan-out)
+│   ├── avatar-rotation.ts        # (v5) Thompson-sampling photo selection + rotation cache
+│   ├── analytics-rollup.ts       # (v5) Folds per-site AnalyticsSummary rows up to one per model
 │   ├── analytics.ts              # Legacy file-based analytics (kept for reference)
 │   ├── types.ts                  # TypeScript interfaces
 │   └── utils.ts                  # shadcn/ui utility (cn helper)
@@ -267,7 +358,9 @@ charmlink/
 ├── supabase/migrations/           # Raw SQL migrations (creators/links schema lives in
 │                                   #   scripts/migrate.ts; this dir covers what was
 │                                   #   added out-of-band — honeypot_logs, cloak_enabled,
-│                                   #   charmlink_creator_domains + its sync trigger)
+│                                   #   charmlink_creator_domains + its sync trigger,
+│                                   #   charmlink_creator_avatars + focal point + shape,
+│                                   #   and charmlink_models + the model_id overlay (v5))
 ├── creators.json                  # Sample creator data (used for seeding only)
 ├── docs/                          # See below
 ├── package.json
@@ -276,12 +369,13 @@ charmlink/
 
 ## Database Schema
 
-Three tables, all prefixed with `charmlink_`:
+All tables prefixed with `charmlink_`:
 
 ### `charmlink_creators`
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | UUID | Primary key |
+| `model_id` | UUID | FK → `charmlink_models.id`, nullable (`SET NULL` on delete). While set, the model's shared fields overlay this row's own values — see v5 above. |
 | `slug` | VARCHAR(100) | URL slug (unique) — e.g., `holly` |
 | `name` | VARCHAR(255) | Display name |
 | `tagline` | TEXT | Short bio shown on page |
@@ -306,6 +400,7 @@ Three tables, all prefixed with `charmlink_`:
 | `stars_count` | INT | Number of stars (default 50) |
 | `stars_color` | VARCHAR(20) | Star particle color |
 | `animation_speed` | INT | Animation cycle in seconds (default 10) |
+| `avatar_shape` | TEXT | `circle`, `portrait`, or `square` — the carousel frame; default `circle` |
 | `avatar_border_style` | VARCHAR(20) | `solid`, `gradient`, `none` |
 | `avatar_border_color_1` | VARCHAR(20) | Primary border / gradient color 1 |
 | `avatar_border_color_2` | VARCHAR(20) | Gradient color 2 |
@@ -363,9 +458,46 @@ Three tables, all prefixed with `charmlink_`:
 | `device` | VARCHAR(20) | `mobile`, `tablet`, or `desktop` |
 | `is_bot` | BOOLEAN | Whether the visitor was identified as a bot |
 | `is_instagram` | BOOLEAN | Whether the visitor came from Instagram's in-app browser |
+| `avatar_id` | UUID | FK → `charmlink_creator_avatars.id`, nullable (`SET NULL` on delete). Which carousel photo was on screen for this event — null for every historical row and for any model with no carousel configured. |
 | `created_at` | TIMESTAMPTZ | Event timestamp |
 
 **Indexes**: `creator_slug`, `created_at`, plus unique indexes on `creators.slug` and `creators.custom_domain`.
+
+### `charmlink_models` (v5)
+The person behind one or more `charmlink_creators` sites. Owns the identity
+fields that overlay onto every attached site — see v5 above for why this
+exists and how the overlay works.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | UUID | Primary key |
+| `name` | TEXT | Display name — the one shown across all her sites |
+| `tagline` | TEXT | Shared tagline |
+| `theme_bg` / `theme_accent` / `theme_text` | TEXT | Shared theme colors |
+| `bg_type` / `bg_gradient_type` / `bg_gradient_direction` / `bg_color_2` / `bg_color_3` | TEXT | Shared background config |
+| `avatar_shape` | TEXT | `circle` / `portrait` / `square` — shared frame shape |
+| `avatar_border_style` / `avatar_border_color_1/2/3` | TEXT | Shared avatar border config |
+| `is_verified` | BOOLEAN | Shared verified badge |
+| `font` | TEXT | Shared font family |
+| `created_at` / `updated_at` | TIMESTAMPTZ | |
+
+### `charmlink_creator_avatars` (v5)
+Carousel candidate photos. Owned by **either** a model (the shared-pool case
+every current row uses) **or** a single creator (legacy path, kept for a
+model-less site) — never both; enforced by a `CHECK (num_nonnulls(creator_id,
+model_id) = 1)` constraint.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | UUID | Primary key |
+| `model_id` | UUID | FK → `charmlink_models.id` (`CASCADE` delete), nullable |
+| `creator_id` | UUID | FK → `charmlink_creators.id` (`CASCADE` delete), nullable — legacy per-site ownership |
+| `url` | TEXT | Photo URL (Vercel Blob) |
+| `is_active` | BOOLEAN | Included in rotation |
+| `is_pinned` | BOOLEAN | Locks rotation to the pinned set (max 3) and stops exploration |
+| `sort_order` | INT | Manager display order |
+| `focal_x` / `focal_y` | SMALLINT | Crop focal point, 0–100. Default 50/25 (biased up, since uploads are overwhelmingly selfies) |
+| `created_at` | TIMESTAMPTZ | |
 
 ## Setup
 
@@ -448,24 +580,47 @@ Access at `/admin` with your `CHARMLINK_ADMIN_KEY`.
 - Recent activity feed (last 20 events)
 - **Blocked Visitors card** — shows how many IPs the honeypot currently has banned (24h TTL each), with a one-click **Clear all bans** to flush the whole list immediately. A stale backlog otherwise keeps real visitors seeing the decoy page until their ban expires on its own; genuine bots get re-banned on their next hit, so clearing is safe
 
-### Creators (`/admin/creators`)
-- View all creators with quick stats
-- Add new creators with name, slug, tagline, avatar, theme colors
-- Delete creators (cascades to links and nullifies events)
+### Creators (`/admin/creators`) (v5: grouped by model)
+- **One row per person, not per site.** A model with several domains — the
+  common case, since a creator who gets one domain flagged usually opens
+  another — expands to show each site's own views/premium/CTR underneath.
+- **Manage** opens `/admin/models/[id]` — photos and shared identity for
+  every one of her sites, edited once.
+- **Links** opens `/admin/creators/[id]` — that specific domain's own
+  premium/social links (each domain tracks its own clicks separately).
+- Add new creators with name, slug, tagline, avatar, theme colors; delete
+  cascades to links and nullifies events.
 
-### Creator Detail (`/admin/creators/[id]`) — 5-Tab Editor
-- **Profile tab**: Name, tagline, slug, avatar URL, custom domain + one-click Vercel setup, active/sensitive toggles
-- **Theme tab**: Background type (solid/gradient), gradient type (linear/radial) + direction, 3 color pickers with live preview, accent + text colors
+### Model Detail (`/admin/models/[id]`) (v5)
+- **Photo Carousel** — upload up to 10 candidate photos, see live
+  impressions/premium-clicks/conversion-rate per photo, pin up to 3 to lock
+  the rotation, pause/resume/delete. Click-to-set focal point per photo with
+  a live crop preview.
+- **Shared identity** — name, tagline, theme colors, avatar frame shape
+  (circle/portrait/square), border style, verified badge. Applies to every
+  site below.
+- **Sites** — every domain under this model, each linking out to its own
+  link editor.
+
+### Creator Detail (`/admin/creators/[id]`) — per-site editor
+- **Profile tab**: Slug, custom domain + one-click Vercel setup, active/sensitive toggles
+- **Theme tab**: Background type (solid/gradient), gradient type (linear/radial) + direction, 3 color pickers with live preview, accent + text colors — overridden by the model's shared theme if this site belongs to one
 - **Effects tab**: Floating icons (toggle + emoji + count + speed), star particles (toggle + count + color), animation speed
-- **Avatar tab**: Border style (solid/gradient/none), 3 gradient color pickers, verified badge toggle
+- **Avatar tab**: Points to `/admin/models/[id]` — photos and frame/border are model-owned as of v5, not edited per-site
 - **Misc tab**: Font family selector (6 Google Fonts), location toggle + type + pill color
-- **Links section**: Add/edit/delete social + premium links with full v3 visual options (glow, animations, borders, badges, subtitles, image URLs, deeplinking)
-- **Analytics**: 30-day stats for this specific creator
+- **Links section**: Add/edit/delete social + premium links, with **inline editing** (v5: a ✎ button edits label/subtitle/URL in place, no delete-and-re-add) plus the full v3 visual options (glow, animations, borders, badges, subtitles, image URLs, deeplinking)
 
-### Analytics (`/admin/analytics`)
-- Global and per-creator statistics
-- Metrics: page views (human vs bot), unique visitors, clicks, CTR, Instagram traffic %
-- Breakdowns: device (mobile/desktop/tablet), country, top referrers, per-link clicks
+### Analytics (`/admin/analytics`) (v5: grouped by model, searchable)
+- **One card per model**, numbers summed across her sites, with a "N
+  domains" toggle for the per-site breakdown — not averaged, since averaging
+  rates across sites of very different traffic would misreport her real CTR.
+- Left sidebar lists every model with a live search box; one card renders
+  at a time.
+- Metrics: page views (human vs bot), unique visitors, clicks, CTR,
+  Instagram traffic %
+- Breakdowns: device (mobile/desktop/tablet), country, top referrers,
+  per-link clicks, a clicks-over-time chart (hour/day/week buckets), and
+  per-photo conversion rates for models running the avatar carousel
 - Time periods: today, 7 days, 30 days, all time
 - Dark themed with CSS bar charts
 
@@ -603,6 +758,14 @@ Tested architecture supports 100+ creators with custom domains from a single dep
 | `GET` | `/api/admin/themes` | List built-in theme presets (no auth — static data only) |
 | `GET` | `/api/admin/bans` | Count IPs currently on the honeypot ban list (read-only) |
 | `POST` | `/api/admin/bans` | Delete every honeypot ban, immediately un-blocking everyone (also available as a button on `/admin/dashboard`) |
+| `GET` | `/api/admin/models` | List every model with her sites nested + aggregated traffic (v5) |
+| `POST` | `/api/admin/models` | Create a model (`{ "name": "..." }`) |
+| `PUT` | `/api/admin/models` | Update shared identity fields (`{ "id", ...fields }`), or re-parent a site (`{ "creatorId", "modelId" }` — `modelId: null` detaches it) |
+| `DELETE` | `/api/admin/models` | Delete a model (`{ "id": "..." }`) — attached sites fall back to their own columns, not deleted |
+| `GET` | `/api/admin/models/[id]/avatars` | List a model's carousel photos with per-photo stats (v5) |
+| `POST` | `/api/admin/models/[id]/avatars` | Add a photo (`{ "url": "..." }`, max 10 per model) |
+| `PUT` | `/api/admin/models/[id]/avatars` | Update a photo (`{ "avatarId", is_active?, is_pinned?, focal_x?, focal_y? }`) |
+| `DELETE` | `/api/admin/models/[id]/avatars` | Remove a photo (`{ "avatarId": "..." }`) — past events keep their attribution |
 
 ## Security Considerations
 
@@ -622,6 +785,7 @@ Tested architecture supports 100+ creators with custom domains from a single dep
 - [x] ~~shadcn/ui admin dashboard~~ ✅ Shipped in v3
 - [x] ~~Avatar image upload~~ ✅ Shipped — client-direct upload to Vercel Blob (`/api/admin/avatar`)
 - [ ] CSV bulk import for onboarding many creators at once
+- [x] ~~A/B testing for avatar photos~~ ✅ Shipped in v5 — Thompson-sampled photo carousel with per-photo conversion tracking
 - [ ] A/B testing for link labels and page themes
 - [ ] Webhook notifications for click milestones
 - [ ] Theme presets (one-click "dark neon", "pastel dream", "minimalist" etc.)

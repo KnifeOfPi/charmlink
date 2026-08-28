@@ -102,6 +102,20 @@ styles.add(ParagraphStyle(
 
 story = []
 
+_cell_style = ParagraphStyle(
+    "TableCell", parent=styles["Normal"], fontSize=9, leading=11, alignment=TA_LEFT,
+)
+_cell_style_bold = ParagraphStyle(
+    "TableCellBold", parent=_cell_style, fontName="Helvetica-Bold", textColor=WHITE,
+)
+
+def cell(text, header=False):
+    """Wrap table-cell text in a Paragraph so it actually wraps to the column
+    width. Table() silently overflows plain strings that don't fit on one
+    line instead of wrapping them — every other table in this doc has
+    coincidentally short-enough cell text to never hit that; this one didn't."""
+    return Paragraph(text, _cell_style_bold if header else _cell_style)
+
 def title(text):
     story.append(Paragraph(text, styles["DocTitle"]))
 
@@ -161,6 +175,7 @@ toc_items = [
     "2. Logging Into the Admin Dashboard",
     "3. Adding a New Creator",
     "4. Editing a Creator's Page",
+    "4a. Managing a Person's Photos & Shared Look",
     "5. Managing Links (Social + Premium)",
     "6. Visual Customization (Theme, Effects, Fonts)",
     "7. Adding a Custom Domain",
@@ -254,6 +269,15 @@ tip("The slug is what appears in the URL. For example, slug <b>holly</b> → cha
 
 warning("Slugs must be unique. You can't have two creators with the same slug.")
 
+spacer()
+subhead("Adding Another Domain for an Existing Creator")
+body("Many creators run several domains for the same page (e.g., if Instagram flags one, they switch to another). "
+     "The Creators list groups all of a person's domains under one row so her photos and shared look only need "
+     "setting up once — see Section 4a.")
+warning("A brand-new domain does NOT automatically join an existing person's group — it starts as its own "
+        "row until it's linked. Ask your engineer to link a new domain to the right person after adding it; "
+        "there is no self-serve button for this yet.")
+
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 4: EDITING A CREATOR
 # ══════════════════════════════════════════════════════════════════════════════
@@ -261,17 +285,42 @@ warning("Slugs must be unique. You can't have two creators with the same slug.")
 story.append(PageBreak())
 section("4. Editing a Creator's Page")
 
-body("Click on any creator from the Creators list to open their edit page. "
-     "The editor has <b>5 tabs</b>:")
+body("The Creators list shows one row per <b>person</b>, expandable to each of her domains. Two different "
+     "pages edit two different things:")
+
+spacer()
+
+split_data = [
+    [cell("Click...", header=True), cell("Opens...", header=True), cell("Edits...", header=True)],
+    [cell("\u201cManage\u201d on her row"), cell("Model page (Section 4a)"),
+     cell("Photos + everything shared across ALL her domains")],
+    [cell("\u201cLinks\u201d on one domain"), cell("This section (per-domain editor)"),
+     cell("That ONE domain's own social/premium links + a few per-domain settings")],
+]
+split_table = Table(split_data, colWidths=[1.7*inch, 2.1*inch, 2.4*inch])
+split_table.setStyle(TableStyle([
+    ("BACKGROUND", (0, 0), (-1, 0), HexColor("#1a1a2e")),
+    ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
+    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+    ("FONTSIZE", (0, 0), (-1, -1), 9),
+    ("BACKGROUND", (0, 1), (-1, -1), HexColor("#f8f9fa")),
+    ("GRID", (0, 0), (-1, -1), 0.5, HexColor("#dee2e6")),
+    ("PADDING", (0, 0), (-1, -1), 6),
+    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+]))
+story.append(split_table)
+spacer()
+
+body("The per-domain editor has <b>5 tabs</b>:")
 
 spacer()
 
 tabs_data = [
     ["Tab", "What It Controls"],
-    ["Profile", "Name, tagline, slug, avatar, domain, active/sensitive toggles"],
-    ["Theme", "Background colors, gradient type & direction, accent & text colors"],
+    ["Profile", "This domain's own slug + custom domain, active/sensitive toggles"],
+    ["Theme", "Background colors, gradient type & direction, accent & text colors \u2014 overridden by her shared theme if this domain belongs to a person with one set"],
     ["Effects", "Floating emoji, star particles, animation speed"],
-    ["Avatar", "Border style (solid/gradient/none), border colors, verified badge"],
+    ["Avatar", "Just a button linking to the model page \u2014 photos and frame/border are set there now, not per-domain (Section 4a)"],
     ["Misc", "Font family, location display, location pill color"],
 ]
 tabs_table = Table(tabs_data, colWidths=[1.2*inch, 5*inch])
@@ -290,6 +339,40 @@ spacer()
 
 warning("Always click <b>Save</b> after making changes on any tab. Changes are NOT auto-saved.")
 tip("Changes go live immediately after saving — no deploy or restart needed.")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 4a: MANAGING A PERSON (MODEL PAGE)
+# ══════════════════════════════════════════════════════════════════════════════
+
+story.append(PageBreak())
+section("4a. Managing a Person's Photos & Shared Look")
+
+body("Click <b>\u201cManage\u201d</b> on a person's row in the Creators list to open her model page. "
+     "Everything here applies to <b>every one of her domains at once</b> \u2014 set it up once instead of "
+     "repeating it per site.")
+
+spacer()
+subhead("Photo Carousel (A/B testing)")
+body("Upload up to <b>10 candidate photos</b>. The site automatically rotates them across her visitors and "
+     "tracks which photo leads to more premium subscriptions \u2014 better performers earn more traffic over "
+     "time, automatically, with no manual tuning.")
+bullet("Each photo shows its live <b>conversion rate</b> (subscriptions \u00f7 views) once it has enough traffic to trust")
+bullet("A photo needs about <b>200 views</b> before its number means anything \u2014 the app tells you how many more it needs")
+bullet('<b>📌 Pin</b> a photo (up to 3) to lock the rotation to your proven winners and stop testing new ones')
+bullet("<b>⏸ Pause</b> a photo to remove it from rotation without deleting its history")
+bullet("<b>Click the photo thumbnail</b> to re-center the crop \u2014 useful if a face gets cut off (see Frame Shape below)")
+
+spacer()
+subhead("Shared Identity")
+body("Name, tagline, background/accent/text colors, avatar frame shape, border style, and the verified badge "
+     "\u2014 set once, applied to every domain.")
+bullet("<b>Frame Shape:</b> Circle (classic), Portrait (rectangle matching a phone photo\u2019s natural shape "
+       "\u2014 crops almost nothing, best for full-body or half-body shots), or Rounded Square")
+bullet("<b>Border Style:</b> Solid, animated Gradient, or None")
+
+spacer()
+subhead("Sites")
+body("Lists every domain that belongs to this person, with a <b>Links</b> button to jump to that domain's own link editor.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 5: MANAGING LINKS
@@ -381,12 +464,9 @@ spacer(4)
 body("Set via the <b>Effects</b> tab.")
 
 subhead("Avatar")
-bullet("<b>Gradient Border</b> — Spinning rainbow/gradient border around the avatar. Pick 3 colors.")
-bullet("<b>Solid Border</b> — Simple single-color border.")
-bullet("<b>No Border</b> — Clean look, no border.")
-bullet("<b>Verified Badge</b> — Blue checkmark next to the creator's name (like Twitter).")
-spacer(4)
-body("Set via the <b>Avatar</b> tab.")
+body("Photos, frame shape, and border are now set on the <b>person's model page</b> (Section 4a), not here \u2014 "
+     "since one person's avatar applies to all her domains. Click \u201cOpen model settings\u201d on this "
+     "creator's Avatar tab to jump there.")
 
 subhead("Fonts")
 body("Choose from 6 Google Fonts in the <b>Misc</b> tab:")
@@ -465,7 +545,10 @@ step(3, "This removes it from Vercel only — you'll need to clean up DNS record
 story.append(PageBreak())
 section("8. Monitoring Analytics")
 
-body("The Analytics page shows traffic and engagement data for all creators.")
+body("The Analytics page shows traffic and engagement data, one card per <b>person</b> (her domains combined "
+     "into one set of numbers). Use the search box on the left to find someone in a long roster instead of "
+     "scrolling; click her name to view her card. A \u201cN domains\u201d link on her card expands to show "
+     "each individual domain's own numbers side by side.")
 
 subhead("Key Metrics")
 
@@ -500,6 +583,10 @@ tip("The most important metric is <b>CTR (Click-Through Rate)</b>. If a creator 
 
 tip("Some nonzero <b>Bot Views</b> alongside Human Views is normal — it means the bot protection is working and "
     "Instagram/Google crawl activity is being correctly separated out, not counted as real traffic.")
+
+spacer()
+body("If she has an active photo carousel (Section 4a), her card also shows a <b>Photo Performance</b> row \u2014 "
+     "conversion rate per photo, with the best-performing one marked.")
 
 spacer()
 subhead("Blocked Visitors (Dashboard)")
@@ -563,6 +650,14 @@ subhead("Analytics showing zero")
 bullet("Analytics require real traffic — check that someone has actually visited the page")
 bullet("Bot visits are tracked separately; look at 'Bot Views' vs 'Human Views'")
 bullet("Data appears in real-time — no delay")
+bullet("If EVERY number on the page is zero at once (not just one quiet creator), that's a different problem — "
+       "a backend issue, not missing traffic. Refresh the page once; if it's still all zeros, the underlying "
+       "data is still safe and this needs an engineer, not a re-check of who visited")
+
+spacer()
+subhead("A domain isn't showing up under the right person")
+bullet("A newly added domain starts as its own separate row until an engineer links it to the right person "
+       "— see the warning in Section 3. This isn't something you can fix from the admin yet.")
 
 subhead("Admin login not working")
 bullet("Clear your browser's local storage and try again")
