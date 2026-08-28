@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAllCreators, getAnalytics, getAnalyticsOverview } from "../../../../lib/db";
+import { getAnalyticsBatch, getAnalyticsOverview } from "../../../../lib/db";
 
 export const runtime = "nodejs";
 
@@ -22,14 +22,11 @@ export async function GET(request: NextRequest) {
     | "all";
 
   try {
-    const [creators, totals] = await Promise.all([
-      getAllCreators(),
-      getAnalyticsOverview(period),
-    ]);
-
-    const summaries = await Promise.all(
-      creators.map((c) => getAnalytics(c.slug, period))
-    );
+    // Sequential, not Promise.all: both sides open connections from a pool of
+    // 3, and running them together is what pushed this endpoint past its
+    // connect timeout in the first place.
+    const totals = await getAnalyticsOverview(period);
+    const summaries = await getAnalyticsBatch(period);
 
     return NextResponse.json({ period, creators: summaries, totals });
   } catch (err) {

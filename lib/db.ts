@@ -1108,6 +1108,134 @@ export async function getAnalytics(
   };
 }
 
+
+/**
+ * Every creator's summary in a fixed number of queries.
+ *
+ * The overview page previously called getAnalytics() once per creator inside a
+ * Promise.all. At 70 creators and seven queries each that is ~490 queries fired
+ * simultaneously at a pool capped at 3 connections, so they queued past
+ * connectionTimeoutMillis and the whole endpoint 500'd — the dashboard rendered
+ * zeros while the data was perfectly intact. Every query below is instead
+ * grouped by creator_slug, so cost is flat in the number of creators.
+ */
+export async function getAnalyticsBatch(
+  period: "today" | "7d" | "30d" | "all"
+): Promise<AnalyticsSummary[]> {
+  const cutoff = periodCutoff(period);
+  const params: unknown[] = cutoff ? [cutoff] : [];
+  const tf = cutoff ? "AND e.created_at >= $1" : "";
+  const bucketUnit = timeseriesBucketUnit(period);
+
+  const [pv, clk, refs, dev, cnt, lnk, ts, av] = await Promise.all([
+    query<{ creator_slug: string; total: string; human: string; bot: string; instagram: string; unique_sessions: string }>(
+      `SELECT creator_slug, COUNT(*) AS total,
+              COUNT(*) FILTER (WHERE NOT is_bot) AS human,
+              COUNT(*) FILTER (WHERE is_bot) AS bot,
+              COUNT(*) FILTER (WHERE is_instagram) AS instagram,
+              COUNT(DISTINCT session_id) AS unique_sessions
+       FROM charmlink_events e WHERE e.type='pageview' ${tf} GROUP BY creator_slug`, params),
+    query<{ creator_slug: string; total: string; premium: string; social: string }>(
+      `SELECT creator_slug, COUNT(*) AS total,
+              COUNT(*) FILTER (WHERE link_type='premium') AS premium,
+              COUNT(*) FILTER (WHERE link_type='social') AS social
+       FROM charmlink_events e WHERE ${DEDUPED_CLICKS} ${tf} GROUP BY creator_slug`, params),
+    query<{ creator_slug: string; referer: string; count: string }>(
+      `SELECT creator_slug, referer, count FROM (
+         SELECT creator_slug,
+                CASE WHEN referer='' THEN '' ELSE regexp_replace(referer,'^https?://([^/]+).*$','\\1') END AS referer,
+                COUNT(*) AS count,
+                ROW_NUMBER() OVER (PARTITION BY creator_slug ORDER BY COUNT(*) DESC) AS rn
+         FROM charmlink_events e WHERE e.type='pageview' ${tf} GROUP BY creator_slug, 2
+       ) t WHERE rn <= 10`, params),
+    query<{ creator_slug: string; device: string; count: string }>(
+      `SELECT creator_slug, device, COUNT(*) AS count FROM charmlink_events e
+       WHERE e.type='pageview' ${tf} GROUP BY creator_slug, device`, params),
+    query<{ creator_slug: string; country: string; count: string }>(
+      `SELECT creator_slug, country, count FROM (
+         SELECT creator_slug, country, COUNT(*) AS count,
+                ROW_NUMBER() OVER (PARTITION BY creator_slug ORDER BY COUNT(*) DESC) AS rn
+         FROM charmlink_events e WHERE e.type='pageview' ${tf} GROUP BY creator_slug, country
+       ) t WHERE rn <= 10`, params),
+    query<{ creator_slug: string; link_label: string; link_url: string; link_type: string; count: string }>(
+      `SELECT creator_slug, link_label, link_url, link_type, COUNT(*) AS count
+       FROM charmlink_events e WHERE ${DEDUPED_CLICKS} ${tf}
+       GROUP BY creator_slug, link_label, link_url, link_type ORDER BY count DESC`, params),
+    query<{ creator_slug: string; bucket: string; total: string; premium: string }>(
+      `SELECT creator_slug, date_trunc('${bucketUnit}', created_at) AS bucket,
+              COUNT(*) AS total, COUNT(*) FILTER (WHERE link_type='premium') AS premium
+       FROM charmlink_events e WHERE ${DEDUPED_CLICKS} ${tf}
+       GROUP BY creator_slug, 2 ORDER BY 2`, params),
+    query<{ creator_slug: string; avatar_id: string; url: string; is_pinned: boolean; is_active: boolean; impressions: string; premium_clicks: string }>(
+      `SELECT c.slug AS creator_slug, a.id AS avatar_id, a.url, a.is_pinned, a.is_active,
+              COUNT(e.id) FILTER (WHERE e.type='pageview' AND NOT e.is_bot) AS impressions,
+              COUNT(e.id) FILTER (WHERE ${DEDUPED_CLICKS} AND e.link_type='premium') AS premium_clicks
+       FROM charmlink_creator_avatars a
+       JOIN charmlink_creators c ON c.model_id = a.model_id
+       LEFT JOIN charmlink_events e ON e.avatar_id = a.id ${tf}
+       GROUP BY c.slug, a.id, a.url, a.is_pinned, a.is_active, a.sort_order, a.created_at
+       ORDER BY a.sort_order ASC, a.created_at ASC`, params),
+  ]);
+
+  const bySlug = <T extends { creator_slug: string }>(rows: T[]) => {
+    const m = new Map<string, T[]>();
+    for (const r of rows) {
+      const arr = m.get(r.creator_slug);
+      if (arr) arr.push(r);
+      else m.set(r.creator_slug, [r]);
+    }
+    return m;
+  };
+  const pvBy = new Map(pv.map((r) => [r.creator_slug, r]));
+  const clkBy = new Map(clk.map((r) => [r.creator_slug, r]));
+  const refBy = bySlug(refs), devBy = bySlug(dev), cntBy = bySlug(cnt);
+  const lnkBy = bySlug(lnk), tsBy = bySlug(ts), avBy = bySlug(av);
+
+  const creators = await getAllCreators();
+  return creators.map((c): AnalyticsSummary => {
+    const p = pvBy.get(c.slug);
+    const k = clkBy.get(c.slug);
+    const humanViews = parseInt(p?.human ?? "0");
+    const premiumClicks = parseInt(k?.premium ?? "0");
+    const deviceBreakdown: Record<DeviceType, number> = { mobile: 0, tablet: 0, desktop: 0 };
+    for (const d of devBy.get(c.slug) ?? []) {
+      const key = d.device as DeviceType;
+      if (key in deviceBreakdown) deviceBreakdown[key] = parseInt(d.count);
+    }
+    return {
+      creator: c.slug,
+      period,
+      totalViews: parseInt(p?.total ?? "0"),
+      humanViews,
+      botViews: parseInt(p?.bot ?? "0"),
+      uniqueSessions: parseInt(p?.unique_sessions ?? "0"),
+      totalClicks: parseInt(k?.total ?? "0"),
+      premiumClicks,
+      socialClicks: parseInt(k?.social ?? "0"),
+      ctr: humanViews > 0 ? Math.round((premiumClicks / humanViews) * 10000) / 100 : 0,
+      topReferrers: (refBy.get(c.slug) ?? []).map((r) => ({ referer: r.referer || "direct", count: parseInt(r.count) })),
+      deviceBreakdown,
+      countryBreakdown: (cntBy.get(c.slug) ?? []).map((r) => ({ country: r.country, count: parseInt(r.count) })),
+      instagramTraffic: parseInt(p?.instagram ?? "0"),
+      linkBreakdown: (lnkBy.get(c.slug) ?? []).map((r) => ({
+        label: r.link_label, url: r.link_url, type: r.link_type, clicks: parseInt(r.count),
+      })),
+      clickTimeseries: (tsBy.get(c.slug) ?? []).map((r) => ({
+        bucket: r.bucket, total: parseInt(r.total), premium: parseInt(r.premium),
+      })),
+      avatarPerformance: (avBy.get(c.slug) ?? []).map((r) => {
+        const impressions = parseInt(r.impressions);
+        const pc = parseInt(r.premium_clicks);
+        return {
+          avatarId: r.avatar_id, url: r.url, isPinned: r.is_pinned, isActive: r.is_active,
+          impressions, premiumClicks: pc,
+          conversionRate: impressions > 0 ? Math.round((pc / impressions) * 10000) / 100 : 0,
+        };
+      }),
+    };
+  });
+}
+
 export async function getAnalyticsOverview(
   period: "today" | "7d" | "30d" | "all"
 ): Promise<{
