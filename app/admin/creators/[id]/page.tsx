@@ -139,6 +139,115 @@ function ColorInput({
   );
 }
 
+// ── Link Image Uploader ───────────────────────────────────────────────────────
+
+/** Upload-or-paste-URL control for a link's card-style image. Mirrors the
+ *  avatar uploader's client-direct-to-Blob pattern (see handleAvatarUpload's
+ *  former home in this file, and AvatarCarouselManager). */
+function LinkImageUploader({
+  value,
+  onChange,
+  token,
+  creatorSlug,
+}: {
+  value: string;
+  onChange: (url: string) => void;
+  token: string | null;
+  creatorSlug: string;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleUpload = useCallback(async (file: File) => {
+    setUploading(true);
+    setError("");
+    try {
+      const safeSlug = (creatorSlug || "unknown")
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 64) || "unknown";
+      const ext = (file.name.split(".").pop() || "bin").toLowerCase();
+      const pathname = `link-images/${safeSlug}/${Date.now()}.${ext}`;
+
+      const blob = await upload(pathname, file, {
+        access: "public",
+        handleUploadUrl: "/api/admin/avatar",
+        contentType: file.type || undefined,
+        headers: token ? { "x-admin-key": token } : {},
+      });
+
+      onChange(blob.url);
+    } catch (err) {
+      setError(err instanceof Error ? `Upload failed: ${err.message}` : "Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [creatorSlug, token]);
+
+  return (
+    <div className="space-y-1">
+      <Label className="text-xs">Image (card style)</Label>
+      {value && (
+        <div className="flex items-center gap-2">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={value}
+            alt="Link image preview"
+            className="w-12 h-12 rounded-md object-cover border border-border"
+          />
+          <button
+            type="button"
+            onClick={() => onChange("")}
+            className="text-destructive text-xs hover:text-destructive/70 transition-colors"
+          >
+            Remove
+          </button>
+        </div>
+      )}
+      <div
+        className={`relative border-2 border-dashed rounded-lg p-3 text-center cursor-pointer transition-colors ${
+          dragOver ? "border-primary bg-primary/5" : "border-border hover:border-muted-foreground/50"
+        }`}
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          const file = e.dataTransfer.files[0];
+          if (file) void handleUpload(file);
+        }}
+        onClick={() => fileInputRef.current?.click()}
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,.heic,.heif"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void handleUpload(file);
+            e.target.value = "";
+          }}
+        />
+        <p className="text-xs text-muted-foreground">
+          {uploading ? "Uploading..." : dragOver ? "Drop image here" : "Click or drag image to upload"}
+        </p>
+      </div>
+      {error && <p className="text-destructive text-xs">{error}</p>}
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Or paste image URL directly"
+        className="text-sm"
+      />
+    </div>
+  );
+}
+
 // ── Link Row ──────────────────────────────────────────────────────────────────
 
 function LinkRow({
@@ -146,14 +255,18 @@ function LinkRow({
   onDelete,
   onToggle,
   onEdit,
+  token,
+  creatorSlug,
 }: {
   link: DBLink;
   onDelete: (id: string) => void;
   onToggle: (id: string, active: boolean) => void;
   onEdit: (
     id: string,
-    fields: { label: string; subtitle: string; url: string }
+    fields: { label: string; subtitle: string; url: string; image_url: string }
   ) => Promise<string | null>;
+  token: string | null;
+  creatorSlug: string;
 }) {
   const icons: Record<string, string> = {
     twitter: "𝕏", tiktok: "♪", instagram: "📸", youtube: "▶",
@@ -167,12 +280,18 @@ function LinkRow({
     label: link.label,
     subtitle: link.subtitle ?? "",
     url: link.url,
+    image_url: link.image_url ?? "",
   });
 
   function startEdit() {
     // Re-seed from the link each time, so a cancelled edit never leaves stale
     // text behind for the next one.
-    setDraft({ label: link.label, subtitle: link.subtitle ?? "", url: link.url });
+    setDraft({
+      label: link.label,
+      subtitle: link.subtitle ?? "",
+      url: link.url,
+      image_url: link.image_url ?? "",
+    });
     setEditError("");
     setEditing(true);
   }
@@ -187,6 +306,7 @@ function LinkRow({
       label: draft.label.trim(),
       subtitle: draft.subtitle.trim(),
       url: draft.url.trim(),
+      image_url: draft.image_url.trim(),
     });
     setSaving(false);
     if (err) setEditError(err);
@@ -222,6 +342,12 @@ function LinkRow({
             className="text-sm"
           />
         </div>
+        <LinkImageUploader
+          value={draft.image_url}
+          onChange={(url) => setDraft((p) => ({ ...p, image_url: url }))}
+          token={token}
+          creatorSlug={creatorSlug}
+        />
         {editError && <p className="text-destructive text-xs">{editError}</p>}
         <div className="flex gap-2">
           <Button size="sm" onClick={() => void save()} disabled={saving}>
@@ -232,7 +358,7 @@ function LinkRow({
           </Button>
         </div>
         <p className="text-muted-foreground text-[11px]">
-          Icon, type, badge and advanced settings are unchanged by this edit.
+          Icon, type, badge and other advanced settings are unchanged by this edit.
         </p>
       </div>
     );
@@ -305,9 +431,11 @@ interface AddLinkFormProps {
   creatorId: string;
   onAdded: () => void;
   authHeaders: () => Record<string, string>;
+  token: string | null;
+  creatorSlug: string;
 }
 
-function AddLinkForm({ creatorId, onAdded, authHeaders }: AddLinkFormProps) {
+function AddLinkForm({ creatorId, onAdded, authHeaders, token, creatorSlug }: AddLinkFormProps) {
   const [form, setForm] = useState({
     label: "",
     url: "",
@@ -497,15 +625,12 @@ function AddLinkForm({ creatorId, onAdded, authHeaders }: AddLinkFormProps) {
 
       {expanded && (
         <div className="space-y-3 border-t border-border pt-3">
-          <div className="space-y-1">
-            <Label className="text-xs">Image URL (card style)</Label>
-            <Input
-              value={form.image_url}
-              onChange={(e) => setForm((p) => ({ ...p, image_url: e.target.value }))}
-              placeholder="https://..."
-              className="text-sm"
-            />
-          </div>
+          <LinkImageUploader
+            value={form.image_url}
+            onChange={(url) => setForm((p) => ({ ...p, image_url: url }))}
+            token={token}
+            creatorSlug={creatorSlug}
+          />
           <div className="space-y-1">
             <Label className="text-xs">Redirect URL</Label>
             <Input
@@ -695,44 +820,6 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
   const [addingDomain, setAddingDomain] = useState(false);
 
   const [form, setForm] = useState<Partial<DBCreator>>({});
-  const [avatarUploading, setAvatarUploading] = useState(false);
-  const [avatarError, setAvatarError] = useState("");
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [dragOver, setDragOver] = useState(false);
-
-  const handleAvatarUpload = useCallback(async (file: File) => {
-    setAvatarUploading(true);
-    setAvatarError("");
-    try {
-      // Client-direct upload: the browser streams bytes straight to Vercel
-      // Blob, so we are NOT bound by Vercel's ~4.5 MB function body cap.
-      // Files up to 100 MB work. The admin key is forwarded to our token
-      // endpoint via a custom header (the SDK owns the request body).
-      const creatorSlug = (form.slug ?? "unknown")
-        .toLowerCase()
-        .replace(/[^a-z0-9-]+/g, "-")
-        .replace(/^-+|-+$/g, "")
-        .slice(0, 64) || "unknown";
-      const ext = (file.name.split(".").pop() || "bin").toLowerCase();
-      const pathname = `avatars/${creatorSlug}/avatar.${ext}`;
-
-      const blob = await upload(pathname, file, {
-        access: "public",
-        handleUploadUrl: "/api/admin/avatar",
-        contentType: file.type || undefined,
-        headers: token ? { "x-admin-key": token } : {},
-      });
-
-      setForm((p) => ({ ...p, avatar_url: blob.url }));
-    } catch (err) {
-      setAvatarError(
-        err instanceof Error ? `Upload failed: ${err.message}` : "Upload failed",
-      );
-    } finally {
-      setAvatarUploading(false);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.slug, token]);
 
   useEffect(() => {
     if (!ready) return;
@@ -817,7 +904,7 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
    *  sent, so an edit never clobbers the link's advanced/v3 settings. */
   async function handleEditLink(
     linkId: string,
-    fields: { label: string; subtitle: string; url: string }
+    fields: { label: string; subtitle: string; url: string; image_url: string }
   ): Promise<string | null> {
     const res = await fetch(`/api/admin/creators/${id}/links`, {
       method: "PUT",
@@ -963,78 +1050,6 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
                           value={form.tagline ?? ""}
                           onChange={(e) => setField("tagline", e.target.value)}
                         />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Avatar</Label>
-                        {/* Preview */}
-                        {form.avatar_url && (
-                          <div className="flex items-center gap-3">
-                            <img
-                              src={form.avatar_url}
-                              alt="Avatar preview"
-                              className="w-16 h-16 rounded-full object-cover border-2 border-border"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setField("avatar_url", "")}
-                              className="text-destructive text-xs hover:text-destructive/70 transition-colors"
-                            >
-                              Remove
-                            </button>
-                          </div>
-                        )}
-                        {/* Upload area */}
-                        <div
-                          className={`relative border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${
-                            dragOver
-                              ? "border-primary bg-primary/5"
-                              : "border-border hover:border-muted-foreground/50"
-                          }`}
-                          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                          onDragLeave={() => setDragOver(false)}
-                          onDrop={(e) => {
-                            e.preventDefault();
-                            setDragOver(false);
-                            const file = e.dataTransfer.files[0];
-                            if (file) handleAvatarUpload(file);
-                          }}
-                          onClick={() => fileInputRef.current?.click()}
-                        >
-                          <input
-                            ref={fileInputRef}
-                            type="file"
-                            accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,.heic,.heif"
-                            className="hidden"
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (file) handleAvatarUpload(file);
-                              e.target.value = "";
-                            }}
-                          />
-                          {avatarUploading ? (
-                            <p className="text-sm text-muted-foreground">Uploading...</p>
-                          ) : (
-                            <>
-                              <p className="text-sm text-muted-foreground">
-                                {dragOver ? "Drop image here" : "Click or drag image to upload"}
-                              </p>
-                              <p className="text-xs text-muted-foreground/60 mt-1">
-                                JPEG, PNG, WebP, GIF, HEIC · Max 100 MB
-                              </p>
-                            </>
-                          )}
-                        </div>
-                        {avatarError && <p className="text-destructive text-xs">{avatarError}</p>}
-                        {/* Fallback URL input */}
-                        <div className="space-y-1">
-                          <Label className="text-xs text-muted-foreground">Or paste URL directly</Label>
-                          <Input
-                            value={form.avatar_url?.startsWith("data:") ? "" : (form.avatar_url ?? "")}
-                            onChange={(e) => setField("avatar_url", e.target.value)}
-                            placeholder="https://..."
-                            className="text-sm"
-                          />
-                        </div>
                       </div>
                       <div className="space-y-1">
                         <Label>Custom Domain</Label>
@@ -1447,7 +1462,7 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
                   <p className="text-muted-foreground text-sm">No social links yet</p>
                 ) : (
                   socialLinks.map((l) => (
-                    <LinkRow key={l.id} link={l} onDelete={handleDeleteLink} onToggle={handleToggleLink} onEdit={handleEditLink} />
+                    <LinkRow key={l.id} link={l} onDelete={handleDeleteLink} onToggle={handleToggleLink} onEdit={handleEditLink} token={token} creatorSlug={creator.slug} />
                   ))
                 )}
               </CardContent>
@@ -1465,7 +1480,7 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
                   <p className="text-muted-foreground text-sm">No premium links yet</p>
                 ) : (
                   premiumLinks.map((l) => (
-                    <LinkRow key={l.id} link={l} onDelete={handleDeleteLink} onToggle={handleToggleLink} onEdit={handleEditLink} />
+                    <LinkRow key={l.id} link={l} onDelete={handleDeleteLink} onToggle={handleToggleLink} onEdit={handleEditLink} token={token} creatorSlug={creator.slug} />
                   ))
                 )}
               </CardContent>
@@ -1476,7 +1491,7 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
                 <CardTitle className="text-base">Add Link</CardTitle>
               </CardHeader>
               <CardContent>
-                <AddLinkForm creatorId={id} onAdded={loadAll} authHeaders={authHeaders} />
+                <AddLinkForm creatorId={id} onAdded={loadAll} authHeaders={authHeaders} token={token} creatorSlug={creator.slug} />
               </CardContent>
             </Card>
           </div>
