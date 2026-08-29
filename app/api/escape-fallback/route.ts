@@ -9,6 +9,7 @@ interface EscapeFallbackPayload {
   sessionId: string;
   platform: "ios" | "android" | "other";
   surface: string;
+  variant?: "mount" | "gesture";
   userAgent: string;
 }
 
@@ -22,9 +23,10 @@ export async function POST(request: NextRequest) {
       "unknown";
     const platform = body.platform || "other";
     const surface = body.surface || "instagram";
+    const variant = body.variant === "gesture" ? "gesture" : "mount";
 
     // PRIMARY sink — must always run, zero schema dependency, greppable in logs.
-    console.log("[charmlink:escape-fail]", body.creator, platform, surface, country);
+    console.log("[charmlink:escape-fail]", body.creator, platform, surface, variant, country);
 
     // Best-effort DB write — non-fatal. A rejected write must not 500 the route
     // or lose the console line above (schema/CHECK-constraint uncertainty).
@@ -43,6 +45,10 @@ export async function POST(request: NextRequest) {
         creator_slug: body.creator,
         link_label: platform,
         link_type: surface,
+        // link_url is unused by escape_fallback events — repurposed to carry
+        // the trigger variant (mount vs. gesture) so the two can be compared
+        // in the same table without a schema change.
+        link_url: `variant:${variant}`,
         session_id: body.sessionId || generateId(),
         user_agent: ua,
         country,

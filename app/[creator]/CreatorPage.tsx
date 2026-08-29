@@ -1485,11 +1485,31 @@ export function CreatorPage({
     setIsInstagram(igDetected);
     setInAppSurface(surface);
 
+    // ── Escape trigger variant (test infra, default unchanged) ─────────────────
+    // "mount" (default) = today's shipped behaviour, fires unprompted on load.
+    // "gesture" = fires on the visitor's first tap instead — platforms are more
+    // permissive about scheme handoffs following a user gesture. Opt in with
+    // ?cl_escape=gesture (sticky for the tab via sessionStorage) to test without
+    // changing default behaviour for real visitors. See docs/CHARMLINK-STATE
+    // §10 "next lever to pull" and the escape-fallback beacon this compares against.
+    let escapeVariant: "mount" | "gesture" = "mount";
+    try {
+      const qp = new URLSearchParams(window.location.search).get("cl_escape");
+      if (qp === "gesture" || qp === "mount") {
+        sessionStorage.setItem("cl_escape_variant", qp);
+        escapeVariant = qp;
+      } else {
+        const stored = sessionStorage.getItem("cl_escape_variant");
+        if (stored === "gesture" || stored === "mount") escapeVariant = stored;
+      }
+    } catch {
+      // sessionStorage/URL blocked — stick with default
+    }
+
     // ── IG / Threads WebView auto-escape ───────────────────────────────────────
     if (surface && !isBot) {
       try {
         if (!sessionStorage.getItem("cl_escape_fired")) {
-          sessionStorage.setItem("cl_escape_fired", "1");
           const full = window.location.href;
           const bare = full.replace(/^https?:\/\//, "");
           const isIOS = /iPad|iPhone|iPod/.test(ua) && !(window as unknown as { MSStream?: unknown }).MSStream;
@@ -1521,11 +1541,6 @@ export function CreatorPage({
               try { window.location.href = "brave://open-url?url=" + encodeURIComponent(full); } catch { /* noop */ }
             }, 4500);
           };
-          if (typeof requestAnimationFrame === "function") {
-            requestAnimationFrame(() => setTimeout(fire, 0));
-          } else {
-            setTimeout(fire, 50);
-          }
 
           // ── Escape-failure measurement (beacon-only) ─────────────────────────
           // The escape works by navigating away. If we're still visible after a
@@ -1536,21 +1551,46 @@ export function CreatorPage({
           // report a "failure" — that is expected, not a bug: there was no escape
           // attempt to succeed. IG and Threads escape-failure rates are separated
           // by this `surface` field.
-          setTimeout(() => {
-            try {
-              if (document.visibilityState === "visible") {
-                sendBeacon("/api/escape-fallback", {
-                  creator: slug,
-                  sessionId: sessionIdRef.current,
-                  platform: escPlatform,
-                  surface,
-                  userAgent: navigator.userAgent,
-                });
+          const armFailureBeacon = () => {
+            setTimeout(() => {
+              try {
+                if (document.visibilityState === "visible") {
+                  sendBeacon("/api/escape-fallback", {
+                    creator: slug,
+                    sessionId: sessionIdRef.current,
+                    platform: escPlatform,
+                    surface,
+                    variant: escapeVariant,
+                    userAgent: navigator.userAgent,
+                  });
+                }
+              } catch {
+                /* noop */
               }
-            } catch {
-              /* noop */
+            }, 2500);
+          };
+          const attempt = () => {
+            fire();
+            armFailureBeacon();
+          };
+
+          if (escapeVariant === "gesture") {
+            // Wait for the visitor's first tap/touch instead of firing unprompted
+            // on load — same fire()/beacon, just deferred behind a real gesture.
+            const onFirstGesture = () => {
+              sessionStorage.setItem("cl_escape_fired", "1");
+              attempt();
+            };
+            document.addEventListener("pointerdown", onFirstGesture, { capture: true, once: true });
+            document.addEventListener("touchstart", onFirstGesture, { capture: true, once: true });
+          } else {
+            sessionStorage.setItem("cl_escape_fired", "1");
+            if (typeof requestAnimationFrame === "function") {
+              requestAnimationFrame(() => setTimeout(attempt, 0));
+            } else {
+              setTimeout(attempt, 50);
             }
-          }, 2500);
+          }
         }
       } catch {
         // sessionStorage blocked — silently skip
