@@ -113,7 +113,17 @@ async function loadRotation(slug: string, creatorId: string): Promise<CacheEntry
  */
 export async function pickAvatar(
   slug: string,
-  creatorId: string
+  creatorId: string,
+  /**
+   * The photo a continuing visitor already saw, from the escape handoff.
+   *
+   * Re-drawing on the second load would show them a different face and, worse,
+   * hand the click to a photo that never earned it while charging the origin
+   * photo an impression it appeared to lose. Honouring it keeps one visit
+   * attributed to one photo — which matters twice over, since these same
+   * counts are the posterior the sampler below draws from.
+   */
+  preferredId?: string | null
 ): Promise<{ id: string; url: string; focalX: number; focalY: number } | null> {
   let entry: CacheEntry;
   try {
@@ -132,6 +142,16 @@ export async function pickAvatar(
     focalX: a.focal_x,
     focalY: a.focal_y,
   });
+
+  // Matched against THIS creator's rotation, never trusted from the URL alone:
+  // that is what stops a crafted `cl_av` from pinning — or crediting — a photo
+  // belonging to someone else. An id that has since left the rotation simply
+  // falls through to a normal draw.
+  if (preferredId) {
+    const carried = avatars.find((a) => a.id === preferredId);
+    if (carried) return shape(carried);
+  }
+
   if (avatars.length === 1) return shape(avatars[0]);
 
   let best = avatars[0];

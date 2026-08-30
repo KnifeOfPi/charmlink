@@ -8,11 +8,13 @@ import { CreatorPage } from "./CreatorPage";
 import { isLinkPreviewScraper } from "../../lib/scraper-detect";
 import { generateLinkToken } from "../../lib/link-token";
 import { pickAvatar } from "../../lib/avatar-rotation";
+import { HANDOFF_AVATAR_PARAM, isUuid } from "../../lib/handoff";
 
 export const dynamic = "force-dynamic";
 
 interface PageProps {
   params: Promise<{ creator: string }>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }
 
 const GENERIC_METADATA: Metadata = {
@@ -91,7 +93,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   }
 }
 
-export default async function CreatorPageServer({ params }: PageProps) {
+export default async function CreatorPageServer({ params, searchParams }: PageProps) {
   const { creator: slug } = await params;
 
   // Per-link age gate (Phase 4): the site-wide age gate has been removed.
@@ -152,7 +154,17 @@ export default async function CreatorPageServer({ params }: PageProps) {
   // render and its id rides along on this session's events so the conversion
   // can be attributed back to the photo that was actually on screen. Creators
   // without a carousel keep their single avatar_url and record no attribution.
-  const chosenAvatar = await pickAvatar(slug, dbCreator.id);
+  //
+  // A visitor escaping an in-app browser loads this page a second time in the
+  // real browser, and that render would otherwise draw a different photo — so
+  // the one they already saw travels with them and is honoured here. See
+  // lib/handoff.ts.
+  const carriedAvatar = (await searchParams)[HANDOFF_AVATAR_PARAM];
+  const chosenAvatar = await pickAvatar(
+    slug,
+    dbCreator.id,
+    typeof carriedAvatar === "string" && isUuid(carriedAvatar) ? carriedAvatar : null
+  );
 
   const creator: Creator = {
     name: dbCreator.name,

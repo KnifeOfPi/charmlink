@@ -4,16 +4,61 @@ import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import Image from "next/image";
 import { Turnstile } from "@marsidev/react-turnstile";
 import { Creator, PremiumLink, SocialLink } from "../../lib/types";
+import {
+  HANDOFF_AVATAR_PARAM,
+  HANDOFF_SESSION_PARAM,
+  isUuid,
+  withHandoff,
+} from "../../lib/handoff";
 import { resolveFontFamily } from "../../lib/fonts";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Generate a fresh session ID on every pageview mount. */
-function createSessionId(): string {
-  if (typeof window === "undefined") return "ssr";
-  const sid = crypto.randomUUID();
-  sessionStorage.setItem("charmlink_sid", sid);
-  return sid;
+/**
+ * The session id for this mount.
+ *
+ * Normally a fresh one per pageview. The exception is a visitor arriving from
+ * an in-app-browser escape: they are mid-visit, already counted, and carrying
+ * their original session id in the URL. Adopting it keeps their pageview and
+ * their eventual click on one session instead of splitting one human across
+ * two — see lib/handoff.ts.
+ */
+function resolveSessionId(): { sid: string; continued: boolean } {
+  if (typeof window === "undefined") return { sid: "ssr", continued: false };
+
+  let carried: string | null = null;
+  try {
+    const fromUrl = new URLSearchParams(window.location.search).get(HANDOFF_SESSION_PARAM);
+    if (isUuid(fromUrl)) carried = fromUrl;
+  } catch {
+    // Unparseable URL — fall through to a fresh session.
+  }
+
+  const sid = carried ?? crypto.randomUUID();
+  try {
+    sessionStorage.setItem("charmlink_sid", sid);
+  } catch {
+    // sessionStorage blocked — the id still rides on this mount's events.
+  }
+  return { sid, continued: carried !== null };
+}
+
+/** Take the handoff params back out of the address bar once they have been
+ *  read. They are plumbing, they look like tracking junk to the visitor, and
+ *  leaving them in means a shared or bookmarked link replays someone else's
+ *  session id. */
+function stripHandoffParams(): void {
+  try {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has(HANDOFF_SESSION_PARAM) && !url.searchParams.has(HANDOFF_AVATAR_PARAM)) {
+      return;
+    }
+    url.searchParams.delete(HANDOFF_SESSION_PARAM);
+    url.searchParams.delete(HANDOFF_AVATAR_PARAM);
+    window.history.replaceState(null, "", url.toString());
+  } catch {
+    /* noop — cosmetic only */
+  }
 }
 
 function sendBeacon(url: string, data: Record<string, unknown>): void {
@@ -774,7 +819,15 @@ function handleDeepLink(url: string, recoveryUrl: string) {
 
 const IG_DISMISS_KEY = "cl_ig_dismiss";
 
-function InstagramBrowserBanner({ surface }: { surface: "instagram" | "threads" }) {
+function InstagramBrowserBanner({
+  surface,
+  // Read at click time, not render time: the session id lives in a ref that is
+  // populated by the mount effect, and these buttons are pressed long after.
+  getEscapeUrl,
+}: {
+  surface: "instagram" | "threads";
+  getEscapeUrl: () => string;
+}) {
   const [platform, setPlatform] = useState<"ios" | "android" | "unknown">("unknown");
   const [dismissed, setDismissed] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -797,7 +850,7 @@ function InstagramBrowserBanner({ surface }: { surface: "instagram" | "threads" 
   };
 
   const openInChrome = () => {
-    const url = window.location.href;
+    const url = getEscapeUrl();
 
     if (platform === "ios") {
       const chromeUrl = url.replace(/^https?:\/\//, "googlechrome://");
@@ -817,7 +870,7 @@ function InstagramBrowserBanner({ surface }: { surface: "instagram" | "threads" 
   };
 
   const copyForSafari = async () => {
-    const url = window.location.href;
+    const url = getEscapeUrl();
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
@@ -1485,12 +1538,20 @@ export function CreatorPage({
     setIsInstagram(igDetected);
     setInAppSurface(surface);
 
+    // Resolved BEFORE the escape fires: the escape URL has to carry this id, so
+    // the browser on the far side continues this visit instead of starting a
+    // new one.
+    const { sid, continued } = resolveSessionId();
+    sessionIdRef.current = sid;
+    if (continued) stripHandoffParams();
+
     // ── IG / Threads WebView auto-escape ───────────────────────────────────────
     if (surface && !isBot) {
       try {
         if (!sessionStorage.getItem("cl_escape_fired")) {
           sessionStorage.setItem("cl_escape_fired", "1");
-          const full = window.location.href;
+          // Session id and the photo on screen ride along to the next browser.
+          const full = withHandoff(window.location.href, sid, avatarId);
           const bare = full.replace(/^https?:\/\//, "");
           const isIOS = /iPad|iPhone|iPod/.test(ua) && !(window as unknown as { MSStream?: unknown }).MSStream;
           const fire = () => {
@@ -1557,18 +1618,21 @@ export function CreatorPage({
       }
     }
 
-    const sid = createSessionId();
-    sessionIdRef.current = sid;
-
     if (!trackedView.current) {
       trackedView.current = true;
-      sendBeacon("/api/pageview", {
-        creator: slug,
-        sessionId: sid,
-        isInstagram: igDetected,
-        isBot: false,
-        avatarId,
-      });
+      // A continuation is the same human as the in-app view that was already
+      // counted a moment ago. Recording it again would double the denominator
+      // every CTR is measured against, and charge the carried photo a second
+      // impression for a single pair of eyes.
+      if (!continued) {
+        sendBeacon("/api/pageview", {
+          creator: slug,
+          sessionId: sid,
+          isInstagram: igDetected,
+          isBot: false,
+          avatarId,
+        });
+      }
     }
 
     if (!isBot) {
@@ -1740,7 +1804,14 @@ export function CreatorPage({
       />
 
       {/* IG / Threads banner */}
-      {inAppSurface && <InstagramBrowserBanner surface={inAppSurface} />}
+      {inAppSurface && (
+        <InstagramBrowserBanner
+          surface={inAppSurface}
+          getEscapeUrl={() =>
+            withHandoff(window.location.href, sessionIdRef.current, avatarId)
+          }
+        />
+      )}
 
       {/* Background effects */}
       {creator.show_floating_icons && (
