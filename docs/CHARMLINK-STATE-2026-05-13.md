@@ -564,6 +564,44 @@ window is a presentation choice someone may reasonably widen later, while the
 photo boundary is a correctness requirement that must hold regardless.
 Coupling them would silently feed the sampler poisoned data.
 
+### 7.13 The OnlyFans tracking data is NOT live, and its days are not days
+
+`tracking_links` / `tracking_link_daily_stats` (synced from Infloww, shared DB
+with Charmasutra) carry real click/subscriber/revenue figures per OnlyFans
+campaign code — the only view CharmLink has of what happens after the click.
+Four traps, all measured rather than assumed:
+
+1. **It syncs twice a day, and only one sync counts.** Row writes cluster at
+   ~03:00 Pacific (~10:10 UTC, ~14,700 rows — the real refresh) and ~17:00
+   Pacific (~00:00 UTC, 5–420 rows — a trickle). Treat it as *one* daily
+   refresh, overnight. Anything read before it is up to 24h stale.
+2. **A row labelled date D is not day D.** `clicks` is cumulative and
+   `clicks_gained` is the delta between consecutive syncs, so date D covers the
+   24 hours **ending at the 10:10 UTC sync on D**. Verified: c1059 cumulative
+   went 2,822 (Aug 27) → 2,894 (Aug 28), and Aug 28's `clicks_gained` is
+   exactly 72. Comparing it to a calendar day silently misaligns by ~10 hours.
+3. **Every link/date has two rows**, one per `of_user_id` (232391596 populated,
+   310182337 zeroed). Aggregate with `max()`. `sum()` happens to work today
+   only because the second is zero.
+4. **Per-day arrival rates are not trustworthy.** Even with the windows aligned,
+   one day computed **105%** — OnlyFans counted more clicks than CharmLink sent,
+   which is only possible if those codes are also reached from somewhere other
+   than the creator page (a bio link, a DM) or OF counts loads differently. Only
+   multi-day aggregates hold.
+
+**What the aggregate says** (fav-site.com, 8 days): ~71% of our recorded premium
+clicks appear as OnlyFans clicks, and ~4% of those arrivals subscribe. So the
+funnel is roughly: 209 in-app views/day → ~27% tap premium → ~71% arrive → ~4%
+subscribe. The 29% that never arrive is the largest unexplained step in the
+funnel; it does **not** correlate with Instagram share (62–87% arrival across
+days with 13–26% IG traffic), so it is probably not the WebView — most likely
+OF-side click de-duplication plus ordinary abandonment. Unresolved.
+
+**This lag does not invalidate the split test** (§10.1). Both arms sit behind
+the same sync and the same window offset, so the lag cancels in an arm-vs-arm
+comparison. It only delays the readout and forces multi-day windows — never
+compare one arm on one day.
+
 ---
 
 ## 8. Recent Commit Sequence (2026-05-11 → 2026-08-30)
