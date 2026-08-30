@@ -1,6 +1,7 @@
 import { Pool, PoolClient } from "pg";
 import { AnalyticsSummary, DeviceType } from "./types";
 import { AVATAR_EPOCH_FILTER, clampToEpoch } from "./stats-epoch";
+import { ESCAPE_ARM_SQL, ESCAPE_ARM_SESSION_GUARD } from "./escape-experiment";
 
 // ── Connection Pool ───────────────────────────────────────────────────────────
 
@@ -1257,6 +1258,111 @@ export async function getAnalyticsBatch(
       }),
     };
   });
+}
+
+// ── Escape split test ────────────────────────────────────────────────────────
+
+export interface EscapeExperimentArm {
+  arm: "escape" | "stay";
+  visitors: number;
+  converted: number;
+  /** Sessions that beaconed a failed escape. Must be ~0 for `stay` once the
+   *  suppression is live — that is the assignment-is-working signal. */
+  escapeFailures: number;
+}
+
+export interface EscapeExperimentDaily {
+  day: string;
+  escapeVisitors: number;
+  escapeConverted: number;
+  stayVisitors: number;
+  stayConverted: number;
+}
+
+/**
+ * Read the escape split test.
+ *
+ * Conversion is joined on `session_id` and NEVER filtered by `is_instagram`:
+ * an escape-arm visitor clicks from Safari, so their click carries
+ * `is_instagram = false`. Filtering clicks by surface would discard exactly the
+ * conversions that arm produced and hand the win to `stay` automatically.
+ */
+export async function getEscapeExperimentStats(
+  slug: string,
+  since: string
+): Promise<{ arms: EscapeExperimentArm[]; daily: EscapeExperimentDaily[] }> {
+  const assigned = `
+    assigned AS (
+      SELECT session_id, ${ESCAPE_ARM_SQL} AS arm, MIN(created_at) AS first_seen
+      FROM charmlink_events
+      WHERE creator_slug = $1
+        AND type = 'pageview' AND is_instagram AND NOT is_bot
+        AND user_agent ILIKE '%instagram%'
+        AND ${ESCAPE_ARM_SESSION_GUARD}
+        AND created_at >= $2
+      GROUP BY session_id
+    ),
+    converted AS (
+      SELECT DISTINCT e.session_id FROM charmlink_events e
+      WHERE ${DEDUPED_CLICKS} AND e.link_type = 'premium' AND e.created_at >= $2
+    )`;
+
+  const [totals, daily] = await Promise.all([
+    query<{ arm: "escape" | "stay"; visitors: number; converted: number; escape_failures: number }>(
+      `WITH ${assigned},
+       bailed AS (
+         SELECT DISTINCT session_id FROM charmlink_events
+         WHERE type = 'escape_fallback' AND created_at >= $2
+       )
+       SELECT a.arm,
+              COUNT(*)::int AS visitors,
+              COUNT(c.session_id)::int AS converted,
+              COUNT(b.session_id)::int AS escape_failures
+       FROM assigned a
+       LEFT JOIN converted c ON c.session_id = a.session_id
+       LEFT JOIN bailed    b ON b.session_id = a.session_id
+       GROUP BY a.arm`,
+      [slug, since]
+    ),
+    query<{ day: string; arm: "escape" | "stay"; visitors: number; converted: number }>(
+      `WITH ${assigned}
+       SELECT to_char(date_trunc('day', a.first_seen), 'YYYY-MM-DD') AS day,
+              a.arm,
+              COUNT(*)::int AS visitors,
+              COUNT(c.session_id)::int AS converted
+       FROM assigned a
+       LEFT JOIN converted c ON c.session_id = a.session_id
+       GROUP BY 1, 2 ORDER BY 1`,
+      [slug, since]
+    ),
+  ]);
+
+  const byDay = new Map<string, EscapeExperimentDaily>();
+  for (const r of daily) {
+    const row =
+      byDay.get(r.day) ??
+      { day: r.day, escapeVisitors: 0, escapeConverted: 0, stayVisitors: 0, stayConverted: 0 };
+    if (r.arm === "escape") {
+      row.escapeVisitors = r.visitors;
+      row.escapeConverted = r.converted;
+    } else {
+      row.stayVisitors = r.visitors;
+      row.stayConverted = r.converted;
+    }
+    byDay.set(r.day, row);
+  }
+
+  const arms: EscapeExperimentArm[] = (["escape", "stay"] as const).map((arm) => {
+    const row = totals.find((t) => t.arm === arm);
+    return {
+      arm,
+      visitors: row?.visitors ?? 0,
+      converted: row?.converted ?? 0,
+      escapeFailures: row?.escape_failures ?? 0,
+    };
+  });
+
+  return { arms, daily: [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day)) };
 }
 
 export async function getAnalyticsOverview(

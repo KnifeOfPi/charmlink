@@ -858,9 +858,19 @@ left join bailed    b on b.session_id = a.session_id
 group by a.arm order by a.arm;
 ```
 
+**Readout:** `/admin/experiment` ("Split Test" in the admin nav), served by
+`GET /api/analytics/experiment`. The page leads with a *verdict*, not the two
+percentages, and refuses to show a comparison below 100 visitors per arm — the
+percentages are the part that lies at small n. It reports the 95% interval on
+the difference, the minimum effect the current sample could actually detect,
+progress toward a 5-point-sensitive result, and a banner if assignment looks
+broken. Statistics in `lib/experiment-stats.ts`, cross-checked against Python's
+`math.erf` to six decimal places.
+
 **Sanity check that assignment is live:** `escape_failures` must fall to
 **zero for the `stay` arm**. If the stay arm is still logging them, the
-suppression is not reaching visitors and the arms are identical.
+suppression is not reaching visitors and the arms are identical. The admin page
+raises an amber banner when this trips.
 
 **Do not read this before ~1,000 visitors per arm (~10 days at 209 in-app
 views/day).** Run immediately before deploying, while both arms were still

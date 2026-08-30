@@ -58,6 +58,19 @@ export type EscapeArm = "escape" | "stay";
  * Sentinel session ids ('redirect', 'ssr') are not hex and fall through to
  * null rather than silently landing in an arm.
  */
+/**
+ * The SQL twin of `escapeArm`, kept in this file so the two cannot drift out of
+ * sight of each other. Cross-checked against 24 real production session ids.
+ * Callers must still exclude non-UUID session ids — `right('redirect',1)` is
+ * 't', and the `bit(4)` cast raises rather than returning null.
+ */
+export const ESCAPE_ARM_SQL =
+  `case when (('x'||right(session_id,1))::bit(4)::int) % 2 = 0 ` +
+  `then 'escape' else 'stay' end`;
+
+/** Guard for the above: only v4-UUID-shaped session ids are assignable. */
+export const ESCAPE_ARM_SESSION_GUARD = `session_id ~ '^[0-9a-f-]{36}$'`;
+
 export function escapeArm(slug: string, sessionId: string): EscapeArm | null {
   if (!ESCAPE_EXPERIMENT_ENABLED) return null;
   if (slug !== ESCAPE_EXPERIMENT_SLUG) return null;
