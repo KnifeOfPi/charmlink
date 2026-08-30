@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { AnalyticsSummary } from "../../../lib/types";
 import type { ModelAnalytics } from "../../../lib/analytics-rollup";
-import { AVATAR_STATS_EPOCH } from "../../../lib/avatar-epoch";
+import { STATS_EPOCH } from "../../../lib/stats-epoch";
 
 const PREMIUM_COLOR = "#e91e8a";
 const TOTAL_COLOR = "#6b7280"; // gray-500 — context bar, not an identity color
@@ -251,11 +251,7 @@ function AvatarPerformance({
           {scopeNote && <span className="text-gray-600 normal-case"> · {scopeNote}</span>}
         </h3>
         <span className="text-gray-600 text-[11px]">
-          premium clicks / views · {MIN_AVATAR_IMPRESSIONS} views to call it · since{" "}
-          {new Date(AVATAR_STATS_EPOCH).toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-          })}
+          premium clicks / views · {MIN_AVATAR_IMPRESSIONS} views to call it
         </span>
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
@@ -604,7 +600,23 @@ export function AnalyticsDashboard({ summaries, totals, period, onPeriodChange }
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-3xl font-bold">👑 CharmLink Analytics</h1>
-            <p className="text-gray-500 text-sm mt-1">Creator performance dashboard</p>
+            <p className="text-gray-500 text-sm mt-1">
+              Creator performance dashboard · counting from{" "}
+              <span
+                className="text-gray-400"
+                title={
+                  "Before this, escaping an in-app browser recorded one visitor twice, " +
+                  "so pageviews were inflated and every CTR measured against them read low. " +
+                  "Clicks were always counted once and were never affected. The older events " +
+                  "are still in the database — they are not shown here."
+                }
+              >
+                {new Date(STATS_EPOCH).toLocaleDateString("en-US", {
+                  month: "long",
+                  day: "numeric",
+                })}
+              </span>
+            </p>
           </div>
           {/* Period selector */}
           <div className="flex gap-2">

@@ -1,6 +1,6 @@
 import { Pool, PoolClient } from "pg";
 import { AnalyticsSummary, DeviceType } from "./types";
-import { AVATAR_EPOCH_FILTER } from "./avatar-epoch";
+import { AVATAR_EPOCH_FILTER, clampToEpoch } from "./stats-epoch";
 
 // ── Connection Pool ───────────────────────────────────────────────────────────
 
@@ -906,16 +906,27 @@ export const REDIRECT_EVENT_SESSION_ID = "redirect";
 /** SQL predicate isolating the beacon-sourced click rows (one per journey). */
 const DEDUPED_CLICKS = `e.type = 'click' AND e.session_id <> '${REDIRECT_EVENT_SESSION_ID}'`;
 
+/**
+ * Start of an analytics window.
+ *
+ * Every window is held at STATS_EPOCH, so no dashboard figure reaches back into
+ * the period when escapes double-counted pageviews — "All Time" reads as "all
+ * trustworthy time". The rows are still there; this only decides what is shown.
+ *
+ * The `string | null` return is kept deliberately: null is the un-clamped "all
+ * time" path, and dropping `clampToEpoch` here is all it takes to show the full
+ * history again. It simply cannot be reached while the epoch is in force.
+ */
 function periodCutoff(period: "today" | "7d" | "30d" | "all"): string | null {
-  if (period === "all") return null;
+  if (period === "all") return clampToEpoch(null);
   const now = new Date();
   if (period === "today") {
     now.setHours(0, 0, 0, 0);
-    return now.toISOString();
+    return clampToEpoch(now.toISOString());
   }
   const days = period === "7d" ? 7 : 30;
   now.setDate(now.getDate() - days);
-  return now.toISOString();
+  return clampToEpoch(now.toISOString());
 }
 
 /** Bucket granularity for the clicks-over-time chart, keyed to the period filter. */
