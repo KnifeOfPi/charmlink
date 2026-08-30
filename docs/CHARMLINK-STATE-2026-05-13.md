@@ -801,6 +801,83 @@ These were on the radar but not done. Pick up as needed.
   is deactivated, while both high-converting domains lead with a *free* offer
   that takes ~37% of their clicks.
 
+### 10.1 RUNNING EXPERIMENT — escape vs stay (fav-site.com, started 2026-08-30)
+
+Testing the assumption the whole IG breakout rests on: **is escaping the
+in-app browser actually better than staying in it?** It has never been
+measured. It costs a page reload, surfaces the OS "open an app outside
+Instagram?" dialog, and ~24% of attempts fail and strand the visitor anyway —
+against a real browser having the visitor's cookies, passwords and payment
+autofill.
+
+- **Scope:** `hannaz` (fav-site.com) only, Instagram surface only. Her other
+  domains keep today's behaviour and double as a concurrent control.
+- **Arms:** `escape` (fire `instagram://extbrowser/` on mount, today's
+  behaviour) vs `stay` (don't). The banner is **identical in both** — it is the
+  constant, so this isolates the auto-escape rather than "escaping" in general.
+- **Assignment:** derived, not stored — last hex digit of the session id
+  (`lib/escape-experiment.ts`). Needs no schema change, survives the escape
+  handoff for free (the far side adopts the same session id and re-derives the
+  same arm), and is recoverable from any event row ever written. The JS and the
+  SQL below were cross-checked against 24 real production session ids and agree
+  on all of them; **if you change one, change the other.**
+- **Kill switch:** `ESCAPE_EXPERIMENT_ENABLED = false` reverts everyone to
+  `escape` with no other change.
+
+**This test was not possible before §7.11.** An escaping visitor's click used
+to land on a brand-new session in the other browser, so one arm's conversions
+were recorded against a session the other arm never created.
+
+```sql
+-- Joins on session_id, NEVER on is_instagram: an escape-arm click happens in
+-- Safari and carries is_instagram = false, so filtering clicks by surface
+-- discards exactly the conversions that arm produced.
+with assigned as (
+  select distinct session_id,
+         case when (('x'||right(session_id,1))::bit(4)::int) % 2 = 0
+              then 'escape' else 'stay' end as arm
+  from charmlink_events
+  where creator_slug = 'hannaz'
+    and type = 'pageview' and is_instagram and not is_bot
+    and user_agent ilike '%instagram%'
+    and session_id ~ '^[0-9a-f-]{36}$'
+    and created_at >= '2026-08-30T10:00:00Z'
+),
+converted as (
+  select distinct session_id from charmlink_events
+  where type='click' and session_id <> 'redirect' and link_type='premium'
+    and created_at >= '2026-08-30T10:00:00Z'
+),
+bailed as (select distinct session_id from charmlink_events where type='escape_fallback')
+select a.arm, count(*) as visitors, count(c.session_id) as converted,
+       round(100.0*count(c.session_id)/nullif(count(*),0), 2) as conversion_pct,
+       count(b.session_id) as escape_failures
+from assigned a
+left join converted c on c.session_id = a.session_id
+left join bailed    b on b.session_id = a.session_id
+group by a.arm order by a.arm;
+```
+
+**Sanity check that assignment is live:** `escape_failures` must fall to
+**zero for the `stay` arm**. If the stay arm is still logging them, the
+suppression is not reaching visitors and the arms are identical.
+
+**Do not read this before ~1,000 visitors per arm (~10 days at 209 in-app
+views/day).** Run immediately before deploying, while both arms were still
+executing identical code, the query returned 37.04% (n=27) against 54.17%
+(n=24) — a **17-point gap generated entirely by noise**, in a pure A/A
+comparison. Powered for 80% at p≈0.20: ~256/arm detects a 10pt difference,
+~522 detects 7pt, ~1,024 detects 5pt. Anything read earlier than that is the
+A/A result above wearing a conclusion.
+
+**Caveat on what this measures.** The metric is the premium *click*, which is
+the last thing CharmLink can see. It does not measure whether the visitor then
+subscribed — and that is precisely where a WebView is expected to be weakest
+(no saved passwords, no payment autofill). A `stay` win on clicks is therefore
+**not** automatically a win on revenue. Settling that needs OnlyFans-side
+numbers joined on the per-link tracking codes already in the premium URLs
+(`/c1059`, `/c1007`), which is a separate piece of work.
+
 ---
 
 ## 11. How to Resume Cold

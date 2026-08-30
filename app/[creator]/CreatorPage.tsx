@@ -10,6 +10,7 @@ import {
   isUuid,
   withHandoff,
 } from "../../lib/handoff";
+import { escapeArm } from "../../lib/escape-experiment";
 import { resolveFontFamily } from "../../lib/fonts";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1545,8 +1546,16 @@ export function CreatorPage({
     sessionIdRef.current = sid;
     if (continued) stripHandoffParams();
 
+    // ── Split test: is the auto-escape worth it? (fav-site.com only) ──────────
+    // Instagram only. Threads takes a different path already (no extbrowser, no
+    // scheme at all on iOS), so including it would mean an arm whose "escape"
+    // does nothing on half its devices. Null everywhere else = today's
+    // behaviour. See lib/escape-experiment.ts.
+    const arm = surface === "instagram" ? escapeArm(slug, sid) : null;
+    const suppressEscape = arm === "stay";
+
     // ── IG / Threads WebView auto-escape ───────────────────────────────────────
-    if (surface && !isBot) {
+    if (surface && !isBot && !suppressEscape) {
       try {
         if (!sessionStorage.getItem("cl_escape_fired")) {
           sessionStorage.setItem("cl_escape_fired", "1");
