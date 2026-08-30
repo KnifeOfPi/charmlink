@@ -580,14 +580,34 @@ Four traps, all measured rather than assumed:
    24 hours **ending at the 10:10 UTC sync on D**. Verified: c1059 cumulative
    went 2,822 (Aug 27) → 2,894 (Aug 28), and Aug 28's `clicks_gained` is
    exactly 72. Comparing it to a calendar day silently misaligns by ~10 hours.
-3. **Every link/date has two rows**, one per `of_user_id` (232391596 populated,
-   310182337 zeroed). Aggregate with `max()`. `sum()` happens to work today
-   only because the second is zero.
+3. **A campaign code is unique only WITHIN an OnlyFans account, never across
+   them — key on `campaign_url`, not `campaign_code`.** Code 1059 exists twice:
+   `luvhannazuki/c1059` (of_user 232391596, Infloww id 3528842) and
+   `hannazuki/c1059` (of_user 310182337, Infloww id 3968986). They are unrelated
+   links on two different accounts that merely share a number. Filtering on
+   `campaign_code in (…)` silently pulls in the other account's link. Note this
+   also means fav-site.com's own two links live on *different accounts*:
+   Premium Content → `luvhannazuki/c1059`, Free! → `hannazuki/c1007`.
+   The table's unique constraint is `(tracking_link_id, date)` where
+   `tracking_link_id` is the `tracking_links` UUID, so per-link/day rows are
+   genuinely unique — the "duplicates" are this collision, not a sync artifact.
+   (An earlier revision of this doc said the opposite and recommended `max()`
+   to paper over it. `max()` gave right answers only because the other
+   account's rows are all zero; the numbers below were re-derived keyed on
+   `campaign_url` and are unchanged.)
 4. **Per-day arrival rates are not trustworthy.** Even with the windows aligned,
-   one day computed **105%** — OnlyFans counted more clicks than CharmLink sent,
-   which is only possible if those codes are also reached from somewhere other
-   than the creator page (a bio link, a DM) or OF counts loads differently. Only
-   multi-day aggregates hold.
+   2026-08-26 computed **105%** — OnlyFans counted 249 clicks against our 236.
+   Re-checked keyed on `campaign_url` in case trap 3 caused it; it did not, the
+   figure is real. Only possible if those codes are also reached from somewhere
+   other than the creator page (a bio link, a DM) or OF counts loads
+   differently. Only multi-day aggregates hold.
+
+**A refresh button is safe.** `unique_tracking_link_date (tracking_link_id,
+date)` means a re-sync of a subset of links UPSERTs rather than inserting
+duplicates, so an on-demand refresh can be pressed repeatedly without
+corrupting the table. Note that the egress restriction that stops a sandboxed
+agent session reaching `sharelink.infloww.com` does **not** apply to the
+deployed app — production Vercel can call an n8n webhook freely.
 
 **What the aggregate says** (fav-site.com, 8 days): ~71% of our recorded premium
 clicks appear as OnlyFans clicks, and ~4% of those arrivals subscribe. So the
