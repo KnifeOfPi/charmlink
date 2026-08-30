@@ -35,10 +35,18 @@ in-app WebView.
 
 ## 2. Current Production Status
 
-Phases 1–8 are **shipped + live**. Last sweep: 2026-08-26, verified against
+Phases 1–10 are **shipped + live**. Last sweep: 2026-08-30, verified against
 production DB queries and live Vercel deployment/runtime-log checks (not just
 "the commit merged") — see §7.9 for how that verification worked.
 Branch `main` clean, no pending PRs.
+
+Note for anyone reading an older copy: Phase 9 shipped on 2026-08-27/28 but its
+docs sweep was written on a branch (`claude/repo-review-ed7w66`, commit
+`1a005f9`) that was **never merged and no longer exists on the remote** — that
+hash won't resolve in a fresh clone, so don't go looking for it. Phases 9 and 10
+were both written up on 2026-08-30 from the commits on `main` themselves. If a
+Phase 9 detail here looks thin, those commit messages are the primary source;
+they are unusually detailed.
 
 | Phase | What it added | Commit / PR |
 |---|---|---|
@@ -54,6 +62,9 @@ Branch `main` clean, no pending PRs.
 | 7.6 | **2026-06-01** `cf-heal` auto-resolves `VERCEL_TEAM_ID` in 3 tiers (env → file → `/v2/teams`). Missing team id was the silent root cause of `/v4/certs` 403s that made `cf-heal` "fail" on every domain. | `5cfb2e9` (PR #11) |
 | 7.7 | **2026-06-02** Self-serve **Heal button** in `/admin/domains` + **auto-heal on domain add**. Button POSTs `/api/admin/domains/heal` → runs the same idempotent `provisionZone()` flow as the `cf-heal` CLI (pre-probe → gray → Vercel cert → re-orange). Returns `{ok, noop, preStatus, postStatus, steps}`. Eliminates the manual unproxy/remove/re-add loop and lets creators/VAs heal their own domains with no engineer. | `d596f62` (PR #12) |
 | 8 | **2026-08-26** The conversion-funnel incident. Measured against production: 12.6% of "premium clicks" since 2026-05-10 were taps on a dead honeypot link the links API handed out on rejection, which then banned the visitor's IP for 24h — 86.6% of those bans hit ordinary mobile UAs, 0.12% hit actual bots. Root cause of the false rejections: link tokens were bound to client IP, which drifts on mobile between page render and the links fetch. Fixed all three (rejection payload is now inert, tokens no longer IP-bound, honeypot only bans requests that look automated), added a self-serve ban-flush (`/api/admin/bans` + dashboard card), fixed three analytics-correctness bugs found along the way (double-counted clicks, `is_bot` hardcoded false, 404s logged as DB errors), and verified the fix live via an accidental revert/restore that doubled as a natural experiment. See §7.9–§7.10 for the full incident writeup. | `c7460a7`, `8109fa3`, `f3e0c7f`, `ee524cb`, `84b57c9` (+ `deb8ee7`/`ebb505a` — a deliberate temporary revert and restore for on-device testing, see §7.9) |
+
+| 9 | **2026-08-27/28** The person/site split and the photo experiment. `charmlink_models` makes the **person** the unit: creator rows became her individual *sites*, with identity and the photo pool owned by the model and overlaid onto each site (so detaching restores the site rather than blanking it). Avatar carousel added — up to 10 candidate photos, one drawn per render, its id stamped on that session's events so a conversion attributes back to the photo on screen. Analytics rewritten to match: `getAnalyticsBatch` groups every query by `creator_slug` instead of running `getAnalytics` per creator (the per-creator fan-out had grown to ~490 concurrent queries against a `max=3` pool and was 500'ing the whole dashboard), then `rollupByModel` folds sites into one row per person. Also: clicks-over-time chart, Threads in-app detection, the `escape_fallback` beacon, admin dark mode + searchable roster. | `365ae8c`, `940e174`, `49fa104`, `012f07f`, `0a110b1`, `4fa883e`, `69db21b`, `6b1f0ed`, `b9a87a2` |
+| 10 | **2026-08-29/30** Attribution. Found that the in-app-browser escape had been recording **one visitor as two people** since 2026-05-11 — inflating pageviews, understating every CTR, making in-app traffic look like it never converted, and crediting the wrong photo in the A/B test (§7.11). Also found Thompson sampling had never actually run: the sampler was reading its posterior with a creator id where a model id was required, so the carousel was a plain even split from launch (§7.12). Fixed both, reset photo stats, and held every dashboard window at a `STATS_EPOCH` boundary so no figure reaches back into the inflated period. Added per-domain analytics (domain tabs on the creator card) — the rolled-up number had been hiding a 10x spread between one person's domains. Separately, the long-open "Instagram open-an-app dialog" theory was tested on-device and disproved (§10). | `6b1d8b9`, `fe944f7`, `2a81a52`, `e44b72d` (+ `b305ff6`/`e60a717`, the disproved gesture experiment) |
 
 See `memory/archive-2026-05-10.md` for Phase 1–3 ship-day notes and
 `memory/2026-05-11.md` for everything Phase 4 + 5 day-of.
@@ -466,16 +477,126 @@ this data going forward. Fixed alongside the main fix (`8109fa3`, `f3e0c7f`):
   for the whole project). Fix (`f3e0c7f`): the `try` now wraps only the two
   DB calls; the missing-creator case is a silent guard after it.
 
----
+### 7.11 The escape split one visitor into two people (2026-08-30)
 
-## 8. Recent Commit Sequence (2026-05-11 → 2026-08-26)
+The single highest-impact measurement bug found so far, and the root cause of
+three separate things that each looked like their own problem.
 
-In reverse chronological order. All on `main`. The 2026-08-26 block includes
-a deliberate revert (`deb8ee7`) and restore (`ebb505a`) — see §7.9 for why;
-they're kept in history rather than squashed so the round-trip stays
-auditable.
+Escaping an in-app browser works by handing the URL to a different browser,
+which loads the page **from scratch**. That second load is a different browser
+process: `sessionStorage` does not survive it, so the page minted a fresh
+session id and re-ran the avatar draw. One human was recorded as two:
 
 ```
+in-app load   → pageview, session A, photo A, then they leave  (no click)
+browser load  → pageview, session B, photo B, and the click
+```
+
+What that corrupted, in order of how badly it misled us:
+
+- **In-app traffic looked like it barely converted.** fav-site.com read 11.5%
+  in-app against 26.4% everywhere else. The tell that it was an artifact and
+  not behaviour: sessions that **failed** to escape converted at **21.9%**
+  against **12.3%** for those that succeeded. That is backwards unless the
+  successful ones are having their clicks counted somewhere else — which is
+  exactly what was happening.
+- **Pageviews were inflated, so every CTR read low**, in proportion to a
+  domain's Instagram share. Corrected estimates at the time of the fix:
+  hz-links.com 44.3% → ~60.6%, sweet-site.com 53.6% → ~74.8%, fav-site.com
+  26.7% → ~30.7%, hannazuki.com 5.09% → ~5.29% (barely moves — only 7% IG).
+- **The photo A/B test scored the wrong photo.** See §7.12.
+
+The confirming evidence, worth reusing if this is ever doubted: on an
+IG-bio-driven domain the two series are the same people counted twice.
+hz-links.com ran **1.06 non-IG pageviews per IG pageview** with an **hourly
+correlation of 0.80**. A domain with a genuine external traffic source
+(hannazuki.com) ran 12.46 and 0.345.
+
+**Clicks were never wrong.** The click was always recorded exactly once — it
+just landed on the wrong session. Click totals, link breakdown, and everything
+downstream in OnlyFans were correct throughout. Rankings and trends survived
+too, because the inflation is roughly proportional within a domain over time.
+Only the absolute CTR level was understated.
+
+Fix (`fe944f7`, `lib/handoff.ts`): the identity travels in the only channel
+that survives the jump — the URL. `cl_sid` and `cl_av` are appended to the
+auto-escape and to both banner buttons. On arrival the session id is adopted
+instead of minted, the carried photo is honoured instead of redrawn, **the
+duplicate pageview is not recorded** (one visitor, one impression, one
+denominator), and the params are stripped from the address bar so a shared
+link cannot replay someone else's session.
+
+Neither value is trusted: both must be UUIDs, and the avatar must appear in
+**that creator's own rotation**, which is joined through her model — so a
+crafted `cl_av` cannot pin or credit another creator's photo.
+
+**Do not "simplify" this by dropping the params and reading a cookie.** The
+in-app WebView and the real browser do not share a cookie jar either; the URL
+is the only channel that crosses.
+
+### 7.12 Thompson sampling never actually ran (2026-08-30)
+
+`pickAvatar(slug, dbCreator.id)` forwarded the **creator's** id to
+`getAvatarStats(modelId)`, which filters on `a.model_id`. No creator id is a
+model id — checked against production, **0 of 70**. So the stats lookup
+returned an empty set on every render, every photo drew from `Beta(1, 1)`, and
+the highest uniform draw won. The carousel had been a plain even split since
+launch, wearing Thompson sampling's clothes.
+
+The fingerprint is in the impression counts: **173–230 across eight photos**,
+where a working sampler handed a 36.5% photo and a 19.1% photo would have
+concentrated hard on the winner. If allocation ever looks suspiciously even
+again, suspect the posterior is empty before suspecting the sampler.
+
+Fixed by passing `dbCreator.model_id` — the pool and its stats belong to the
+person, not to one of her sites.
+
+Photo stats were also **reset**, via `AVATAR_EPOCH_FILTER` in
+`lib/stats-epoch.ts`. This is the one place a reset was the right call rather
+than a correction: pre-epoch photo attribution is **unrecoverable**, not
+merely inflated. A click was credited to whichever photo the second page load
+happened to draw, and nothing in the data says which photo actually earned it.
+Delete destroyed signal; correct distorted signal.
+
+**Keep the avatar epoch separate from the dashboard's display window** (§10).
+They share a value today and are deliberately two constants: the display
+window is a presentation choice someone may reasonably widen later, while the
+photo boundary is a correctness requirement that must hold regardless.
+Coupling them would silently feed the sampler poisoned data.
+
+---
+
+## 8. Recent Commit Sequence (2026-05-11 → 2026-08-30)
+
+In reverse chronological order. All on `main`. Two blocks contain a deliberate
+revert kept in history rather than squashed, so the round-trip stays auditable:
+`deb8ee7`/`ebb505a` (§7.9) and `b305ff6`/`e60a717` (the gesture-escape
+experiment, §10 — built, deployed, tested on-device, disproved, reverted).
+
+```
+e44b72d feat(analytics): dashboard shows only post-attribution-fix data (STATS_EPOCH) ← Phase 10, §10
+2a81a52 fix: make the photo sampler actually sample (model_id), reset photo stats     ← Phase 10, §7.12
+fe944f7 fix: carry session + avatar across the in-app-browser escape (cl_sid/cl_av)   ← Phase 10, §7.11
+6b1d8b9 feat(analytics): scope the creator card to a single domain (domain tabs)      ← Phase 10
+e60a717 Revert "feat: gesture-triggered IG/Threads escape" — disproved on-device      ← Phase 10, §10
+b305ff6 feat: gesture-triggered IG/Threads escape, opt-in via ?cl_escape=gesture      ← Phase 10 (experiment)
+b9a87a2 feat(admin): drop dead Profile-tab avatar editor, add link card-image upload   ← Phase 9
+4fa883e feat: detect Threads in-app webview (Threads/Barcelona UA tokens)              ← Phase 9
+69db21b feat: measure IG webview escape failures (escape_fallback beacon)              ← Phase 9
+6b1f0ed feat(admin): dark mode, searchable roster, drop the dead avatar card           ← Phase 9
+4036915 fix(analytics): bucket is a Date from pg, not a string                         ← Phase 9
+49fa104 feat(analytics): report per model, not per domain (rollupByModel)              ← Phase 9
+012f07f fix(analytics): overview exhausted the connection pool and 500'd               ← Phase 9
+365ae8c feat: group a model's domains under one identity (charmlink_models)            ← Phase 9
+d902017 feat: portrait and rounded-square avatar frames                                ← Phase 9
+6f4827c feat: aim the avatar crop at the face instead of the centre (focal points)     ← Phase 9
+30f2b9f feat: show the creator's name in the browser tab                               ← Phase 9
+4f5e605 feat: size the creator avatar as a hero element                                ← Phase 9
+940e174 feat: avatar carousel A/B testing, bigger avatar, inline link editing          ← Phase 9
+0a110b1 feat(analytics): clicks-over-time chart per creator, total vs premium          ← Phase 9
+ab0e3e4 fix: Top Referrers grouped the raw referer string, not the source (see §10)    ← Phase 9
+d544e7d docs: comprehensive sweep — README, resume doc, admin SOP catch up to Phase 8
+
 84b57c9 feat(admin): Blocked Visitors card — see/clear honeypot bans from the dashboard  ← Phase 8
 ee524cb feat(admin): GET/POST /api/admin/bans — count + flush the honeypot ban list      ← Phase 8
 ebb505a Revert "revert: TEMPORARY rollback ... for Instagram testing" — restores the fix  ← Phase 8
@@ -565,6 +686,43 @@ creator page from an actual phone to close that gap.
   reading this after that fired, check whether it actually got reported and
   re-arm the 72h one if not.
 
+### 9.2 Verified Working (2026-08-30, Phase 10)
+
+Same constraint as 9.1 — no egress to the live hostnames, so this is Vercel
+API + Supabase MCP + local build/test, not a `curl`. The one thing that *was*
+tested on a real phone is the gesture-escape experiment, and it failed (§10);
+that is the model to copy when a claim depends on in-app browser behaviour.
+
+- Production deployments `READY` at each step: `dpl_3PAqYSRsWY1WP4qJc6bGaDNT2LyL`
+  (domain analytics), `dpl_8WxQgf5F511X52pejv9cmY2vMubP` (attribution fix,
+  08:35:58Z — the instant `STATS_EPOCH` is anchored to).
+- **The rollup is unchanged by the per-domain avatar split.** Summing a photo's
+  per-domain rows reproduces the old model-wide total exactly *unless* an
+  event's avatar belongs to one model and its `creator_slug` to another.
+  Verified against production: **0 such rows.** That query is the one to re-run
+  if the photo panel is ever suspected of double-counting.
+- **The sampler's posterior was empty**: 0 of 70 creator ids match any avatar's
+  `model_id` (§7.12). After the fix the same query shape returns 8 rows for
+  Hanna's model, all at `0/0` — a clean, equal restart.
+- **The escape-artifact evidence** (§7.11) came from three independent angles
+  that agree: the session-level split (21.9% stayed vs 12.3% escaped), the
+  non-IG:IG view ratio (1.06 on an IG-driven domain vs 12.46 on an
+  externally-driven one), and hourly correlation (0.80 vs 0.345).
+- Local gates on every commit: `tsc --noEmit` clean, `next build` compiles,
+  `eslint` output on `CreatorPage.tsx` byte-identical to before (its 6 problems
+  are all pre-existing — that file is the canary, don't "fix" them casually),
+  plus 19 unit checks over the pure logic (11 on handoff-URL construction, 8 on
+  the epoch clamp — including that an identical instant is not mis-clamped,
+  which a lexicographic compare gets wrong since `periodCutoff` emits
+  milliseconds and the epoch does not).
+- A 24h check that the de-duplication actually happened was scheduled via
+  `send_later` (trigger `trig_017tJGHAx9rgbyFeK8fqWvEL`, fires
+  2026-08-31T10:00Z). Predictions to hold it to: fav-site.com views −13% and
+  CTR 26.7% → ~30.7%, hz-links.com views −27% and CTR 44.3% → ~60.6%,
+  hannazuki.com barely moving. **If the views did not drop, the handoff params
+  are not surviving the escape on real devices and none of the corrected CTR
+  figures in §7.11 can be trusted.**
+
 ---
 
 ## 10. Known Open / Future Items
@@ -597,24 +755,51 @@ These were on the radar but not done. Pick up as needed.
   the count — that's success, not a regression, don't let anyone read it
   the other way), honeypot bot-UA share up from 0.12%, Blocked Visitors
   count staying low rather than climbing back into the thousands.
-- **The Instagram "open an app outside" dialog** — unresolved, and per
-  §7.9's negative result, not attributable to any Phase 8 code. If it
-  recurs and is confirmed to affect more than one device, the next lever to
-  pull is moving `instagram://extbrowser/` from an on-mount auto-fire to a
-  first-gesture-triggered one — platforms are generally more permissive
-  about scheme handoffs following a user gesture than one fired
-  unprompted on load. Not built; would need its own testing pass before
-  shipping given how load-bearing the current auto-escape is for premium
-  clicks arriving from Instagram at all.
-- **Historical trapped clicks are not backfilled.** The ~25,522 pre-fix
-  honeypot-trap clicks and the ~6,358 pre-fix double-counted redirect clicks
-  (§7.9, §7.10) remain in `charmlink_events` as real rows — correctly, since
-  they were real taps — but any CTR/CVR figure computed over a date range
-  spanning 2026-05-10 through the Phase 8 fix will be inflated versus one
-  computed entirely after it. Nobody has written a "pre/post Phase 8"
-  annotation into the events table or the analytics queries; if this trips
-  someone up, that's the fix (a boundary timestamp constant, not a
-  backfill/delete of the old rows).
+- ~~**The Instagram "open an app outside" dialog**~~ — **the gesture lever was
+  pulled on 2026-08-30 and it did not work.** Built behind an opt-in
+  `?cl_escape=gesture` flag so default behaviour was untouched, deployed, and
+  tested on a real device inside the real Instagram app: **the dialog still
+  appeared after the gesture.** Reverted the same day; the tree is
+  byte-identical to before the experiment (verified by empty diff against
+  `4fa883e`). Do not re-try this without new information — it has now been
+  tested on-device, not just reasoned about. What *is* established: the dialog
+  is the OS/Instagram app's own gate on custom-scheme handoffs, fired by the
+  `instagram://extbrowser/` auto-escape that has been in the tree since
+  **2026-05-11** (`9706029`), so it is not attributable to any recent change
+  (confirmed a third time by `git log -S "extbrowser"`). Remaining untested
+  theory, unfalsifiable from our side: Instagram changed the behaviour app-side.
+  The cheapest next test is a second device on a different IG app version.
+- ~~**Historical trapped clicks are not backfilled**~~ — **the boundary
+  timestamp constant this item asked for now exists**: `STATS_EPOCH` in
+  `lib/stats-epoch.ts`, applied at `periodCutoff` in `lib/db.ts`, which is the
+  single chokepoint all five analytics reads share. Every dashboard window is
+  held at 2026-08-30T09:00:00Z, so "All Time" means all *trustworthy* time.
+  Exactly as this item specified: **a boundary constant, not a backfill or a
+  delete.** The rows are untouched — 736k events back to March, including 207k
+  click records that were exact throughout — and remain queryable for
+  forensics. Removing `clampToEpoch` restores the full view, which is why
+  `periodCutoff` still returns the nullable "all time" it can no longer reach.
+- **Top Referrers is broken and always has been.** The panel reports each
+  domain's own hostname as its top referrer. Cause: `/api/pageview` reads
+  `request.headers.get("referer")`, but the beacon is POSTed *from the creator
+  page*, so the Referer is that page's own URL. The panel is just re-reporting
+  each domain's pageview count. `ab0e3e4` fixed the *grouping* (raw string →
+  hostname) but the underlying value was never the traffic source. **The real
+  referrer is not captured anywhere**, which is why the origin of the
+  hannazuki.com traffic flood below could not be identified from our own data.
+  Fix would be to capture `document.referrer` client-side and send it in the
+  beacon body — the browser-side value is the actual upstream page.
+- **hannazuki.com is absorbing a large low-converting traffic flood.** It is
+  ~53% of Hanna Zuki's total views at ~5% CTR, against 60%+ on her IG-bio
+  domains. It was her *best* domain at 34–74% CTR through 2026-08-10, then took
+  a ~50x traffic increase in the week of 08-17 and CTR collapsed to ~5%. The
+  traffic looks genuinely human (diverse real-device UAs, top UA only 30.6%,
+  96% US mobile) — not a bot farm, just very cold. Source unknown and
+  unknowable until the referrer capture above is fixed. Also worth noting: that
+  domain has only **one active link**; its second (`"Exclusive "`, note the
+  trailing space, pointing at `http://vip.luvhannazuki.com/` over plain HTTP)
+  is deactivated, while both high-converting domains lead with a *free* offer
+  that takes ~37% of their clicks.
 
 ---
 
@@ -631,6 +816,16 @@ These were on the radar but not done. Pick up as needed.
 5. Anything CF-related: check both legacy `/zones/<id>/firewall/rules` AND
    modern `/zones/<id>/rulesets` — edge rules can silently block what app code
    expects to handle.
+6. **Before trusting any analytics number, read §7.11 and §7.12.** Two of the
+   three worst bugs found in this project were measurement bugs that made real
+   behaviour look like something it wasn't, and both survived months because
+   the number they produced was plausible. When a metric surprises you, check
+   whether the *counting* is wrong before theorising about visitors. The tell
+   in both cases was an internal contradiction — a segment converting the wrong
+   way round, an allocation that was too even — not an implausible headline.
+7. **`AGENTS.md` is not boilerplate.** This repo runs a Next.js whose APIs
+   differ from what most models remember; read the relevant guide under
+   `node_modules/next/dist/docs/` before writing code against a framework API.
 
 ---
 

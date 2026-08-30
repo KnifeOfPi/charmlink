@@ -40,6 +40,25 @@ Instagram's WebView can't launch the system browser via any documented API — `
 
 - **On page load** — fires `instagram://extbrowser/?url=<current>` once per Instagram session (undocumented, but triggers IG's native "Open in External Browser" handoff on iOS). This is what surfaces the OS-level "this webpage is trying to open [App]" confirmation some visitors see — that dialog is the platform's own gate on custom-scheme handoffs, not something CharmLink can suppress from web code.
 - **Banner, user-initiated** — a hot-pink banner offers a manual escape: **Android** uses `intent://…#Intent;scheme=https;package=com.android.chrome;end` to open Chrome directly; **iOS** copies the URL to the clipboard with instructions to paste into Safari, since no scheme reliably launches it. Per-link clicks add an Android-only `intent://` attempt (with a 500ms fallback to normal navigation) — there is deliberately no iOS branch here.
+- **Threads** is detected too (`Threads` / `Barcelona` UA tokens) and gets the banner plus an app-agnostic `intent://` on Android. It deliberately never fires `instagram://` — from inside Threads that hands off to the *Instagram app*, not a browser, which is worse than doing nothing.
+
+**The escape carries the visitor's identity with it** (`lib/handoff.ts`). The far
+side is a different browser process, so `sessionStorage` and cookies do not
+survive the jump — the second load would otherwise mint a new session id and
+redraw the carousel photo, recording one human as two people and crediting the
+wrong photo for their click. The session id (`cl_sid`) and the photo that was on
+screen (`cl_av`) ride along in the URL, are adopted on arrival instead of being
+regenerated, and are then stripped from the address bar. The continuation does
+not record a second pageview. Both values are validated as UUIDs, and the avatar
+must belong to that creator's own rotation, so a crafted link can't credit
+someone else's photo.
+
+**How the escape failure rate is measured**: the escape works by navigating
+away, so if the page is still visible 2.5s after firing, it didn't take. Success
+unloads the page and the beacon never fires — *absence* of an `escape_fallback`
+event is the success signal, which is why successes are never logged
+client-side. Treat the resulting rate as an upper bound: it also catches anyone
+who saw the OS "Open in app?" dialog and lingered.
 
 ## v2 Features — Link Intelligence
 
@@ -172,6 +191,72 @@ links API used to hand out on rejection, which then banned the visitor's IP for
 - **Dead `x-safari-https://` scheme removed** from the per-link click handler
   (Apple killed it in iOS 14.5; it was only adding a 500ms stall).
 
+## v5 Features — Models, Photo Testing, and Attribution
+
+### The person is the unit, not the site (2026-08-27)
+A creator row was really a *site* (slug + domain), so one person with ten
+domains was ten rows — her avatars uploaded ten times, her photo experiment
+split into ten tests that each converged ten times slower than her traffic
+warranted. `charmlink_models` is the person; creator rows point at one.
+
+The model owns identity and the photo pool as an **overlay**, not a migration:
+a site keeps its own columns and the model's win while attached, so detaching
+restores the site instead of blanking it. Links stay per-creator, since each
+domain keeps its own premium tracking link.
+
+### Avatar carousel A/B testing
+Up to 10 candidate photos per model. One is drawn per render and its id is
+stamped on that session's pageview and clicks, so a conversion attributes back
+to the photo that was actually on screen.
+
+Selection is **Thompson sampling** over each photo's Beta posterior: photos with
+little data have wide distributions and get explored, traffic concentrates on
+leaders as evidence accumulates with no threshold to tune, and a loser is never
+dropped to zero — so if the audience shifts it climbs back on its own. Pinning
+1–3 photos locks the rotation to that set. Stats are cached 5 minutes per
+instance, and a failed load falls back to the static avatar rather than breaking
+the page.
+
+The dashboard labels any photo under **200 impressions** as provisional — below
+that a rate is still noise, and presenting it as a winner is how A/B tests get
+misread.
+
+### Analytics: per-model rollup, per-domain drill-down
+`getAnalyticsBatch` groups every query by `creator_slug` rather than running
+`getAnalytics` once per creator — the old fan-out reached ~490 concurrent
+queries against a `max=3` pool and 500'd the whole dashboard. `rollupByModel`
+then folds sites into one row per person, recomputing rates from summed
+numerators and denominators (**never averaging across sites** — averaging a
+40,000-view domain at 30% with a 40-view domain at 100% reports 65% instead of
+the true 30.07%).
+
+Each creator card has **domain tabs**: every panel — views, premium clicks, CTR,
+IG traffic, clicks-over-time, device, referrers, link clicks, countries, photo
+performance — scopes to a single domain. The rolled-up figure routinely hides an
+order-of-magnitude spread between one person's domains.
+
+### Attribution correctness (2026-08-30)
+Two measurement bugs, both fixed, both worth understanding before trusting any
+historical figure:
+
+- **The escape recorded one visitor as two.** See the breakout section above.
+  It inflated pageviews in proportion to a domain's Instagram share, understated
+  every CTR measured against them, and made in-app traffic look like it never
+  converted. **Clicks were never affected** — a click was always counted exactly
+  once, it just landed on the second session — so click totals, link breakdown
+  and everything downstream in OnlyFans were correct throughout.
+- **Thompson sampling had never run.** The sampler read its posterior with a
+  creator id where a model id was required, so the lookup was always empty,
+  every photo drew from `Beta(1,1)`, and the carousel was a plain even split
+  from launch.
+
+`STATS_EPOCH` (`lib/stats-epoch.ts`) holds every analytics window at the fix, so
+"All Time" means all *trustworthy* time. **Nothing was deleted** — 736k events
+back to March remain queryable, including 207k exact click records — and
+removing `clampToEpoch` restores the full view. Photo stats keep a *separate*
+boundary on purpose: pre-fix photo attribution is unrecoverable rather than
+merely inflated, so it must stay excluded even if the display window is widened.
+
 ## Tech Stack
 
 - **Framework**: Next.js 16 (App Router)
@@ -244,6 +329,10 @@ charmlink/
 │   ├── rate-limit.ts             # Vercel KV sliding-window limiter
 │   ├── kv-ban.ts                 # Honeypot IP ban list (24h TTL)
 │   ├── link-token.ts             # HMAC link token mint/verify — NOT bound to client IP
+│   ├── handoff.ts                # Carries cl_sid + cl_av across the in-app-browser escape
+│   ├── stats-epoch.ts            # STATS_EPOCH boundary + the analytics window clamp
+│   ├── avatar-rotation.ts        # Thompson sampling over each photo's Beta posterior
+│   ├── analytics-rollup.ts       # Folds per-site summaries into one row per model
 │   ├── turnstile.ts              # Server-side Turnstile verification
 │   ├── turnstile-admin.ts        # Widget hostname auto-sync to Cloudflare
 │   ├── cloudflare.ts             # Zone provisioning (WAF rules, settings, gray→orange flip)
@@ -350,7 +439,7 @@ Three tables, all prefixed with `charmlink_`:
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | UUID | Primary key |
-| `type` | VARCHAR(20) | `pageview` or `click` |
+| `type` | VARCHAR(20) | `pageview`, `click`, or `escape_fallback` (an in-app escape that didn't take) |
 | `creator_id` | UUID | FK → `charmlink_creators.id` (SET NULL on delete) |
 | `creator_slug` | VARCHAR(100) | Creator slug (denormalized for query speed) |
 | `link_label` | VARCHAR(255) | Clicked link label (null for pageviews) |
@@ -362,7 +451,8 @@ Three tables, all prefixed with `charmlink_`:
 | `country` | VARCHAR(10) | Country code (from Vercel `x-vercel-ip-country` header) |
 | `device` | VARCHAR(20) | `mobile`, `tablet`, or `desktop` |
 | `is_bot` | BOOLEAN | Whether the visitor was identified as a bot |
-| `is_instagram` | BOOLEAN | Whether the visitor came from Instagram's in-app browser |
+| `is_instagram` | BOOLEAN | Whether the visitor came from a Meta in-app browser (Instagram **or** Threads) |
+| `avatar_id` | UUID | FK → `charmlink_creator_avatars.id` — which carousel photo was on screen. Null for creators without a carousel |
 | `created_at` | TIMESTAMPTZ | Event timestamp |
 
 **Indexes**: `creator_slug`, `created_at`, plus unique indexes on `creators.slug` and `creators.custom_domain`.
@@ -463,10 +553,13 @@ Access at `/admin` with your `CHARMLINK_ADMIN_KEY`.
 - **Analytics**: 30-day stats for this specific creator
 
 ### Analytics (`/admin/analytics`)
-- Global and per-creator statistics
+- Global and **per-model** statistics — one card per person, searchable roster sidebar
+- **Domain tabs** on each card scope every panel to a single site; the compare table sorts her domains side by side and its rows are clickable
 - Metrics: page views (human vs bot), unique visitors, clicks, CTR, Instagram traffic %
 - Breakdowns: device (mobile/desktop/tablet), country, top referrers, per-link clicks
-- Time periods: today, 7 days, 30 days, all time
+- Clicks-over-time chart (total vs premium) with a table view as its accessible twin
+- Photo performance per candidate avatar, with anything under 200 impressions marked provisional
+- Time periods: today, 7 days, 30 days, all time — **all held at `STATS_EPOCH`**, so "all time" means all trustworthy time (see v5 above); the header states the date it counts from
 - Dark themed with CSS bar charts
 
 ### Domains (`/admin/domains`)
@@ -537,8 +630,15 @@ Tested architecture supports 100+ creators with custom domains from a single dep
 - Page views are sent via `navigator.sendBeacon` (non-blocking, survives page navigation)
 - Clicks are sent via `sendBeacon` before redirecting to the destination
 - Bot visits are tracked separately (filtered out of human metrics)
-- Session IDs are random UUIDs stored in `sessionStorage` (reset per browser session)
+- Session IDs are random UUIDs stored in `sessionStorage` (reset per browser session) — **except** when a visitor arrives from an in-app-browser escape carrying `cl_sid`, in which case that id is adopted so the two halves of one visit stay joined, and no second pageview is recorded (see the breakout section)
 - Country detection uses Vercel's `x-vercel-ip-country` header (automatic on Vercel)
+- Clicks through `/api/redirect/[linkId]` write a second, server-side row carrying a sentinel session id. It is **excluded** from click counts by `DEDUPED_CLICKS` but deliberately **kept** — the gap between "beacon fired" and "redirect served" is the funnel signal that measured age-gate completion at 98.8%. Don't delete those rows chasing a cleaner schema.
+
+> **Known broken: Top Referrers.** `/api/pageview` reads the `Referer` header,
+> but the beacon is POSTed *from the creator page*, so that header is the page's
+> own URL — the panel just re-reports each domain's pageview count. The real
+> upstream source is not captured anywhere. Fixing it means sending
+> `document.referrer` from the client in the beacon body.
 
 ### Metrics available
 | Metric | Description |
@@ -551,8 +651,8 @@ Tested architecture supports 100+ creators with custom domains from a single dep
 | Premium Clicks | Clicks on premium links (OnlyFans, Fanvue, etc.) |
 | Social Clicks | Clicks on social links (Twitter, TikTok, etc.) |
 | CTR | Premium clicks ÷ human views × 100 |
-| Instagram Traffic | Views from Instagram's in-app browser |
-| Top Referrers | Top 10 HTTP referer values |
+| Instagram Traffic | Views from Instagram's (or Threads') in-app browser |
+| Top Referrers | Top 10 referer hostnames — **currently self-referential, see the note above** |
 | Device Breakdown | Mobile / Desktop / Tablet split |
 | Country Breakdown | Top 10 countries by view count |
 | Link Breakdown | Clicks per link, sorted by popularity |
