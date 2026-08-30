@@ -68,14 +68,35 @@ export function rollupByModel(
       deviceBreakdown.desktop += s.deviceBreakdown.desktop;
     }
 
-    // Photos are a MODEL-level pool: every site of hers reports the same rows
-    // with the same pooled totals, so these are deduplicated by id rather than
-    // summed — summing would multiply each photo's numbers by her site count.
-    const avatarPerformance = [
-      ...new Map(
-        sites.flatMap((s) => s.avatarPerformance).map((a) => [a.avatarId, a])
-      ).values(),
-    ];
+    // Photos are a MODEL-level pool, but the query reports each photo per
+    // domain, so the model's number is the SUM of its sites. Rates are
+    // recomputed from the summed pair for the same reason CTR is — averaging
+    // per-domain rates would weight a 40-view domain like a 4,000-view one.
+    //
+    // Each row is cloned before accumulating: these same objects are rendered
+    // as the per-domain view, and adding into them in place would corrupt the
+    // sites' own numbers as a side effect of building the rollup.
+    const avatarPerformance = (() => {
+      const byId = new Map<string, AnalyticsSummary["avatarPerformance"][number]>();
+      for (const s of sites) {
+        for (const a of s.avatarPerformance) {
+          const prev = byId.get(a.avatarId);
+          if (prev) {
+            prev.impressions += a.impressions;
+            prev.premiumClicks += a.premiumClicks;
+          } else {
+            byId.set(a.avatarId, { ...a });
+          }
+        }
+      }
+      return [...byId.values()].map((a) => ({
+        ...a,
+        conversionRate:
+          a.impressions > 0
+            ? Math.round((a.premiumClicks / a.impressions) * 10000) / 100
+            : 0,
+      }));
+    })();
 
     out.push({
       creator: meta?.modelName ?? sites[0].creator,

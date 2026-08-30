@@ -1169,12 +1169,19 @@ export async function getAnalyticsBatch(
        FROM charmlink_events e WHERE ${DEDUPED_CLICKS} ${tf}
        GROUP BY creator_slug, 2 ORDER BY 2`, params),
     query<{ creator_slug: string; avatar_id: string; url: string; is_pinned: boolean; is_active: boolean; impressions: string; premium_clicks: string }>(
+      // `e.creator_slug = c.slug` is what makes these rows per-DOMAIN. The photo
+      // pool is owned by the model, so without it every one of her slugs joined
+      // the same model-wide events and reported identical totals — fine for the
+      // rolled-up card, but it made the per-domain view claim a photo's whole
+      // model-wide audience for one domain. rollupByModel sums these back up,
+      // so the model-level number is unchanged.
       `SELECT c.slug AS creator_slug, a.id AS avatar_id, a.url, a.is_pinned, a.is_active,
               COUNT(e.id) FILTER (WHERE e.type='pageview' AND NOT e.is_bot) AS impressions,
               COUNT(e.id) FILTER (WHERE ${DEDUPED_CLICKS} AND e.link_type='premium') AS premium_clicks
        FROM charmlink_creator_avatars a
        JOIN charmlink_creators c ON c.model_id = a.model_id
-       LEFT JOIN charmlink_events e ON e.avatar_id = a.id ${tf}
+       LEFT JOIN charmlink_events e
+         ON e.avatar_id = a.id AND e.creator_slug = c.slug ${tf}
        GROUP BY c.slug, a.id, a.url, a.is_pinned, a.is_active, a.sort_order, a.created_at
        ORDER BY a.sort_order ASC, a.created_at ASC`, params),
   ]);

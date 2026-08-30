@@ -226,8 +226,10 @@ const MIN_AVATAR_IMPRESSIONS = 200;
 
 function AvatarPerformance({
   data,
+  scopeNote,
 }: {
   data: AnalyticsSummary["avatarPerformance"];
+  scopeNote?: string;
 }) {
   // Rank only photos with enough evidence — a 100% rate off 3 views is not a
   // winner, and showing it as one is how A/B tests get misread.
@@ -243,7 +245,10 @@ function AvatarPerformance({
   return (
     <div className="mt-6">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-gray-400 text-xs uppercase tracking-wide">Photo performance</h3>
+        <h3 className="text-gray-400 text-xs uppercase tracking-wide">
+          Photo performance
+          {scopeNote && <span className="text-gray-600 normal-case"> · {scopeNote}</span>}
+        </h3>
         <span className="text-gray-600 text-[11px]">
           premium clicks / views · {MIN_AVATAR_IMPRESSIONS} views to call it
         </span>
@@ -308,10 +313,25 @@ function AvatarPerformance({
   );
 }
 
-/** Per-domain breakdown under a model card. Collapsed by default: the point of
- *  rolling up is that the person is the unit you read, with domains available
- *  when a number needs explaining. */
-function SiteBreakdown({ sites }: { sites: ModelAnalytics["sites"] }) {
+type SiteSummary = ModelAnalytics["sites"][number];
+
+/** A domain reads best by its hostname; slug-only sites fall back to the path. */
+function domainLabel(site: SiteSummary): string {
+  return site.customDomain ?? `/${site.creator}`;
+}
+
+/** Side-by-side domain comparison, and the way into a single one. Collapsed by
+ *  default: the point of rolling up is that the person is the unit you read,
+ *  with domains available when a number needs explaining. */
+function SiteBreakdown({
+  sites,
+  scope,
+  onScope,
+}: {
+  sites: ModelAnalytics["sites"];
+  scope: string | null;
+  onScope: (slug: string | null) => void;
+}) {
   const [open, setOpen] = useState(false);
   if (sites.length <= 1) return null;
 
@@ -323,7 +343,7 @@ function SiteBreakdown({ sites }: { sites: ModelAnalytics["sites"] }) {
         className="text-gray-400 hover:text-gray-200 text-xs uppercase tracking-wide flex items-center gap-1.5"
       >
         <span className={`transition-transform ${open ? "rotate-90" : ""}`}>▶</span>
-        {sites.length} domains
+        Compare {sites.length} domains
       </button>
       {open && (
         <div className="mt-3 overflow-x-auto">
@@ -331,27 +351,81 @@ function SiteBreakdown({ sites }: { sites: ModelAnalytics["sites"] }) {
             <thead>
               <tr className="text-gray-500 border-b border-gray-800">
                 <th className="py-1.5 pr-3 font-normal">Domain</th>
-                <th className="py-1.5 pr-3 font-normal">Views</th>
-                <th className="py-1.5 pr-3 font-normal">Premium</th>
-                <th className="py-1.5 font-normal">CTR</th>
+                <th className="py-1.5 pr-3 font-normal text-right">Views</th>
+                <th className="py-1.5 pr-3 font-normal text-right">Premium</th>
+                <th className="py-1.5 font-normal text-right">CTR</th>
               </tr>
             </thead>
             <tbody>
-              {sites.map((s) => (
-                <tr key={s.creator} className="border-b border-gray-900 text-gray-300">
-                  <td className="py-1.5 pr-3">
-                    {s.customDomain ?? `/${s.creator}`}
-                    <span className="text-gray-600 ml-1.5">/{s.creator}</span>
-                  </td>
-                  <td className="py-1.5 pr-3 tabular-nums">{s.totalViews.toLocaleString()}</td>
-                  <td className="py-1.5 pr-3 tabular-nums">{s.premiumClicks.toLocaleString()}</td>
-                  <td className="py-1.5 tabular-nums">{s.ctr}%</td>
-                </tr>
-              ))}
+              {sites.map((s) => {
+                const active = s.creator === scope;
+                return (
+                  <tr
+                    key={s.creator}
+                    onClick={() => onScope(active ? null : s.creator)}
+                    className={`border-b border-gray-900 cursor-pointer transition-colors ${
+                      active ? "bg-pink-600/10 text-white" : "text-gray-300 hover:bg-gray-800/50"
+                    }`}
+                  >
+                    <td className="py-1.5 pr-3">
+                      {domainLabel(s)}
+                      <span className="text-gray-600 ml-1.5">/{s.creator}</span>
+                    </td>
+                    <td className="py-1.5 pr-3 tabular-nums text-right">
+                      {s.totalViews.toLocaleString()}
+                    </td>
+                    <td className="py-1.5 pr-3 tabular-nums text-right">
+                      {s.premiumClicks.toLocaleString()}
+                    </td>
+                    <td className="py-1.5 tabular-nums text-right">{s.ctr}%</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
+          <p className="text-gray-600 text-[11px] mt-2">
+            Click a row to scope every panel above to that domain.
+          </p>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Domain scope selector. `null` is the rolled-up model. */
+function DomainTabs({
+  sites,
+  scope,
+  onScope,
+}: {
+  sites: ModelAnalytics["sites"];
+  scope: string | null;
+  onScope: (slug: string | null) => void;
+}) {
+  const chip = (active: boolean) =>
+    `px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+      active ? "bg-pink-600 text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+    }`;
+
+  return (
+    <div className="flex flex-wrap gap-1.5 mb-5">
+      <button type="button" onClick={() => onScope(null)} className={chip(scope === null)}>
+        All domains
+      </button>
+      {sites.map((s) => (
+        <button
+          key={s.creator}
+          type="button"
+          onClick={() => onScope(s.creator)}
+          className={chip(scope === s.creator)}
+          title={`/${s.creator} · ${s.totalViews.toLocaleString()} views`}
+        >
+          {domainLabel(s)}
+          <span className={scope === s.creator ? "text-pink-200 ml-1.5" : "text-gray-600 ml-1.5"}>
+            {formatCompact(s.totalViews)}
+          </span>
+        </button>
+      ))}
     </div>
   );
 }
@@ -363,50 +437,67 @@ function CreatorCard({
   summary: ModelAnalytics;
   period: "today" | "7d" | "30d" | "all";
 }) {
+  // `null` = the rolled-up model; a slug scopes every panel to that one domain.
+  const [scope, setScope] = useState<string | null>(null);
+  const multiSite = summary.sites.length > 1;
+  const site = scope ? summary.sites.find((s) => s.creator === scope) ?? null : null;
+  // Every field read below exists on AnalyticsSummary, which a site row also is
+  // — so scoping is a swap of the source object, not a parallel set of panels.
+  const active: AnalyticsSummary = site ?? summary;
+
   const deviceData = [
-    { label: "Mobile", count: summary.deviceBreakdown.mobile },
-    { label: "Desktop", count: summary.deviceBreakdown.desktop },
-    { label: "Tablet", count: summary.deviceBreakdown.tablet },
+    { label: "Mobile", count: active.deviceBreakdown.mobile },
+    { label: "Desktop", count: active.deviceBreakdown.desktop },
+    { label: "Tablet", count: active.deviceBreakdown.tablet },
   ];
   const maxDevice = Math.max(...deviceData.map((d) => d.count), 1);
 
-  const topReferrers = summary.topReferrers.slice(0, 5).map((r) => ({
+  const topReferrers = active.topReferrers.slice(0, 5).map((r) => ({
     label: r.referer === "" ? "direct" : r.referer.replace(/^https?:\/\//, "").split("/")[0],
     count: r.count,
   }));
   const maxRef = Math.max(...topReferrers.map((r) => r.count), 1);
 
-  const topLinks = summary.linkBreakdown.slice(0, 5);
+  const topLinks = active.linkBreakdown.slice(0, 5);
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-xl font-bold text-white capitalize">{summary.modelName}</h2>
-          {summary.sites.length > 1 && (
+          {site ? (
             <p className="text-gray-500 text-xs mt-0.5">
-              combined across {summary.sites.length} domains
+              <span className="text-pink-400">{domainLabel(site)}</span> · 1 of{" "}
+              {summary.sites.length} domains
             </p>
+          ) : (
+            multiSite && (
+              <p className="text-gray-500 text-xs mt-0.5">
+                combined across {summary.sites.length} domains
+              </p>
+            )
           )}
         </div>
         <span className="text-xs bg-gray-800 text-gray-400 px-2 py-1 rounded-full">{period}</span>
       </div>
 
+      {multiSite && <DomainTabs sites={summary.sites} scope={scope} onScope={setScope} />}
+
       {/* Key stats */}
       <div className="grid grid-cols-2 gap-3 mb-6 sm:grid-cols-4">
-        <StatCard label="Page Views" value={summary.totalViews} sub={`${summary.humanViews} human`} />
-        <StatCard label="Premium Clicks" value={summary.premiumClicks} />
+        <StatCard label="Page Views" value={active.totalViews} sub={`${active.humanViews} human`} />
+        <StatCard label="Premium Clicks" value={active.premiumClicks} />
         <StatCard
           label="CTR"
-          value={`${summary.ctr}%`}
+          value={`${active.ctr}%`}
           sub="premium / human views"
         />
-        <StatCard label="IG Traffic" value={summary.instagramTraffic} sub="from Instagram" />
+        <StatCard label="IG Traffic" value={active.instagramTraffic} sub="from Instagram" />
       </div>
 
       {/* Clicks over time */}
       <div className="mb-6">
-        <ClickTimeseriesChart data={summary.clickTimeseries} period={period} />
+        <ClickTimeseriesChart data={active.clickTimeseries} period={period} />
       </div>
 
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
@@ -446,18 +537,21 @@ function CreatorCard({
       </div>
 
       {/* Photo carousel performance */}
-      {summary.avatarPerformance.length > 0 && (
-        <AvatarPerformance data={summary.avatarPerformance} />
+      {active.avatarPerformance.length > 0 && (
+        <AvatarPerformance
+          data={active.avatarPerformance}
+          scopeNote={site ? `on ${domainLabel(site)}` : undefined}
+        />
       )}
 
-      <SiteBreakdown sites={summary.sites} />
+      <SiteBreakdown sites={summary.sites} scope={scope} onScope={setScope} />
 
       {/* Country breakdown */}
-      {summary.countryBreakdown.length > 0 && (
+      {active.countryBreakdown.length > 0 && (
         <div className="mt-6">
           <h3 className="text-gray-400 text-xs uppercase tracking-wide mb-3">Countries</h3>
           <div className="flex flex-wrap gap-2">
-            {summary.countryBreakdown.slice(0, 8).map(({ country, count }) => (
+            {active.countryBreakdown.slice(0, 8).map(({ country, count }) => (
               <span
                 key={country}
                 className="bg-gray-800 text-gray-300 text-xs px-2 py-1 rounded-full"
@@ -581,7 +675,14 @@ export function AnalyticsDashboard({ summaries, totals, period, onPeriodChange }
 
           <div>
             {selected ? (
-              <CreatorCard summary={selected} period={period} />
+              // Keyed by model so switching creators remounts the card and drops
+              // any domain scope — a slug from the previous creator would other-
+              // wise linger in state and silently fall back to her rolled-up view.
+              <CreatorCard
+                key={selected.modelId ?? selected.creator}
+                summary={selected}
+                period={period}
+              />
             ) : (
               <p className="text-gray-600 text-sm">Select a creator to see their stats.</p>
             )}
