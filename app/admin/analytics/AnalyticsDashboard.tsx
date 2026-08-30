@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { AnalyticsSummary } from "../../../lib/types";
 import type { ModelAnalytics } from "../../../lib/analytics-rollup";
+import { AVATAR_STATS_EPOCH } from "../../../lib/avatar-epoch";
 
 const PREMIUM_COLOR = "#e91e8a";
 const TOTAL_COLOR = "#6b7280"; // gray-500 — context bar, not an identity color
@@ -250,7 +251,11 @@ function AvatarPerformance({
           {scopeNote && <span className="text-gray-600 normal-case"> · {scopeNote}</span>}
         </h3>
         <span className="text-gray-600 text-[11px]">
-          premium clicks / views · {MIN_AVATAR_IMPRESSIONS} views to call it
+          premium clicks / views · {MIN_AVATAR_IMPRESSIONS} views to call it · since{" "}
+          {new Date(AVATAR_STATS_EPOCH).toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+          })}
         </span>
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">

@@ -1,5 +1,6 @@
 import { Pool, PoolClient } from "pg";
 import { AnalyticsSummary, DeviceType } from "./types";
+import { AVATAR_EPOCH_FILTER } from "./avatar-epoch";
 
 // ── Connection Pool ───────────────────────────────────────────────────────────
 
@@ -748,7 +749,7 @@ export async function getAvatarStats(
        ) AS premium_clicks
      FROM charmlink_creator_avatars a
      LEFT JOIN charmlink_events e
-       ON e.avatar_id = a.id ${viewFilter}
+       ON e.avatar_id = a.id ${viewFilter} ${AVATAR_EPOCH_FILTER}
      WHERE a.model_id = $1
      GROUP BY a.id`,
     params
@@ -798,7 +799,7 @@ export async function getAvatarStatsBySlug(
      FROM charmlink_creator_avatars a
      JOIN charmlink_creators c ON c.model_id = a.model_id
      LEFT JOIN charmlink_events e
-       ON e.avatar_id = a.id ${viewFilter}
+       ON e.avatar_id = a.id ${viewFilter} ${AVATAR_EPOCH_FILTER}
      WHERE c.slug = $1
      GROUP BY a.id, a.url, a.is_pinned, a.is_active, a.sort_order, a.created_at
      ORDER BY a.sort_order ASC, a.created_at ASC`,
@@ -1181,7 +1182,7 @@ export async function getAnalyticsBatch(
        FROM charmlink_creator_avatars a
        JOIN charmlink_creators c ON c.model_id = a.model_id
        LEFT JOIN charmlink_events e
-         ON e.avatar_id = a.id AND e.creator_slug = c.slug ${tf}
+         ON e.avatar_id = a.id AND e.creator_slug = c.slug ${tf} ${AVATAR_EPOCH_FILTER}
        GROUP BY c.slug, a.id, a.url, a.is_pinned, a.is_active, a.sort_order, a.created_at
        ORDER BY a.sort_order ASC, a.created_at ASC`, params),
   ]);

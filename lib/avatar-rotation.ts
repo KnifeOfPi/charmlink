@@ -86,13 +86,18 @@ function sampleBeta(alpha: number, beta: number): number {
   return x + y === 0 ? 0 : x / (x + y);
 }
 
-async function loadRotation(slug: string, creatorId: string): Promise<CacheEntry> {
+async function loadRotation(slug: string, modelId: string | null): Promise<CacheEntry> {
   const cached = cache.get(slug);
   if (cached && cached.expires > Date.now()) return cached;
 
   const [avatars, stats] = await Promise.all([
     getRotationAvatarsBySlug(slug),
-    getAvatarStats(creatorId, "all"),
+    // getAvatarStats filters on `a.model_id`, so it must be given the MODEL id.
+    // It was being handed the creator's own id, which matches no avatar row —
+    // every lookup came back empty, every photo drew from Beta(1,1), and the
+    // sampler below degenerated into a uniform random pick. The even impression
+    // counts up to the stats epoch are that bug's fingerprint.
+    modelId ? getAvatarStats(modelId, "all") : Promise.resolve([]),
   ]);
 
   const entry: CacheEntry = {
@@ -113,7 +118,9 @@ async function loadRotation(slug: string, creatorId: string): Promise<CacheEntry
  */
 export async function pickAvatar(
   slug: string,
-  creatorId: string,
+  /** The MODEL's id — the photo pool and its stats belong to the person, not to
+   *  one of her sites. */
+  modelId: string | null,
   /**
    * The photo a continuing visitor already saw, from the escape handoff.
    *
@@ -127,7 +134,7 @@ export async function pickAvatar(
 ): Promise<{ id: string; url: string; focalX: number; focalY: number } | null> {
   let entry: CacheEntry;
   try {
-    entry = await loadRotation(slug, creatorId);
+    entry = await loadRotation(slug, modelId);
   } catch (err) {
     // Never let the experiment break the page — fall back to the static avatar.
     console.error("[avatar-rotation] load failed", slug, err);

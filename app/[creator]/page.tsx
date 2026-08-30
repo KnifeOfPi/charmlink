@@ -162,7 +162,9 @@ export default async function CreatorPageServer({ params, searchParams }: PagePr
   const carriedAvatar = (await searchParams)[HANDOFF_AVATAR_PARAM];
   const chosenAvatar = await pickAvatar(
     slug,
-    dbCreator.id,
+    // The MODEL's id, not this site's: the pool and its stats are hers, shared
+    // across every domain she owns.
+    dbCreator.model_id,
     typeof carriedAvatar === "string" && isUuid(carriedAvatar) ? carriedAvatar : null
   );
 
