@@ -742,10 +742,15 @@ export async function getAvatarStats(
     impressions: string;
     premium_clicks: string;
   }>(
+    // Both sides count VISITORS, not rows. These two numbers become the Beta
+    // posterior the sampler draws from, so they must share a unit: a visitor
+    // who taps two offers is one trial and one success, not one trial and two.
+    // Counting taps overstated every photo by ~20-25% and shifted the posterior
+    // up and narrow, distorting how traffic gets allocated.
     `SELECT
        a.id AS avatar_id,
-       COUNT(e.id) FILTER (WHERE e.type = 'pageview' AND NOT e.is_bot) AS impressions,
-       COUNT(e.id) FILTER (
+       COUNT(DISTINCT e.session_id) FILTER (WHERE e.type = 'pageview' AND NOT e.is_bot) AS impressions,
+       COUNT(DISTINCT e.session_id) FILTER (
          WHERE ${DEDUPED_CLICKS} AND e.link_type = 'premium'
        ) AS premium_clicks
      FROM charmlink_creator_avatars a
@@ -793,8 +798,9 @@ export async function getAvatarStatsBySlug(
        a.url,
        a.is_pinned,
        a.is_active,
-       COUNT(e.id) FILTER (WHERE e.type = 'pageview' AND NOT e.is_bot) AS impressions,
-       COUNT(e.id) FILTER (
+       -- Visitors, not rows — see getAvatarStats.
+       COUNT(DISTINCT e.session_id) FILTER (WHERE e.type = 'pageview' AND NOT e.is_bot) AS impressions,
+       COUNT(DISTINCT e.session_id) FILTER (
          WHERE ${DEDUPED_CLICKS} AND e.link_type = 'premium'
        ) AS premium_clicks
      FROM charmlink_creator_avatars a
@@ -1195,8 +1201,9 @@ export async function getAnalyticsBatch(
       // model-wide audience for one domain. rollupByModel sums these back up,
       // so the model-level number is unchanged.
       `SELECT c.slug AS creator_slug, a.id AS avatar_id, a.url, a.is_pinned, a.is_active,
-              COUNT(e.id) FILTER (WHERE e.type='pageview' AND NOT e.is_bot) AS impressions,
-              COUNT(e.id) FILTER (WHERE ${DEDUPED_CLICKS} AND e.link_type='premium') AS premium_clicks
+              -- Visitors, not rows — see getAvatarStats.
+              COUNT(DISTINCT e.session_id) FILTER (WHERE e.type='pageview' AND NOT e.is_bot) AS impressions,
+              COUNT(DISTINCT e.session_id) FILTER (WHERE ${DEDUPED_CLICKS} AND e.link_type='premium') AS premium_clicks
        FROM charmlink_creator_avatars a
        JOIN charmlink_creators c ON c.model_id = a.model_id
        LEFT JOIN charmlink_events e
