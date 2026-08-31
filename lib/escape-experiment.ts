@@ -33,8 +33,22 @@ export const ESCAPE_EXPERIMENT_SLUG = "hannaz";
  *  which is the pre-experiment behaviour, with no other code change needed. */
 export const ESCAPE_EXPERIMENT_ENABLED = true;
 
-/** When the test started counting. Analysis must not reach back past this. */
-export const ESCAPE_EXPERIMENT_START = "2026-08-30T10:00:00Z";
+/**
+ * When the test started counting. Analysis must not reach back past this.
+ *
+ * Deliberately 17:00 and not the 10:00 deploy. For the first ~6 hours the
+ * `stay` arm was still logging failed escapes — visitors on pages served
+ * before the deploy, running the old bundle from cache while being assigned to
+ * an arm they could not obey. Measured: stay-arm escape attempts ran 4-5 per
+ * hour through 16:00 UTC and are exactly ZERO from 17:00 onward, while the
+ * escape arm keeps logging them steadily. Those early sessions are an A/A
+ * sample wearing the experiment's labels, so the window starts after they stop.
+ *
+ * This is also the check to repeat after any future change to the escape path:
+ * stay-arm `escape_failures` must be ~0, and it takes hours rather than minutes
+ * to become true.
+ */
+export const ESCAPE_EXPERIMENT_START = "2026-08-30T17:00:00Z";
 
 export type EscapeArm = "escape" | "stay";
 
