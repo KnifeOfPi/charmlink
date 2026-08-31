@@ -83,6 +83,12 @@ export interface DBCreator {
   is_verified: boolean;
   font: string;
   location_pill_color: string | null;
+  /**
+   * When set, this site is an AUTO-REDIRECT: no landing page, just the escape
+   * cascade aimed at that link. Must reference a link belonging to this same
+   * creator row. See supabase/migrations/20260901000000_add_autoredirect_target.
+   */
+  autoredirect_link_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -185,6 +191,8 @@ export interface CreateCreatorInput {
   is_verified?: boolean;
   font?: string;
   location_pill_color?: string | null;
+  /** null clears it and the site reverts to a normal landing page. */
+  autoredirect_link_id?: string | null;
 }
 
 export interface UpdateCreatorInput extends Partial<CreateCreatorInput> {
@@ -458,6 +466,7 @@ export async function updateCreator(input: UpdateCreatorInput): Promise<DBCreato
     "avatar_shape",
     "avatar_border_style", "avatar_border_color_1", "avatar_border_color_2", "avatar_border_color_3",
     "is_verified", "font", "location_pill_color",
+    "autoredirect_link_id",
   ] as const;
 
   const setClauses: string[] = [];
@@ -834,7 +843,14 @@ export async function getAvatarStatsBySlug(
 // ── Event Recording ──────────────────────────────────────────────────────────
 
 export interface RecordEventInput {
-  type: "pageview" | "click" | "escape_fallback";
+  // 'autoredirect' is deliberately its OWN type rather than a pageview+click
+  // pair. An auto-redirect site has no page to view and nothing to tap, so
+  // recording it as either would poison CTR — pageview-only drags the creator's
+  // rate toward zero, pageview+click pins it at 100%. Every analytics query
+  // filters on type='pageview' or DEDUPED_CLICKS (type='click'), so this type is
+  // inert to all of them by construction. Real conversion for these sites is
+  // measured downstream via the OnlyFans tracking code.
+  type: "pageview" | "click" | "escape_fallback" | "autoredirect";
   creator_id?: string | null;
   creator_slug: string;
   link_label?: string | null;

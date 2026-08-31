@@ -5,6 +5,7 @@ import { Metadata } from "next";
 import { getCreatorBySlug, getCreatorLinks } from "../../lib/db";
 import { Creator } from "../../lib/types";
 import { CreatorPage } from "./CreatorPage";
+import { AutoRedirect } from "./AutoRedirect";
 import { isLinkPreviewScraper } from "../../lib/scraper-detect";
 import { generateLinkToken } from "../../lib/link-token";
 import { pickAvatar } from "../../lib/avatar-rotation";
@@ -123,6 +124,35 @@ export default async function CreatorPageServer({ params, searchParams }: PagePr
 
   // No such creator — a normal 404, not an error condition. Not logged.
   if (!dbCreator) notFound();
+
+  // ── Auto-redirect sites ────────────────────────────────────────────────────
+  // No landing page: hand the visitor straight to the target, escaping the
+  // in-app browser on the way. Placed BEFORE any of the page-building work
+  // below because none of it is needed — and deliberately AFTER the creator
+  // lookup, so a redirect site still 404s for a bad slug like any other.
+  //
+  // Cloaking is already handled upstream: middleware serves the decoy for
+  // anything it flags as a crawler before this route runs, so a bot never
+  // reaches this branch and never learns the destination.
+  if (dbCreator.autoredirect_link_id) {
+    const target = links.find(
+      (l) => l.id === dbCreator.autoredirect_link_id && l.is_active
+    );
+    // A target that is missing or deactivated falls through to the normal
+    // landing page rather than erroring — the site degrades, it does not break.
+    if (target) {
+      const headersList = await headers();
+      return (
+        <AutoRedirect
+          slug={slug}
+          targetUrl={target.redirect_url || target.url}
+          linkId={target.id}
+          linkLabel={target.label}
+          isBot={headersList.get("x-is-bot") === "true"}
+        />
+      );
+    }
+  }
 
   const mapLink = (l: (typeof links)[0]) => ({
     id: l.id,

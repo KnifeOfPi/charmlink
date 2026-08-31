@@ -66,6 +66,8 @@ interface DBCreator {
   is_verified: boolean;
   font: string;
   location_pill_color: string | null;
+  /** Set ⇒ this site auto-redirects to that link instead of rendering a page. */
+  autoredirect_link_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1483,6 +1485,53 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
                     <LinkRow key={l.id} link={l} onDelete={handleDeleteLink} onToggle={handleToggleLink} onEdit={handleEditLink} token={token} creatorSlug={creator.slug} />
                   ))
                 )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">
+                  Auto-redirect
+                  {form.autoredirect_link_id && (
+                    <Badge className="ml-2 bg-pink-600 hover:bg-pink-600">ON</Badge>
+                  )}
+                </CardTitle>
+                <CardDescription>
+                  Sends visitors straight to one link — no landing page, nothing to
+                  tap. Use this only on a throwaway domain: a site that redirects
+                  instantly is far easier for Instagram to flag than a link page,
+                  and if the domain burns it takes this creator&apos;s page with it.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <Select
+                  value={form.autoredirect_link_id ?? "off"}
+                  onValueChange={(v) =>
+                    setForm({ ...form, autoredirect_link_id: v === "off" ? null : v })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Off — normal landing page" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="off">Off — normal landing page</SelectItem>
+                    {premiumLinks
+                      .filter((l) => l.is_active)
+                      .map((l) => (
+                        <SelectItem key={l.id} value={l.id}>
+                          {l.label}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-muted-foreground text-xs">
+                  {premiumLinks.filter((l) => l.is_active).length === 0
+                    ? "Add an active premium link first."
+                    : "Only active premium links can be targeted. Deactivating or deleting the target reverts this site to its landing page rather than breaking it."}
+                </p>
+                <p className="text-muted-foreground text-xs">
+                  Save to apply.
+                </p>
               </CardContent>
             </Card>
 
