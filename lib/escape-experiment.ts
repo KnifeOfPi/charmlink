@@ -36,19 +36,23 @@ export const ESCAPE_EXPERIMENT_ENABLED = true;
 /**
  * When the test started counting. Analysis must not reach back past this.
  *
- * Deliberately 17:00 and not the 10:00 deploy. For the first ~6 hours the
- * `stay` arm was still logging failed escapes — visitors on pages served
- * before the deploy, running the old bundle from cache while being assigned to
- * an arm they could not obey. Measured: stay-arm escape attempts ran 4-5 per
- * hour through 16:00 UTC and are exactly ZERO from 17:00 onward, while the
- * escape arm keeps logging them steadily. Those early sessions are an A/A
- * sample wearing the experiment's labels, so the window starts after they stop.
+ * RESTARTED 2026-08-31. The Android fallback cascade gained a visibility gate,
+ * which changes the ESCAPE arm's behaviour for the visitors it applies to — and
+ * Android is the majority of that arm, 25 of 43 escape attempts in the previous
+ * window. An arm whose treatment changed halfway through is a mixture of two
+ * treatments, not a treatment, so the earlier data cannot be pooled with what
+ * follows. It is cheap to discard: both arms were still around 40 visitors,
+ * well under the 100 floor, so nothing readable was lost.
  *
- * This is also the check to repeat after any future change to the escape path:
- * stay-arm `escape_failures` must be ~0, and it takes hours rather than minutes
- * to become true.
+ * The 05:00 offset is not the deploy time (~21:40 on 08-31). It allows for
+ * bundles already cached in visitors' browsers, which is measured, not guessed:
+ * on the previous change the old bundle kept running for ~6 hours before the
+ * arms cleanly separated. Same allowance applied here.
+ *
+ * The check to repeat after ANY change to the escape path: stay-arm
+ * `escape_failures` must be ~0, and it takes hours, not minutes, to become true.
  */
-export const ESCAPE_EXPERIMENT_START = "2026-08-30T17:00:00Z";
+export const ESCAPE_EXPERIMENT_START = "2026-09-01T05:00:00Z";
 
 export type EscapeArm = "escape" | "stay";
 

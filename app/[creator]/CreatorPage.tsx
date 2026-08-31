@@ -1581,15 +1581,31 @@ export function CreatorPage({
               // Android: intent:// is app-agnostic and safe from Threads.
               try { window.location.href = "intent://" + bare + "#Intent;scheme=https;end"; } catch { /* noop */ }
             }
-            setTimeout(() => {
-              try { window.location.href = "googlechromes://" + bare; } catch { /* noop */ }
-            }, 1500);
-            setTimeout(() => {
-              try { window.location.href = "firefox://open-url?url=" + encodeURIComponent(full); } catch { /* noop */ }
-            }, 3000);
-            setTimeout(() => {
-              try { window.location.href = "brave://open-url?url=" + encodeURIComponent(full); } catch { /* noop */ }
-            }, 4500);
+            // ── Fallback cascade — Android only; iOS returned above ──────────
+            //
+            // Each step fires ONLY while the page is still visible. Without the
+            // gate, a visitor whose `intent://` handoff already succeeded gets
+            // yanked out of Chrome and into Firefox 1.5s later, then Brave 1.5s
+            // after that — the exact regression 85c17dc describes ("they rip the
+            // user out of Safari and into Chrome ~1.5s after handoff"). That
+            // regression is why the chain was deleted from the iOS path rather
+            // than fixed. Gating is the better answer: it keeps the extra escape
+            // routes for the visitor who is still stuck, and costs nothing for
+            // the one who already left, because a departed page is `hidden`.
+            //
+            // visibilityState is the right signal rather than a blur listener:
+            // it is what actually flips when the OS foregrounds another app, and
+            // it is already the mechanism the escape-failure beacon below uses,
+            // so success and failure are judged by the same test.
+            const scheduleFallback = (ms: number, href: string) => {
+              setTimeout(() => {
+                if (document.visibilityState !== "visible") return;
+                try { window.location.href = href; } catch { /* noop */ }
+              }, ms);
+            };
+            scheduleFallback(1500, "googlechromes://" + bare);
+            scheduleFallback(3000, "firefox://open-url?url=" + encodeURIComponent(full));
+            scheduleFallback(4500, "brave://open-url?url=" + encodeURIComponent(full));
           };
           if (typeof requestAnimationFrame === "function") {
             requestAnimationFrame(() => setTimeout(fire, 0));
