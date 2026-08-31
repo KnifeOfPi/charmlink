@@ -354,8 +354,12 @@ function SiteBreakdown({
               <tr className="text-gray-500 border-b border-gray-800">
                 <th className="py-1.5 pr-3 font-normal">Domain</th>
                 <th className="py-1.5 pr-3 font-normal text-right">Views</th>
-                <th className="py-1.5 pr-3 font-normal text-right">Premium</th>
-                <th className="py-1.5 font-normal text-right">CTR</th>
+                <th className="py-1.5 pr-3 font-normal text-right" title="Taps — a visitor clicking two offers counts twice">
+                  Premium
+                </th>
+                <th className="py-1.5 font-normal text-right" title="Converting visitors ÷ views — not the tap count">
+                  CTR
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -378,6 +382,7 @@ function SiteBreakdown({
                     </td>
                     <td className="py-1.5 pr-3 tabular-nums text-right">
                       {s.premiumClicks.toLocaleString()}
+                      <span className="text-gray-600 ml-1">({s.convertingSessions})</span>
                     </td>
                     <td className="py-1.5 tabular-nums text-right">{s.ctr}%</td>
                   </tr>
@@ -488,11 +493,15 @@ function CreatorCard({
       {/* Key stats */}
       <div className="grid grid-cols-2 gap-3 mb-6 sm:grid-cols-4">
         <StatCard label="Page Views" value={active.totalViews} sub={`${active.humanViews} human`} />
-        <StatCard label="Premium Clicks" value={active.premiumClicks} />
+        <StatCard
+          label="Premium Clicks"
+          value={active.premiumClicks}
+          sub={`${active.convertingSessions} visitors (some click twice)`}
+        />
         <StatCard
           label="CTR"
           value={`${active.ctr}%`}
-          sub="visitors who clicked premium"
+          sub={`${active.convertingSessions} of ${active.humanViews} visitors`}
         />
         <StatCard label="IG Traffic" value={active.instagramTraffic} sub="from Instagram" />
       </div>
@@ -644,8 +653,16 @@ export function AnalyticsDashboard({ summaries, totals, period, onPeriodChange }
           <StatCard label="Total Views" value={totals.totalViews} />
           <StatCard label="Human Views" value={totals.humanViews} />
           <StatCard label="Bot Views" value={totals.botViews} />
-          <StatCard label="Premium Clicks" value={totals.premiumClicks} />
-          <StatCard label="Overall CTR" value={`${overallCtr}%`} />
+          <StatCard
+            label="Premium Clicks"
+            value={totals.premiumClicks}
+            sub={`${totals.convertingSessions} visitors (some click twice)`}
+          />
+          <StatCard
+            label="Overall CTR"
+            value={`${overallCtr}%`}
+            sub={`${totals.convertingSessions} of ${totals.humanViews} visitors`}
+          />
           <StatCard label="Sessions" value={totals.uniqueSessions} />
         </div>
 
