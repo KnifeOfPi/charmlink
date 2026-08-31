@@ -564,6 +564,42 @@ window is a presentation choice someone may reasonably widen later, while the
 photo boundary is a correctness requirement that must hold regardless.
 Coupling them would silently feed the sampler poisoned data.
 
+### 7.14 A migration sat in the repo unapplied for months, under the cloak
+
+`supabase/migrations/20260511000000_add_cloak_enabled.sql` was committed on
+2026-05-11 and **never applied to production**. Discovered 2026-09-01 while
+checking whether auto-redirect domains are hidden from Meta crawlers:
+`information_schema` had no `cloak_enabled` column on `charmlink_creators`.
+
+Cloaking was working anyway, and that is the interesting part. It survived on a
+back-compat line in `/api/resolve-creator-meta`:
+
+```ts
+const cloakEnabled = raw === undefined || raw === null ? true : Boolean(raw);
+```
+
+Column missing → `raw` undefined → defaults to true → everyone cloaked. Correct
+behaviour, reached by accident. Two consequences while it lasted: the project's
+most important defence rested on a fallback that a later "the column always
+exists, simplify this" cleanup would have silently removed, turning cloaking OFF
+across every domain at once; and the per-creator kill switch this doc describes
+in §4 did not actually exist, so the documented response to Meta clamping down
+on one creator was unavailable.
+
+Now applied (`NOT NULL DEFAULT TRUE`, all 71 sites true), so it is a no-op
+behaviourally and the flag is real. Verified against production rather than
+assumed: `fav-site.com` returns byte-identical responses before and after —
+2,072B decoy titled "Five overnight hikes that don't require a permit" to
+`facebookexternalhit`, 25,602B creator page to an iPhone UA, zero `onlyfans`
+mentions and zero framework fingerprints in the decoy.
+
+**The lesson is not about this column.** A migration file in the repo is not
+evidence that the schema has it. Check `information_schema` before trusting one,
+especially when the code has a "default if missing" fallback that will hide the
+gap indefinitely. Note that testing a decoy from this sandbox is unreliable on
+Cloudflare-proxied domains — a datacenter IP can draw CF's own "Just a moment..."
+challenge, which is not our decoy.
+
 ### 7.13 The OnlyFans tracking data is NOT live, and its days are not days
 
 `tracking_links` / `tracking_link_daily_stats` (synced from Infloww, shared DB
