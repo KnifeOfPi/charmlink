@@ -142,13 +142,23 @@ export default async function CreatorPageServer({ params, searchParams }: PagePr
     // landing page rather than erroring — the site degrades, it does not break.
     if (target) {
       const headersList = await headers();
+      const flaggedBot = headersList.get("x-is-bot") === "true";
       return (
         <AutoRedirect
           slug={slug}
-          targetUrl={target.redirect_url || target.url}
-          linkId={target.id}
-          linkLabel={target.label}
-          isBot={headersList.get("x-is-bot") === "true"}
+          // Defence in depth. Cloaking should mean a crawler never reaches this
+          // branch at all — verified in production, a Meta UA gets the decoy
+          // blog before the rewrite even runs. But `targetUrl` is a client-
+          // component prop, so Next serialises it into the HTML: anything that
+          // DID slip through would read the OnlyFans destination straight out of
+          // the page source, even though the isBot guard stops the redirect
+          // itself. Withholding it means the worst case is a blank holding page
+          // that names nothing. The landing page has no equivalent exposure —
+          // its links load from the token-gated API, never inline.
+          targetUrl={flaggedBot ? "" : target.redirect_url || target.url}
+          linkId={flaggedBot ? "" : target.id}
+          linkLabel={flaggedBot ? "" : target.label}
+          isBot={flaggedBot}
         />
       );
     }

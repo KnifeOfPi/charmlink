@@ -67,8 +67,10 @@ export function AutoRedirect({
   const [stalled, setStalled] = useState(false);
 
   useEffect(() => {
-    // A bot that got past cloaking is never redirected and never recorded.
-    if (isBot || fired.current) return;
+    // A bot that got past cloaking is never redirected and never recorded. The
+    // server also withholds targetUrl in that case, so there is nothing to leak
+    // even from the serialised props — hence the empty-string guard too.
+    if (isBot || !targetUrl || fired.current) return;
     fired.current = true;
 
     const ua = navigator.userAgent;
@@ -211,7 +213,7 @@ export function AutoRedirect({
         fontSize: 14,
       }}
     >
-      {stalled ? (
+      {stalled && targetUrl ? (
         <a
           href={targetUrl}
           style={{ color: "#e91e8a", textDecoration: "none", fontWeight: 600 }}
