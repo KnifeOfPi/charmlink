@@ -167,6 +167,14 @@ export interface DBLink {
 export interface CreateCreatorInput {
   slug: string;
   name: string;
+  /**
+   * The person this site belongs to. A creator row IS a single site (slug + one
+   * custom_domain), so a person with ten domains is ten rows tied together by
+   * this. Leaving it null orphans the site: getModelsWithSites filters sites by
+   * model, so an unassigned one renders nowhere in the admin creators list even
+   * while it is live and serving traffic.
+   */
+  model_id?: string | null;
   tagline?: string;
   avatar_url?: string;
   custom_domain?: string | null;
@@ -440,8 +448,8 @@ export async function createCreator(input: CreateCreatorInput): Promise<DBCreato
   const rows = await query<DBCreator>(
     `INSERT INTO charmlink_creators
       (slug, name, tagline, avatar_url, custom_domain, theme_bg, theme_accent, theme_text, is_active,
-       show_location, location_type, sensitive_default)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       show_location, location_type, sensitive_default, model_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
      RETURNING *`,
     [
       input.slug,
@@ -456,6 +464,7 @@ export async function createCreator(input: CreateCreatorInput): Promise<DBCreato
       input.show_location ?? false,
       input.location_type ?? "ip_auto",
       input.sensitive_default ?? false,
+      input.model_id ?? null,
     ]
   );
   return rows[0];
@@ -475,6 +484,10 @@ export async function updateCreator(input: UpdateCreatorInput): Promise<DBCreato
     "avatar_border_style", "avatar_border_color_1", "avatar_border_color_2", "avatar_border_color_3",
     "is_verified", "font", "location_pill_color",
     "autoredirect_link_id", "cloak_enabled",
+    // Reassigns the site to a different person, or to none. Without this there
+    // was no path at all — model_id was set once by the 365ae8c backfill and
+    // never again, so every site created since has been orphaned and invisible.
+    "model_id",
   ] as const;
 
   const setClauses: string[] = [];

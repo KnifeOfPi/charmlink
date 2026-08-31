@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Separator } from "@/components/ui/separator";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -72,6 +73,10 @@ export default function ModelPage({ params }: { params: Promise<{ id: string }> 
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
+  const [newSlug, setNewSlug] = useState("");
+  const [newDomain, setNewDomain] = useState("");
+  const [addingSite, setAddingSite] = useState(false);
+  const [addError, setAddError] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -91,6 +96,40 @@ export default function ModelPage({ params }: { params: Promise<{ id: string }> 
   useEffect(() => {
     if (ready) void load();
   }, [ready, load]);
+
+  /** Create a new site already attached to this person. model_id is the whole
+   *  point: created without it, the site is filtered out of the creators list
+   *  and effectively disappears. */
+  async function addSite() {
+    setAddingSite(true);
+    setAddError("");
+    try {
+      const res = await fetch("/api/admin/creators", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          slug: newSlug.trim(),
+          name: model?.name ?? newSlug.trim(),
+          custom_domain: newDomain.trim() || null,
+          model_id: id,
+        }),
+      });
+      if (res.ok) {
+        const created = await res.json();
+        setNewSlug("");
+        setNewDomain("");
+        await load();
+        router.push(`/admin/creators/${created.id}`);
+      } else {
+        const err = await res.json();
+        setAddError((err as { error?: string }).error ?? "Failed to add domain");
+      }
+    } catch {
+      setAddError("Failed to add domain");
+    } finally {
+      setAddingSite(false);
+    }
+  }
 
   function setField<K extends keyof ModelRow>(k: K, v: ModelRow[K]) {
     setForm((p) => ({ ...p, [k]: v }));
@@ -270,6 +309,40 @@ export default function ModelPage({ params }: { params: Promise<{ id: string }> 
                 </Button>
               </div>
             ))}
+
+            {/* The pathway that did not exist. "Add Creator" on the creators page
+                makes an UNASSIGNED site, which getModelsWithSites then filters out
+                of that very list — so a new domain went live and vanished. Adding
+                it from the person guarantees model_id is set. */}
+            <Separator className="my-1" />
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">
+                Add another domain for {model.name}. It is created attached to her,
+                with its own links and tracking codes.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Input
+                  value={newSlug}
+                  onChange={(e) => setNewSlug(e.target.value)}
+                  placeholder="slug (e.g. reynaxo)"
+                  className="text-sm w-44"
+                />
+                <Input
+                  value={newDomain}
+                  onChange={(e) => setNewDomain(e.target.value)}
+                  placeholder="domain (e.g. seereyna.com)"
+                  className="text-sm w-56"
+                />
+                <Button
+                  size="sm"
+                  disabled={!newSlug.trim() || addingSite}
+                  onClick={() => void addSite()}
+                >
+                  {addingSite ? "Adding…" : "Add domain"}
+                </Button>
+              </div>
+              {addError && <p className="text-destructive text-xs">{addError}</p>}
+            </div>
           </CardContent>
         </Card>
       </main>

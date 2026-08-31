@@ -815,6 +815,10 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
 
   const [creator, setCreator] = useState<DBCreator | null>(null);
   const [links, setLinks] = useState<DBLink[]>([]);
+  // The people a site can belong to. Fetched so an orphaned site — one created
+  // with no model, which getModelsWithSites filters out of the creators list
+  // entirely — can be attached without a hand-written UPDATE.
+  const [models, setModels] = useState<Array<{ id: string; name: string }>>([]);
   const [analytics, setAnalytics] = useState<AnalyticsSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -835,10 +839,12 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
     setLoading(true);
     try {
       const headers = authHeaders();
-      const [creatorRes, linksRes] = await Promise.all([
+      const [creatorRes, linksRes, modelsRes] = await Promise.all([
         fetch(`/api/admin/creators/${id}`, { headers }),
         fetch(`/api/admin/creators/${id}/links`, { headers }),
+        fetch(`/api/admin/models`, { headers }),
       ]);
+      if (modelsRes.ok) setModels(await modelsRes.json());
 
       if (creatorRes.ok) {
         const c: DBCreator = await creatorRes.json();
@@ -1349,23 +1355,59 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
                   {/* Photos and shared identity now live on the model, so one
                       edit covers every domain she has instead of needing the
                       same upload repeated per site. */}
-                  <Card>
+                  <Card className={!form.model_id ? "border-amber-500/60" : undefined}>
                     <CardHeader className="pb-3">
-                      <CardTitle className="text-base">Photos & shared identity</CardTitle>
+                      <CardTitle className="text-base">
+                        Person
+                        {!form.model_id && (
+                          <Badge variant="destructive" className="ml-2">UNASSIGNED</Badge>
+                        )}
+                      </CardTitle>
                       <CardDescription className="text-xs">
-                        Managed once for this model and applied to all of her domains.
+                        This site is one domain. The person owns all of her domains,
+                        and her photos and identity are set once on her, not here.
+                        {!form.model_id && (
+                          <>
+                            {" "}
+                            <strong>
+                              An unassigned site does not appear in the creators list
+                              at all
+                            </strong>{" "}
+                            — it is live and serving traffic, but invisible. Pick the
+                            person it belongs to.
+                          </>
+                        )}
                       </CardDescription>
                     </CardHeader>
-                    <CardContent>
-                      <Button
-                        variant="secondary"
-                        onClick={() =>
-                          creator?.model_id
-                            ? router.push(`/admin/models/${creator.model_id}`)
-                            : router.push("/admin/creators")
+                    <CardContent className="space-y-2">
+                      <Select
+                        value={form.model_id ?? "none"}
+                        onValueChange={(v) =>
+                          setForm({ ...form, model_id: v === "none" ? null : v })
                         }
                       >
-                        Open model settings →
+                        <SelectTrigger>
+                          <SelectValue placeholder="Unassigned" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Unassigned</SelectItem>
+                          {models.map((m) => (
+                            <SelectItem key={m.id} value={m.id}>
+                              {m.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-muted-foreground text-xs">Save to apply.</p>
+                      <Button
+                        variant="secondary"
+                        disabled={!creator?.model_id}
+                        onClick={() =>
+                          creator?.model_id &&
+                          router.push(`/admin/models/${creator.model_id}`)
+                        }
+                      >
+                        Open person&apos;s settings →
                       </Button>
                     </CardContent>
                   </Card>
