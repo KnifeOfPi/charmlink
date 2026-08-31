@@ -73,7 +73,12 @@ export function buildSummary(
   const totalClicks = clicks.length;
   const premiumClicks = clicks.filter((e) => e.linkType === "premium").length;
   const socialClicks = clicks.filter((e) => e.linkType === "social").length;
-  const ctr = humanViews > 0 ? Math.round((premiumClicks / humanViews) * 10000) / 100 : 0;
+  // Distinct visitors, not taps — a visitor tapping two offers is two clicks
+  // against one pageview. See AnalyticsSummary.ctr.
+  const convertingSessions = new Set(
+    clicks.filter((e) => e.linkType === "premium").map((e) => e.sessionId)
+  ).size;
+  const ctr = humanViews > 0 ? Math.round((convertingSessions / humanViews) * 10000) / 100 : 0;
 
   const referrerCounts: Record<string, number> = {};
   filtered.forEach((e) => {
@@ -120,6 +125,7 @@ export function buildSummary(
     totalClicks,
     premiumClicks,
     socialClicks,
+    convertingSessions,
     ctr,
     topReferrers,
     deviceBreakdown,

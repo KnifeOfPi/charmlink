@@ -969,11 +969,13 @@ export async function getAnalytics(
     total: string;
     premium: string;
     social: string;
+    converting_sessions: string;
   }>(
     `SELECT
       COUNT(*) AS total,
       COUNT(*) FILTER (WHERE link_type = 'premium') AS premium,
-      COUNT(*) FILTER (WHERE link_type = 'social') AS social
+      COUNT(*) FILTER (WHERE link_type = 'social') AS social,
+      COUNT(DISTINCT session_id) FILTER (WHERE link_type = 'premium') AS converting_sessions
      FROM charmlink_events e
      WHERE ${DEDUPED_CLICKS} AND e.creator_slug = $1 ${timeFilter}`,
     params
@@ -1069,7 +1071,9 @@ export async function getAnalytics(
   const premiumClicks = parseInt(clk?.premium ?? "0");
   const socialClicks = parseInt(clk?.social ?? "0");
   const instagramTraffic = parseInt(pv?.instagram ?? "0");
-  const ctr = humanViews > 0 ? Math.round((premiumClicks / humanViews) * 10000) / 100 : 0;
+  const convertingSessions = parseInt(clk?.converting_sessions ?? "0");
+  // Sessions, not taps — see AnalyticsSummary.ctr.
+  const ctr = humanViews > 0 ? Math.round((convertingSessions / humanViews) * 10000) / 100 : 0;
 
   const deviceBreakdown: Record<DeviceType, number> = { mobile: 0, tablet: 0, desktop: 0 };
   for (const row of devRows) {
@@ -1087,6 +1091,7 @@ export async function getAnalytics(
     totalClicks,
     premiumClicks,
     socialClicks,
+    convertingSessions,
     ctr,
     topReferrers: refRows.map((r) => ({
       referer: r.referer || "direct",
@@ -1150,10 +1155,11 @@ export async function getAnalyticsBatch(
               COUNT(*) FILTER (WHERE is_instagram) AS instagram,
               COUNT(DISTINCT session_id) AS unique_sessions
        FROM charmlink_events e WHERE e.type='pageview' ${tf} GROUP BY creator_slug`, params),
-    query<{ creator_slug: string; total: string; premium: string; social: string }>(
+    query<{ creator_slug: string; total: string; premium: string; social: string; converting_sessions: string }>(
       `SELECT creator_slug, COUNT(*) AS total,
               COUNT(*) FILTER (WHERE link_type='premium') AS premium,
-              COUNT(*) FILTER (WHERE link_type='social') AS social
+              COUNT(*) FILTER (WHERE link_type='social') AS social,
+              COUNT(DISTINCT session_id) FILTER (WHERE link_type='premium') AS converting_sessions
        FROM charmlink_events e WHERE ${DEDUPED_CLICKS} ${tf} GROUP BY creator_slug`, params),
     query<{ creator_slug: string; referer: string; count: string }>(
       `SELECT creator_slug, referer, count FROM (
@@ -1219,6 +1225,7 @@ export async function getAnalyticsBatch(
     const k = clkBy.get(c.slug);
     const humanViews = parseInt(p?.human ?? "0");
     const premiumClicks = parseInt(k?.premium ?? "0");
+    const convertingSessions = parseInt(k?.converting_sessions ?? "0");
     const deviceBreakdown: Record<DeviceType, number> = { mobile: 0, tablet: 0, desktop: 0 };
     for (const d of devBy.get(c.slug) ?? []) {
       const key = d.device as DeviceType;
@@ -1234,7 +1241,9 @@ export async function getAnalyticsBatch(
       totalClicks: parseInt(k?.total ?? "0"),
       premiumClicks,
       socialClicks: parseInt(k?.social ?? "0"),
-      ctr: humanViews > 0 ? Math.round((premiumClicks / humanViews) * 10000) / 100 : 0,
+      convertingSessions,
+      // Sessions, not taps — see AnalyticsSummary.ctr.
+      ctr: humanViews > 0 ? Math.round((convertingSessions / humanViews) * 10000) / 100 : 0,
       topReferrers: (refBy.get(c.slug) ?? []).map((r) => ({ referer: r.referer || "direct", count: parseInt(r.count) })),
       deviceBreakdown,
       countryBreakdown: (cntBy.get(c.slug) ?? []).map((r) => ({ country: r.country, count: parseInt(r.count) })),
@@ -1373,6 +1382,9 @@ export async function getAnalyticsOverview(
   botViews: number;
   totalClicks: number;
   premiumClicks: number;
+  /** Distinct sessions with a premium click — the CTR numerator. See
+   *  AnalyticsSummary.ctr for why this is not premiumClicks. */
+  convertingSessions: number;
   uniqueSessions: number;
 }> {
   const cutoff = periodCutoff(period);
@@ -1394,10 +1406,11 @@ export async function getAnalyticsOverview(
     params
   );
 
-  const clkRow = await query<{ total: string; premium: string }>(
+  const clkRow = await query<{ total: string; premium: string; converting_sessions: string }>(
     `SELECT
       COUNT(*) AS total,
-      COUNT(*) FILTER (WHERE link_type = 'premium') AS premium
+      COUNT(*) FILTER (WHERE link_type = 'premium') AS premium,
+      COUNT(DISTINCT session_id) FILTER (WHERE link_type = 'premium') AS converting_sessions
      FROM charmlink_events e WHERE ${DEDUPED_CLICKS} ${timeFilter}`,
     params
   );
@@ -1411,6 +1424,7 @@ export async function getAnalyticsOverview(
     botViews: parseInt(pv?.bot ?? "0"),
     totalClicks: parseInt(clk?.total ?? "0"),
     premiumClicks: parseInt(clk?.premium ?? "0"),
+    convertingSessions: parseInt(clk?.converting_sessions ?? "0"),
     uniqueSessions: parseInt(pv?.unique_sessions ?? "0"),
   };
 }

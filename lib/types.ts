@@ -137,7 +137,19 @@ export interface AnalyticsSummary {
   totalClicks: number;
   premiumClicks: number;
   socialClicks: number;
-  ctr: number; // premiumClicks / humanViews
+  /**
+   * Distinct sessions that clicked at least one premium link — the numerator
+   * CTR needs. `premiumClicks` counts taps, and a visitor who taps two offers
+   * on the same page is two of them against one pageview.
+   */
+  convertingSessions: number;
+  /**
+   * convertingSessions / humanViews. NOT premiumClicks / humanViews: that read
+   * 104.8% on fav-site.com once the escape de-duplication stopped inflating the
+   * denominator (125 views, 131 taps, 87 actual visitors). The doubled view
+   * count had been masking a numerator that was never per-visitor.
+   */
+  ctr: number;
   topReferrers: Array<{ referer: string; count: number }>;
   deviceBreakdown: Record<DeviceType, number>;
   countryBreakdown: Array<{ country: string; count: number }>;

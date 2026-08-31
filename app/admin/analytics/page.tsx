@@ -3,24 +3,19 @@
 import { useEffect, useState } from "react";
 import { useAdminAuth } from "../useAdminAuth";
 import { AdminNav } from "../AdminNav";
-import { AnalyticsDashboard } from "./AnalyticsDashboard";
+import { AnalyticsDashboard, type TotalsData } from "./AnalyticsDashboard";
 import type { ModelAnalytics } from "../../../lib/analytics-rollup";
 
-interface TotalsData {
-  totalViews: number;
-  humanViews: number;
-  botViews: number;
-  totalClicks: number;
-  premiumClicks: number;
-  uniqueSessions: number;
-}
+// TotalsData was declared identically in both files, so adding a field here
+// type-checked while the dashboard still expected the old shape. Imported now,
+// so the two cannot drift again.
 
 export default function AnalyticsPage() {
   const { ready, authHeaders } = useAdminAuth();
   const [summaries, setSummaries] = useState<ModelAnalytics[]>([]);
   const [totals, setTotals] = useState<TotalsData>({
     totalViews: 0, humanViews: 0, botViews: 0,
-    totalClicks: 0, premiumClicks: 0, uniqueSessions: 0,
+    totalClicks: 0, premiumClicks: 0, convertingSessions: 0, uniqueSessions: 0,
   });
   const [period, setPeriod] = useState<"today" | "7d" | "30d" | "all">("7d");
   const [loading, setLoading] = useState(true);
@@ -42,7 +37,7 @@ export default function AnalyticsPage() {
         setSummaries(data.models ?? data.creators ?? []);
         setTotals(data.totals ?? {
           totalViews: 0, humanViews: 0, botViews: 0,
-          totalClicks: 0, premiumClicks: 0, uniqueSessions: 0,
+          totalClicks: 0, premiumClicks: 0, convertingSessions: 0, uniqueSessions: 0,
         });
       }
     } finally {

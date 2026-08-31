@@ -8,12 +8,13 @@ import { STATS_EPOCH } from "../../../lib/stats-epoch";
 const PREMIUM_COLOR = "#e91e8a";
 const TOTAL_COLOR = "#6b7280"; // gray-500 — context bar, not an identity color
 
-interface TotalsData {
+export interface TotalsData {
   totalViews: number;
   humanViews: number;
   botViews: number;
   totalClicks: number;
   premiumClicks: number;
+  convertingSessions: number;
   uniqueSessions: number;
 }
 
@@ -491,7 +492,7 @@ function CreatorCard({
         <StatCard
           label="CTR"
           value={`${active.ctr}%`}
-          sub="premium / human views"
+          sub="visitors who clicked premium"
         />
         <StatCard label="IG Traffic" value={active.instagramTraffic} sub="from Instagram" />
       </div>
@@ -588,9 +589,11 @@ export function AnalyticsDashboard({ summaries, totals, period, onPeriodChange }
   const selected =
     filtered.find((m) => (m.modelId ?? m.creator) === selectedId) ?? filtered[0] ?? null;
 
+  // Converting sessions, not taps. Counting taps put fav-site.com at 104.8%
+  // once the escape de-duplication stopped inflating the denominator.
   const overallCtr =
     totals.humanViews > 0
-      ? Math.round((totals.premiumClicks / totals.humanViews) * 10000) / 100
+      ? Math.round((totals.convertingSessions / totals.humanViews) * 10000) / 100
       : 0;
 
   return (

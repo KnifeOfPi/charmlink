@@ -60,6 +60,11 @@ export function rollupByModel(
 
     const humanViews = sum((s) => s.humanViews);
     const premiumClicks = sum((s) => s.premiumClicks);
+    // Summable across sites: a session id is minted per pageview mount, and a
+    // mount belongs to exactly one domain — so no session is counted twice,
+    // even now that one session can span the in-app load and the escape
+    // continuation (both on the same domain).
+    const convertingSessions = sum((s) => s.convertingSessions);
 
     const deviceBreakdown = { mobile: 0, tablet: 0, desktop: 0 };
     for (const s of sites) {
@@ -110,7 +115,8 @@ export function rollupByModel(
       totalClicks: sum((s) => s.totalClicks),
       premiumClicks,
       socialClicks: sum((s) => s.socialClicks),
-      ctr: humanViews > 0 ? Math.round((premiumClicks / humanViews) * 10000) / 100 : 0,
+      convertingSessions,
+      ctr: humanViews > 0 ? Math.round((convertingSessions / humanViews) * 10000) / 100 : 0,
       instagramTraffic: sum((s) => s.instagramTraffic),
       deviceBreakdown,
       topReferrers: mergeCounts(
