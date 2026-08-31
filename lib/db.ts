@@ -89,6 +89,13 @@ export interface DBCreator {
    * creator row. See supabase/migrations/20260901000000_add_autoredirect_target.
    */
   autoredirect_link_id: string | null;
+  /**
+   * Per-creator decoy kill switch. True (the default) means link-preview
+   * scrapers get the fingerprint-free decoy instead of the real page. Flip to
+   * false to exempt ONE creator rather than blast-radiusing every domain — see
+   * §7.14, the flag existed only in a migration file until 2026-09-01.
+   */
+  cloak_enabled: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -193,6 +200,7 @@ export interface CreateCreatorInput {
   location_pill_color?: string | null;
   /** null clears it and the site reverts to a normal landing page. */
   autoredirect_link_id?: string | null;
+  cloak_enabled?: boolean;
 }
 
 export interface UpdateCreatorInput extends Partial<CreateCreatorInput> {
@@ -466,7 +474,7 @@ export async function updateCreator(input: UpdateCreatorInput): Promise<DBCreato
     "avatar_shape",
     "avatar_border_style", "avatar_border_color_1", "avatar_border_color_2", "avatar_border_color_3",
     "is_verified", "font", "location_pill_color",
-    "autoredirect_link_id",
+    "autoredirect_link_id", "cloak_enabled",
   ] as const;
 
   const setClauses: string[] = [];

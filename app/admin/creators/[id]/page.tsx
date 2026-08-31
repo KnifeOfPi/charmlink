@@ -68,6 +68,8 @@ interface DBCreator {
   location_pill_color: string | null;
   /** Set ⇒ this site auto-redirects to that link instead of rendering a page. */
   autoredirect_link_id: string | null;
+  /** False ⇒ scrapers see the real page instead of the decoy. */
+  cloak_enabled: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -1485,6 +1487,45 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
                     <LinkRow key={l.id} link={l} onDelete={handleDeleteLink} onToggle={handleToggleLink} onEdit={handleEditLink} token={token} creatorSlug={creator.slug} />
                   ))
                 )}
+              </CardContent>
+            </Card>
+
+            <Card className={form.cloak_enabled === false ? "border-amber-500/60" : undefined}>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">
+                  Bot cloaking
+                  {form.cloak_enabled === false && (
+                    <Badge variant="destructive" className="ml-2">OFF</Badge>
+                  )}
+                </CardTitle>
+                <CardDescription>
+                  On by default, and it should stay on. Link-preview scrapers get
+                  a decoy blog instead of the real page — verified in production,
+                  a Meta crawler sees zero mention of OnlyFans. Turning this off
+                  exposes this domain to Meta. It exists so one creator can be
+                  exempted without touching the other 70, not as a routine
+                  setting.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={form.cloak_enabled !== false}
+                    onCheckedChange={(v) => setForm({ ...form, cloak_enabled: v })}
+                  />
+                  <Label className="text-xs">
+                    {form.cloak_enabled === false
+                      ? "Exposed — scrapers see the real page"
+                      : "Cloaked — scrapers see the decoy"}
+                  </Label>
+                </div>
+                {form.cloak_enabled === false && (
+                  <p className="text-amber-500 text-xs">
+                    This domain is currently unprotected. Save reverts it the moment
+                    you switch it back on.
+                  </p>
+                )}
+                <p className="text-muted-foreground text-xs">Save to apply.</p>
               </CardContent>
             </Card>
 
