@@ -188,7 +188,6 @@ export default async function CreatorPageServer({ params, searchParams }: PagePr
   });
 
   const socialLinks = links.filter((l) => l.link_type === "social").map(mapLink);
-  const premiumLinks = links.filter((l) => l.link_type === "premium").map(mapLink);
 
   // Avatar carousel: when the creator has candidate photos, one is chosen per
   // render and its id rides along on this session's events so the conversion
@@ -213,7 +212,14 @@ export default async function CreatorPageServer({ params, searchParams }: PagePr
     tagline: dbCreator.tagline,
     avatar: chosenAvatar?.url ?? dbCreator.avatar_url,
     socialLinks,
-    premiumLinks,
+    // Never the real rows: this object crosses the server→client boundary as a
+    // prop, which Next.js serialises into the initial HTML/RSC payload — so
+    // anything here is in the page source for a plain HTTP fetch, no JS
+    // execution or bot-detection bypass required. CreatorPage never reads this
+    // field (it fills its own premium-links state from the HMAC-gated
+    // /api/links/[creator] fetch instead); a non-empty array here was handing
+    // every real OnlyFans URL to any crawler that requests the raw page.
+    premiumLinks: [],
     theme: {
       bgColor: dbCreator.theme_bg,
       accentColor: dbCreator.theme_accent,
