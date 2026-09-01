@@ -963,14 +963,40 @@ const DEDUPED_CLICKS = `e.type = 'click' AND e.session_id <> '${REDIRECT_EVENT_S
  */
 function periodCutoff(period: "today" | "7d" | "30d" | "all"): string | null {
   if (period === "all") return clampToEpoch(null);
+  if (period === "today") return clampToEpoch(pacificMidnightUTC(new Date()).toISOString());
   const now = new Date();
-  if (period === "today") {
-    now.setHours(0, 0, 0, 0);
-    return clampToEpoch(now.toISOString());
-  }
   const days = period === "7d" ? 7 : 30;
   now.setDate(now.getDate() - days);
   return clampToEpoch(now.toISOString());
+}
+
+/**
+ * Midnight Pacific time (PST or PDT, whichever is in effect) for `now`,
+ * expressed as an instant. Vercel's Node runtime runs in UTC, so a plain
+ * `Date.setHours(0,0,0,0)` zeroes to midnight UTC — 8 (or 7) hours before
+ * "Today" is actually supposed to reset — which is the bug this replaces.
+ * Fixed -08:00 would be wrong for half the year, so this reads the offset
+ * America/Los_Angeles is actually observing right now.
+ */
+function pacificMidnightUTC(now: Date): Date {
+  const [year, month, day] = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  })
+    .format(now)
+    .split("-");
+  const offsetName = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    timeZoneName: "shortOffset",
+  })
+    .formatToParts(now)
+    .find((p) => p.type === "timeZoneName")!.value; // e.g. "GMT-7"
+  const offsetHours = parseInt(offsetName.replace("GMT", ""), 10);
+  const sign = offsetHours <= 0 ? "-" : "+";
+  const isoOffset = `${sign}${String(Math.abs(offsetHours)).padStart(2, "0")}:00`;
+  return new Date(`${year}-${month}-${day}T00:00:00${isoOffset}`);
 }
 
 /** Bucket granularity for the clicks-over-time chart, keyed to the period filter. */
