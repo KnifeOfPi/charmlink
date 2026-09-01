@@ -19,6 +19,10 @@ interface VercelDomain {
   // UI-only health state (probed client-side after load)
   health?: "unknown" | "healthy" | "broken" | "probing";
   healthStatus?: number | null;
+  /** Is Cloudflare actually in front of this domain? Separate from `health` on
+   *  purpose: an unproxied domain serves a perfect 200 and reads as healthy while
+   *  sitting outside the WAF entirely. null = couldn't determine. */
+  proxied?: boolean | null;
   healing?: boolean;
   healMessage?: string;
 }
@@ -46,17 +50,23 @@ export default function DomainsPage() {
 
   // Probe a single domain's health via the SERVER-side status route (Node runtime,
   // no browser CORS false positives). Used to re-confirm after a heal.
-  async function probeDomainHealth(name: string): Promise<{ healthy: boolean; status: number | null }> {
+  async function probeDomainHealth(
+    name: string
+  ): Promise<{ healthy: boolean; status: number | null; proxied: boolean | null }> {
     try {
       const res = await fetch(`/api/admin/domains/status?domain=${encodeURIComponent(name)}`, {
         headers: authHeaders(),
         cache: "no-store",
       });
-      if (!res.ok) return { healthy: false, status: null };
+      if (!res.ok) return { healthy: false, status: null, proxied: null };
       const data = await res.json();
-      return { healthy: data.health === "healthy", status: data.healthStatus ?? null };
+      return {
+        healthy: data.health === "healthy",
+        status: data.healthStatus ?? null,
+        proxied: data.proxied ?? null,
+      };
     } catch {
-      return { healthy: false, status: null };
+      return { healthy: false, status: null, proxied: null };
     }
   }
 
@@ -122,14 +132,22 @@ export default function DomainsPage() {
       }
 
       if (data.noop) {
+        // noop now means healthy AND proxied — "serving fine" alone no longer
+        // qualifies, since that was true of every gray-cloud domain too.
         setDomains((prev) =>
           prev.map((d) =>
             d.name === domain
-              ? { ...d, healing: false, health: "healthy", healMessage: "✅ already healthy" }
+              ? {
+                  ...d,
+                  healing: false,
+                  health: "healthy",
+                  proxied: true,
+                  healMessage: "✅ already healthy and proxied",
+                }
               : d
           )
         );
-        setSuccess(`${domain} was already healthy`);
+        setSuccess(`${domain} was already healthy and behind Cloudflare`);
         return;
       }
 
@@ -143,6 +161,7 @@ export default function DomainsPage() {
                 healing: false,
                 health: probe.healthy ? "healthy" : "broken",
                 healthStatus: probe.status ?? data.postStatus ?? null,
+                proxied: probe.proxied,
                 healMessage: data.ok
                   ? "✅ healed"
                   : `⚠️ partial heal — HTTP ${data.postStatus ?? "?"}`,
@@ -151,7 +170,10 @@ export default function DomainsPage() {
         )
       );
       if (data.ok) {
-        setSuccess(`✅ ${domain} healed`);
+        setSuccess(data.message ? `✅ ${domain}: ${data.message}` : `✅ ${domain} healed`);
+      } else if (probe.healthy && probe.proxied === false) {
+        // Serving, but still outside Cloudflare — the failure the old flow hid.
+        setError(`${domain}: serving (HTTP ${data.postStatus ?? "?"}) but still NOT proxied`);
       } else {
         setError(`${domain}: still broken after heal (HTTP ${data.postStatus ?? "?"})`);
       }
@@ -324,7 +346,15 @@ export default function DomainsPage() {
                         SSL broken
                       </span>
                     )}
-                    {domain.health === "broken" && (
+                    {domain.health !== "broken" && domain.proxied === false && (
+                      <span
+                        className="text-xs px-2 py-0.5 rounded-full bg-amber-900 text-amber-300"
+                        title="Serving fine, but gray-cloud: Cloudflare is not in front of it, so no WAF, no Turnstile, and the origin is exposed. Heal to flip it back to orange."
+                      >
+                        Not proxied
+                      </span>
+                    )}
+                    {(domain.health === "broken" || domain.proxied === false) && (
                       <button
                         onClick={() => handleHeal(domain.name)}
                         disabled={domain.healing}

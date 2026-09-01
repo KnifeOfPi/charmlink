@@ -93,17 +93,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "domain must be a bare hostname" }, { status: 400 });
   }
 
-  // Pre-probe — if already healthy, return early (mirrors cf-heal CLI behavior)
+  // Pre-probe for reporting only. This used to return early on a healthy domain,
+  // which made the Heal button incapable of fixing the one failure it couldn't
+  // see: a gray-cloud domain serves a flawless 200 from Vercel, so "healthy"
+  // short-circuited the repair and reported success while the domain sat outside
+  // Cloudflare. provisionZone is idempotent and, for a healthy domain, does
+  // nothing but correct the proxy flag — so it is always safe to let it run.
   const pre = await probeHealth(domain);
-  if (pre.healthy) {
-    return NextResponse.json({
-      domain,
-      noop: true,
-      ok: true,
-      preStatus: pre.status,
-      message: `already healthy (HTTP ${pre.status})`,
-    });
-  }
 
   // Make sure team id is set for /v4/certs (silent root cause of stuck domains)
   await ensureVercelTeamId();
@@ -123,10 +119,20 @@ export async function POST(request: NextRequest) {
   // Re-probe after heal
   const post = await probeHealth(domain);
 
+  const proxyStep = provisionResult.steps.find((s) => s.name === "proxyStateRepair");
+  const nothingToDo =
+    pre.healthy && post.healthy && proxyStep?.detail === "already orange-cloud";
+
   return NextResponse.json({
     domain,
-    noop: false,
-    ok: provisionResult.ok && post.healthy,
+    noop: nothingToDo,
+    message: nothingToDo
+      ? `already healthy and proxied (HTTP ${post.status})`
+      : proxyStep?.detail?.startsWith("flipped gray→orange")
+        ? `was gray-cloud — flipped to orange and verified (HTTP ${post.status})`
+        : undefined,
+    // A serving domain is not enough: if the proxy repair failed, this is not ok.
+    ok: provisionResult.ok && post.healthy && proxyStep?.ok !== false,
     preStatus: pre.status,
     postStatus: post.status,
     healthy: post.healthy,

@@ -266,6 +266,114 @@ export async function setRecordProxied(
   return { updated: true, recordId: cname.id };
 }
 
+/**
+ * Read the orange/gray state of the record we manage for a domain.
+ *
+ * `proxied: false` on a domain that still answers 200 is the failure mode this
+ * exists to surface: Vercel serves it directly, with a valid cert, indistinguishable
+ * from a correctly proxied domain in every HTTP response — while sitting entirely
+ * outside Cloudflare. No WAF rules, no Turnstile, no origin hiding. Nothing about
+ * the response says so, which is exactly why it can go unnoticed for months.
+ */
+export async function getRecordProxyState(
+  zoneId: string,
+  domain: string
+): Promise<{ found: boolean; proxied: boolean; recordId?: string; type?: string }> {
+  const listRes = await cfFetchSafe<CFDnsRecord[]>(
+    "GET",
+    `/zones/${zoneId}/dns_records?name=${encodeURIComponent(domain)}&per_page=100`
+  );
+  if (!listRes.ok || !listRes.data) return { found: false, proxied: false };
+
+  // Prefer our canonical CNAME; fall back to any A/AAAA/CNAME on the name, since
+  // a hand-added A record is one of the ways a domain ends up unproxied at all.
+  const record =
+    listRes.data.find((r) => r.type === "CNAME" && r.content === VERCEL_CNAME_TARGET) ??
+    listRes.data.find((r) => ["A", "AAAA", "CNAME"].includes(r.type));
+
+  if (!record) return { found: false, proxied: false };
+  return {
+    found: true,
+    proxied: record.proxied === true,
+    recordId: record.id,
+    type: record.type,
+  };
+}
+
+/**
+ * Put a healthy-but-unproxied domain back behind Cloudflare, and undo it if that
+ * breaks the domain.
+ *
+ * Flipping a live domain is only safe here *because* it is already healthy: that
+ * tells us Vercel is serving valid TLS, so the cert dance the unhealthy path does
+ * is the one thing we don't need. What can still go wrong is zone-level — an SSL
+ * mode that has CF talk plaintext to an HTTPS-only origin, say — and that surfaces
+ * immediately as a 5xx. So verify after the flip and revert rather than leaving a
+ * domain that was working worse off than we found it.
+ */
+async function repairProxyState(
+  zoneId: string,
+  domain: string,
+  log: (msg: string) => void
+): Promise<ProvisionStep> {
+  const state = await getRecordProxyState(zoneId, domain);
+
+  if (!state.found) {
+    return {
+      name: "proxyStateRepair",
+      ok: false,
+      detail: "no A/AAAA/CNAME record found for this name",
+    };
+  }
+  if (state.proxied) {
+    return { name: "proxyStateRepair", ok: true, detail: "already orange-cloud" };
+  }
+
+  log("Domain is healthy but GRAY-CLOUD — flipping to orange...");
+  const flip = await setRecordProxied(zoneId, domain, true);
+  if (flip.error) {
+    // A record that isn't our canonical CNAME can't be patched — recreate it.
+    if (flip.error === "CNAME record not found") {
+      log(`No canonical CNAME (found ${state.type}) — recreating as proxied...`);
+      try {
+        await ensureProxiedDnsRecord(zoneId, domain, true);
+      } catch (err) {
+        return {
+          name: "proxyStateRepair",
+          ok: false,
+          detail: `recreate as proxied failed: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+    } else {
+      return { name: "proxyStateRepair", ok: false, detail: `flip failed: ${flip.error}` };
+    }
+  }
+
+  // Verify the flip didn't break a domain that was working a moment ago.
+  for (let i = 0; i < 5; i++) {
+    await new Promise<void>((r) => setTimeout(r, 5000));
+    if (await checkDomainHealthy(domain)) {
+      log("Orange-cloud flip verified healthy.");
+      return {
+        name: "proxyStateRepair",
+        ok: true,
+        detail: "flipped gray→orange, verified healthy",
+      };
+    }
+    log(`Post-flip health check ${i + 1}/5 not healthy yet...`);
+  }
+
+  log("Domain unhealthy after orange flip — REVERTING to gray-cloud.");
+  const revert = await setRecordProxied(zoneId, domain, false);
+  return {
+    name: "proxyStateRepair",
+    ok: false,
+    detail: revert.error
+      ? `flip broke the domain AND revert failed (${revert.error}) — needs manual attention`
+      : "flip broke the domain; reverted to gray-cloud (zone SSL mode is the usual cause)",
+  };
+}
+
 /** Remove our CNAME record for a domain. Leaves zone settings and WAF intact. */
 export async function removeProxiedDnsRecord(
   zoneId: string,
@@ -674,6 +782,14 @@ export async function provisionZone(domain: string): Promise<{
       ok: true,
       detail: "Domain already healthy, skipping gray flip",
     });
+
+    // Healthy is NOT the same as provisioned. A gray-cloud record serves a
+    // perfect 200 straight from Vercel, so this check passing told us nothing
+    // about whether Cloudflare is in front of it — and because the orange flip
+    // used to live only in the else-branch below, every healing path (cf-heal,
+    // the admin Heal button, auto-heal on add) skipped such a domain and
+    // reported success. Six domains sat unproxied for two months that way.
+    steps.push(await repairProxyState(zone.id, domain, log));
   } else {
     steps.push({
       name: "idempotencyCheck",

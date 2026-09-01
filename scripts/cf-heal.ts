@@ -74,12 +74,17 @@ async function healDomain(
 ): Promise<{ healed: boolean; wasHealthy: boolean; error?: string }> {
   const check = await isHealthy(domain);
 
+  // A healthy domain still goes through provisionZone. It used to return here,
+  // which meant a domain that was serving 200 while sitting GRAY-CLOUD (outside
+  // Cloudflare entirely — no WAF, no Turnstile, origin exposed) could never be
+  // detected or repaired by this script: "healthy" and "proxied" are different
+  // questions and only one of them was being asked. provisionZone is idempotent
+  // and, for a healthy domain, now does nothing but correct the proxy flag.
   if (check.healthy) {
-    console.log(`  [cf-heal] ${domain}: healthy (HTTP ${check.status}), no-op`);
-    return { healed: true, wasHealthy: true };
+    console.log(`  [cf-heal] ${domain}: serving OK (HTTP ${check.status}) — checking proxy state...`);
+  } else {
+    console.log(`  [cf-heal] ${domain}: unhealthy (HTTP ${check.status ?? "err"}), healing...`);
   }
-
-  console.log(`  [cf-heal] ${domain}: unhealthy (HTTP ${check.status ?? "err"}), healing...`);
 
   try {
     const result = await provisionZone(domain);
@@ -90,17 +95,34 @@ async function healDomain(
     }
 
     const failedSteps = result.steps.filter((s) => !s.ok);
+    const proxyStep = result.steps.find((s) => s.name === "proxyStateRepair");
+
     if (result.ok) {
+      // Distinguish "nothing needed doing" from "was silently unproxied and is
+      // now behind Cloudflare again" — the whole point of not returning early.
+      if (check.healthy && proxyStep?.detail === "already orange-cloud") {
+        console.log(`  [cf-heal] ${domain}: ✅ healthy and proxied, no-op`);
+        return { healed: true, wasHealthy: true };
+      }
+      if (proxyStep?.detail?.startsWith("flipped gray→orange")) {
+        console.log(`  [cf-heal] ${domain}: ✅ was GRAY-CLOUD — flipped to orange and verified`);
+        return { healed: true, wasHealthy: false };
+      }
       console.log(`  [cf-heal] ${domain}: ✅ healed`);
       return { healed: true, wasHealthy: false };
     } else {
       const detail = failedSteps.map((s) => `${s.name}: ${s.detail ?? "failed"}`).join("; ");
       console.log(`  [cf-heal] ${domain}: ⚠️  partial heal — ${detail}`);
-      // Check health after attempt
+      // Check health after attempt. A serving domain is NOT enough on its own:
+      // an unproxied one serves perfectly, so a failed proxy repair must still
+      // count as a failure rather than being masked by a 200.
       const recheck = await isHealthy(domain);
-      if (recheck.healthy) {
+      if (recheck.healthy && proxyStep?.ok !== false) {
         console.log(`  [cf-heal] ${domain}: ✅ domain is now healthy (HTTP ${recheck.status})`);
         return { healed: true, wasHealthy: false };
+      }
+      if (recheck.healthy && proxyStep?.ok === false) {
+        console.log(`  [cf-heal] ${domain}: ❌ serving (HTTP ${recheck.status}) but NOT proxied — ${proxyStep.detail}`);
       }
       return { healed: false, wasHealthy: false, error: detail };
     }

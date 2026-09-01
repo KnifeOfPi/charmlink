@@ -31,6 +31,26 @@ async function probeHealth(domain: string): Promise<{ health: "healthy" | "broke
   }
 }
 
+/**
+ * Is Cloudflare actually in front of this domain?
+ *
+ * Deliberately separate from `health`: a gray-cloud domain serves a flawless 200
+ * straight from Vercel, so every health probe we have calls it healthy while it
+ * sits outside the WAF, Turnstile and origin hiding entirely. Reporting only
+ * `health` is what let six domains run unproxied for two months under an all-green
+ * dashboard. null = we couldn't tell (no CF token, or the zone lookup failed).
+ */
+function deriveProxied(
+  cloudflare: { records: Array<{ type: string; proxied: boolean }> } | null
+): boolean | null {
+  if (!cloudflare || cloudflare.records.length === 0) return null;
+  const routable = cloudflare.records.filter((r) =>
+    ["A", "AAAA", "CNAME"].includes(r.type)
+  );
+  if (routable.length === 0) return null;
+  return routable.some((r) => r.proxied);
+}
+
 export async function GET(request: NextRequest) {
   if (!checkAuth(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -46,7 +66,12 @@ export async function GET(request: NextRequest) {
         cloudflareStatus = await checkDnsStatus(domain);
       }
       const probe = await probeHealth(domain);
-      return NextResponse.json({ vercel: vercelStatus, cloudflare: cloudflareStatus, ...probe });
+      return NextResponse.json({
+        vercel: vercelStatus,
+        cloudflare: cloudflareStatus,
+        proxied: deriveProxied(cloudflareStatus),
+        ...probe,
+      });
     } else {
       const domains = await listDomains();
       const cfEnabled = !!process.env.CLOUDFLARE_API_TOKEN;
@@ -65,7 +90,7 @@ export async function GET(request: NextRequest) {
               cloudflare = null;
             }
           }
-          return { ...d, ...probe, cloudflare };
+          return { ...d, ...probe, cloudflare, proxied: deriveProxied(cloudflare) };
         })
       );
       return NextResponse.json(enriched);
