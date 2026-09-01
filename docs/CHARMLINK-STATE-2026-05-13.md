@@ -2,10 +2,11 @@
 
 This is the "pick it up cold weeks later" doc. Reads top-to-bottom and assumes
 no prior context. For deep history per phase, see `memory/` daily logs
-referenced inline. **Last updated:** 2026-08-26 (Phase 8 — the conversion-funnel
-incident: the honeypot was banning real mobile visitors, not bots, for ~3.5
-months; three root causes found and fixed, verified live by an accidental
-natural experiment. See §2 Phase 8 row and §7.9–7.10 for the full story).
+referenced inline. **Last updated:** 2026-09-01 (Phase 11 — auto-redirect
+sites: a creator row can now skip the landing page entirely and redirect
+straight to one link, plus a per-creator cloak kill switch and the
+escape-vs-stay split test readout at `/admin/experiment`. See §2 Phase 11 row
+and the auto-redirect SOP at `docs/CharmLink-AutoRedirect-SOP.pdf`).
 
 ---
 
@@ -35,7 +36,7 @@ in-app WebView.
 
 ## 2. Current Production Status
 
-Phases 1–10 are **shipped + live**. Last sweep: 2026-08-30, verified against
+Phases 1–11 are **shipped + live**. Last sweep: 2026-09-01, verified against
 production DB queries and live Vercel deployment/runtime-log checks (not just
 "the commit merged") — see §7.9 for how that verification worked.
 Branch `main` clean, no pending PRs.
@@ -65,6 +66,7 @@ they are unusually detailed.
 
 | 9 | **2026-08-27/28** The person/site split and the photo experiment. `charmlink_models` makes the **person** the unit: creator rows became her individual *sites*, with identity and the photo pool owned by the model and overlaid onto each site (so detaching restores the site rather than blanking it). Avatar carousel added — up to 10 candidate photos, one drawn per render, its id stamped on that session's events so a conversion attributes back to the photo on screen. Analytics rewritten to match: `getAnalyticsBatch` groups every query by `creator_slug` instead of running `getAnalytics` per creator (the per-creator fan-out had grown to ~490 concurrent queries against a `max=3` pool and was 500'ing the whole dashboard), then `rollupByModel` folds sites into one row per person. Also: clicks-over-time chart, Threads in-app detection, the `escape_fallback` beacon, admin dark mode + searchable roster. | `365ae8c`, `940e174`, `49fa104`, `012f07f`, `0a110b1`, `4fa883e`, `69db21b`, `6b1f0ed`, `b9a87a2` |
 | 10 | **2026-08-29/30** Attribution. Found that the in-app-browser escape had been recording **one visitor as two people** since 2026-05-11 — inflating pageviews, understating every CTR, making in-app traffic look like it never converted, and crediting the wrong photo in the A/B test (§7.11). Also found Thompson sampling had never actually run: the sampler was reading its posterior with a creator id where a model id was required, so the carousel was a plain even split from launch (§7.12). Fixed both, reset photo stats, and held every dashboard window at a `STATS_EPOCH` boundary so no figure reaches back into the inflated period. Added per-domain analytics (domain tabs on the creator card) — the rolled-up number had been hiding a 10x spread between one person's domains. Separately, the long-open "Instagram open-an-app dialog" theory was tested on-device and disproved (§10). | `6b1d8b9`, `fe944f7`, `2a81a52`, `e44b72d` (+ `b305ff6`/`e60a717`, the disproved gesture experiment) |
+| 11 | **2026-08-31/09-01** Escape-vs-stay split test (`lib/escape-experiment.ts`, scoped to one creator from `ESCAPE_EXPERIMENT_START`) plus its `/admin/experiment` readout. Then **auto-redirect sites**: `charmlink_creators.autoredirect_link_id` (nullable FK → `charmlink_links.id`, `ON DELETE SET NULL`) turns a creator row into a site with no landing page — a visitor is sent straight to that link via the same escape cascade, recorded as a new `autoredirect` event type. Reuses the creator row (not a new table) so redirect domains inherit Cloudflare/Vercel provisioning, model grouping, and — critically — the decoy cloak, so a crawler still gets the wholesome blog. Added a per-creator `cloak_enabled` kill switch (Profile tab) to exempt one creator from cloaking without affecting anyone else. Also fixed a bug where a newly created domain could register but never resolve. Full runbook: `docs/CharmLink-AutoRedirect-SOP.pdf`. | `275bd7f`, `5ed54d3`, `5c76576`, `728630b`, `adc7097`, `a946c3d`, `6ff3c5b`, `582a5ce` |
 
 See `memory/archive-2026-05-10.md` for Phase 1–3 ship-day notes and
 `memory/2026-05-11.md` for everything Phase 4 + 5 day-of.
@@ -660,7 +662,7 @@ compare one arm on one day.
 
 ---
 
-## 8. Recent Commit Sequence (2026-05-11 → 2026-08-30)
+## 8. Recent Commit Sequence (2026-05-11 → 2026-09-01)
 
 In reverse chronological order. All on `main`. Two blocks contain a deliberate
 revert kept in history rather than squashed, so the round-trip stays auditable:
@@ -668,6 +670,19 @@ revert kept in history rather than squashed, so the round-trip stays auditable:
 experiment, §10 — built, deployed, tested on-device, disproved, reverted).
 
 ```
+582a5ce docs(charmlink): auto-redirect SOP for handoff to a non-engineer         ← Phase 11
+6ff3c5b fix(charmlink-admin): a new domain could be created but never found      ← Phase 11
+a946c3d feat(charmlink-admin): expose the bot-cloaking kill switch               ← Phase 11
+adc7097 chore(charmlink): apply the cloak_enabled migration, four months late    ← Phase 11
+728630b harden(charmlink): withhold the redirect target from anything flagged as a bot  ← Phase 11
+5c76576 feat(charmlink): auto-redirect sites — no landing page, straight to the target  ← Phase 11
+2603ec8 fix(charmlink): gate the Android fallback cascade on page visibility     ← Phase 11
+34e6ffb fix(charmlink-admin): show the visitor count CTR is actually computed from  ← Phase 11
+d0a4cc1 fix(charmlink): photo stats and the sampler's posterior also counted taps  ← Phase 11
+a476824 fix(charmlink-analytics): CTR counts visitors, not taps                  ← Phase 11
+e91fece fix(charmlink): start the split test at 17:00, after the arms actually diverged  ← Phase 11
+5ed54d3 feat(charmlink-admin): split test readout at /admin/experiment          ← Phase 11
+275bd7f feat(charmlink): split test — is escaping the in-app browser worth it?  ← Phase 11
 e44b72d feat(analytics): dashboard shows only post-attribution-fix data (STATS_EPOCH) ← Phase 10, §10
 2a81a52 fix: make the photo sampler actually sample (model_id), reset photo stats     ← Phase 10, §7.12
 fe944f7 fix: carry session + avatar across the in-app-browser escape (cl_sid/cl_av)   ← Phase 10, §7.11

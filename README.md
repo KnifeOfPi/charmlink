@@ -257,6 +257,50 @@ removing `clampToEpoch` restores the full view. Photo stats keep a *separate*
 boundary on purpose: pre-fix photo attribution is unrecoverable rather than
 merely inflated, so it must stay excluded even if the display window is widened.
 
+## v6 Features — Auto-Redirect Links (2026-09-01)
+
+### A site with no landing page
+Setting `charmlink_creators.autoredirect_link_id` turns a normal creator row
+into an **auto-redirect site**: a visitor who opens the domain is sent
+straight to that one link, running the same in-app-browser escape cascade as
+`CreatorPage` but with no page to read and nothing to tap
+(`app/[creator]/AutoRedirect.tsx`, wired in `app/[creator]/page.tsx`).
+`ON DELETE SET NULL` means deleting the target link degrades the site back to
+a normal landing page rather than orphaning it.
+
+Reusing a creator row — rather than a new table — means an auto-redirect
+domain inherits, for free, the Cloudflare/Vercel provisioning flow, the model
+grouping that rolls it up under the right person in analytics, its own
+per-site OnlyFans tracking link, and critically **the decoy cloaking**: a
+crawler hitting the domain still gets the wholesome blog, since
+`extractDecoyCandidateSlug` already covers custom-domain roots. Only a real
+visitor is ever redirected.
+
+Because there's no page to escape *from* to a page worth staying *on*, this
+path deliberately differs from `CreatorPage`'s cascade: no `cl_sid`/`cl_av`
+session handoff (the destination is OnlyFans, not another render of our own
+page — nothing to reattach to) and no banner/"stay" arm.
+
+**⚠️ Only ever put an auto-redirect on a throwaway domain, never on one that's
+already earning** — see `docs/CharmLink-AutoRedirect-SOP.pdf` for the full
+runbook (creating one, verifying it, turning it off, troubleshooting).
+
+### Per-creator cloak kill switch
+`cloak_enabled` (default `true`) is a per-creator flag, editable from the
+Profile tab of the creator editor: when true, scraper/link-preview traffic to
+that creator's domain gets the fingerprint-free decoy; flipped to false, the
+creator falls through to normal rendering with sparse OG metadata. Lets one
+creator be exempted from cloaking (e.g. if Meta clamps down on her
+specifically) without blast-radiusing everyone else. Fails open to normal
+rendering if the lookup fails.
+
+### Escape vs. stay split test
+A live experiment (`lib/escape-experiment.ts`), scoped to one creator
+(`ESCAPE_EXPERIMENT_SLUG`) from `ESCAPE_EXPERIMENT_START`, asks whether the
+in-app-browser escape is worth it at all against just staying on the page.
+Readout lives at `/admin/experiment`: arm assignment, daily breakdown, and the
+`escape_fallback` failure rate per arm.
+
 ## Tech Stack
 
 - **Framework**: Next.js 16 (App Router)
@@ -276,6 +320,7 @@ charmlink/
 │   ├── [creator]/               # Public creator pages
 │   │   ├── page.tsx             # Server component — fetches from DB, mints link token, passes to client
 │   │   ├── CreatorPage.tsx      # Client component — visual effects, IG escape, click/beacon handlers
+│   │   ├── AutoRedirect.tsx     # Client component — no landing page, straight to autoredirect_link_id's target
 │   │   ├── AgeGateScreen.tsx    # 18+ confirmation shell, reused by /r/[linkId]
 │   │   └── AgeConfirmButton.tsx # Posts /api/age-confirm, then redirects or reloads
 │   ├── r/[linkId]/page.tsx      # Per-link interstitial — age-gates sensitive links, then redirects
@@ -292,6 +337,9 @@ charmlink/
 │   │   ├── analytics/           # Analytics dashboard
 │   │   │   ├── page.tsx         # Analytics page wrapper — owns `period` state
 │   │   │   └── AnalyticsDashboard.tsx  # Charts + stats (controlled by page.tsx via onPeriodChange)
+│   │   ├── experiment/          # Escape-vs-stay split test readout
+│   │   │   ├── page.tsx         # Fetches /api/analytics/experiment
+│   │   │   └── ExperimentDashboard.tsx  # Arm assignment, daily breakdown, escape_fallback rate
 │   │   └── domains/             # Domain management
 │   │       └── page.tsx         # Add/remove domains, health badges, Heal button
 │   ├── api/
@@ -312,6 +360,8 @@ charmlink/
 │   │   ├── honeypot/route.ts    # Bot trap — bans only requests that look automated
 │   │   ├── pageview/route.ts    # POST pageview tracking (is_bot resolved server-side)
 │   │   ├── track/route.ts       # POST click tracking (is_bot resolved server-side)
+│   │   ├── autoredirect/route.ts     # POST: a visitor arriving at an auto-redirect site
+│   │   ├── escape-fallback/route.ts  # POST: the in-app-browser escape didn't take
 │   │   ├── resolve-domain/route.ts       # Internal: custom domain → creator slug (middleware)
 │   │   └── resolve-creator-meta/route.ts # Internal: creator existence + cloak_enabled (middleware)
 │   ├── globals.css
@@ -331,6 +381,7 @@ charmlink/
 │   ├── link-token.ts             # HMAC link token mint/verify — NOT bound to client IP
 │   ├── handoff.ts                # Carries cl_sid + cl_av across the in-app-browser escape
 │   ├── stats-epoch.ts            # STATS_EPOCH boundary + the analytics window clamp
+│   ├── escape-experiment.ts      # Escape-vs-stay split test: arm assignment + constants
 │   ├── avatar-rotation.ts        # Thompson sampling over each photo's Beta posterior
 │   ├── analytics-rollup.ts       # Folds per-site summaries into one row per model
 │   ├── turnstile.ts              # Server-side Turnstile verification
@@ -380,6 +431,8 @@ Three tables, all prefixed with `charmlink_`:
 | `theme_accent` | VARCHAR(20) | Accent/button color hex |
 | `theme_text` | VARCHAR(20) | Text color hex |
 | `is_active` | BOOLEAN | Whether the page is live |
+| `cloak_enabled` | BOOLEAN | Whether scrapers get the fingerprint-free decoy (default `true`); flip off to exempt this creator |
+| `autoredirect_link_id` | UUID | FK → `charmlink_links.id`, nullable, `ON DELETE SET NULL`. When set, this site has no landing page and redirects straight to that link (see v6 above) |
 | `show_location` | BOOLEAN | Show visitor location via IP geolocation |
 | `location_type` | VARCHAR(20) | `ip_auto` or `manual` |
 | `sensitive_default` | BOOLEAN | Default sensitive toggle for all links |
@@ -439,7 +492,7 @@ Three tables, all prefixed with `charmlink_`:
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | UUID | Primary key |
-| `type` | VARCHAR(20) | `pageview`, `click`, or `escape_fallback` (an in-app escape that didn't take) |
+| `type` | VARCHAR(20) | `pageview`, `click`, `escape_fallback` (an in-app escape that didn't take), or `autoredirect` (a visitor arriving at an auto-redirect site) |
 | `creator_id` | UUID | FK → `charmlink_creators.id` (SET NULL on delete) |
 | `creator_slug` | VARCHAR(100) | Creator slug (denormalized for query speed) |
 | `link_label` | VARCHAR(255) | Clicked link label (null for pageviews) |
@@ -544,7 +597,7 @@ Access at `/admin` with your `CHARMLINK_ADMIN_KEY`.
 - Delete creators (cascades to links and nullifies events)
 
 ### Creator Detail (`/admin/creators/[id]`) — 5-Tab Editor
-- **Profile tab**: Name, tagline, slug, avatar URL, custom domain + one-click Vercel setup, active/sensitive toggles
+- **Profile tab**: Name, tagline, slug, avatar URL, custom domain + one-click Vercel setup, active/sensitive toggles, cloak kill switch
 - **Theme tab**: Background type (solid/gradient), gradient type (linear/radial) + direction, 3 color pickers with live preview, accent + text colors
 - **Effects tab**: Floating icons (toggle + emoji + count + speed), star particles (toggle + count + color), animation speed
 - **Avatar tab**: Border style (solid/gradient/none), 3 gradient color pickers, verified badge toggle
@@ -570,6 +623,12 @@ Access at `/admin` with your `CHARMLINK_ADMIN_KEY`.
 - **🩹 Heal button** — appears on broken rows; re-runs the `cf-heal` flow (unproxy → wait for Vercel cert → re-proxy) then re-probes server-side
 - **Copy / Open buttons** — copy a domain to clipboard or open the live page in a new tab
 - View verification status (Verified / Pending) and DNS instructions
+
+### Experiment (`/admin/experiment`)
+- Readout for the escape-vs-stay split test (`lib/escape-experiment.ts`) — is
+  escaping the in-app browser worth it, versus just staying on the page?
+- Arm assignment, daily breakdown, and the `escape_fallback` failure rate per
+  arm, scoped to one creator and one start date (see v6 above)
 
 ## Custom Domains
 
@@ -670,6 +729,8 @@ Tested architecture supports 100+ creators with custom domains from a single dep
 | `POST` | `/api/age-confirm` | Sets the `cl_age` age-verification cookie |
 | `POST` | `/api/track` | Record a click event |
 | `POST` | `/api/pageview` | Record a page view event |
+| `POST` | `/api/autoredirect` | Record a visitor arriving at an auto-redirect site (no page, no click to pair it with) |
+| `POST` | `/api/escape-fallback` | Record an in-app-browser escape that didn't take within the verdict window |
 | `GET` | `/api/resolve-domain?domain=x` | Internal: resolve custom domain to creator slug (used by middleware) |
 | `GET` | `/api/resolve-creator-meta?slug=x\|domain=x` | Internal: creator existence + `cloak_enabled` lookup (used by middleware's decoy bypass) |
 | `GET` | `/api/honeypot` | Honeypot for bot detection (logs visits) |
@@ -680,6 +741,7 @@ Tested architecture supports 100+ creators with custom domains from a single dep
 |--------|------|--------------|-------------|
 | `GET` | `/api/analytics/overview` | `?period=today\|7d\|30d\|all` | Global analytics summary |
 | `GET` | `/api/analytics/[creator]` | `?period=today\|7d\|30d\|all` | Per-creator analytics |
+| `GET` | `/api/analytics/experiment` | — | Escape-vs-stay split test readout: arm assignment, daily breakdown, `escape_fallback` rate |
 
 ### Admin Routes (requires `Authorization: Bearer <CHARMLINK_ADMIN_KEY>`)
 
