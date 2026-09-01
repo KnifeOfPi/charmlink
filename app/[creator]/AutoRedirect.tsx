@@ -134,11 +134,25 @@ export function AutoRedirect({
         }
       }
 
-      // Android fallbacks, each gated on the page still being visible so a
-      // visitor whose handoff already succeeded is not yanked between browsers.
+      // Android fallbacks, fired UNCONDITIONALLY — deliberately not gated on
+      // document.visibilityState.
+      //
+      // This path carried the same visibility gate CreatorPage did, for the same
+      // stated reason (don't yank a visitor whose handoff already succeeded). On
+      // CreatorPage that gate was measured in production and took the Android
+      // escape failure rate from 2.8% (8/282) to 73% (11/15): on Android a scheme
+      // handoff raises the "open with" chooser, which backgrounds the page, so
+      // visibilityState reads `hidden` and every gated step bails out — leaving
+      // the visitor who dismisses that chooser back into the WebView, exactly the
+      // one the cascade exists to rescue, with nothing. It was reverted there.
+      //
+      // Un-gated here too, by analogy rather than by direct measurement: these
+      // redirect sites had no traffic when this was written, so there is nothing
+      // to measure yet. The mechanism is Android's, not this component's, and
+      // leaving the two escape paths divergent — one un-gated because gating was
+      // proven harmful, one gated — would be worse than matching them.
       const scheduleFallback = (ms: number, href: string) => {
         setTimeout(() => {
-          if (document.visibilityState !== "visible") return;
           try {
             window.location.href = href;
           } catch {
