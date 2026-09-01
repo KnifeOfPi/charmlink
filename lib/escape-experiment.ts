@@ -30,8 +30,19 @@
 export const ESCAPE_EXPERIMENT_SLUG = "hannaz";
 
 /** Kill switch. Set false to end the test; every visitor reverts to `escape`,
- *  which is the pre-experiment behaviour, with no other code change needed. */
-export const ESCAPE_EXPERIMENT_ENABLED = true;
+ *  which is the pre-experiment behaviour, with no other code change needed.
+ *
+ *  OFF as of 2026-09-01. The test was restarted twice in two days, and the
+ *  second restart's cause — the visibility gate of 2603ec8 — turned out to be a
+ *  regression that broke the escape arm outright (2.8% -> 73% Android failure),
+ *  so the arm was measuring a bug rather than a treatment. With the gate
+ *  reverted, the honest position is that the escape path has been edited twice
+ *  mid-flight and needs to sit still before it is worth measuring again. At
+ *  fav-site.com's current ~150 views/day a 5-point-sensitive result needs ~18
+ *  days of untouched running, which is the real precondition for restarting.
+ *  Nothing else needs changing to resume: set this back to true and move
+ *  ESCAPE_EXPERIMENT_START to the new window. */
+export const ESCAPE_EXPERIMENT_ENABLED = false;
 
 /**
  * When the test started counting. Analysis must not reach back past this.

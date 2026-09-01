@@ -1583,29 +1583,34 @@ export function CreatorPage({
             }
             // ── Fallback cascade — Android only; iOS returned above ──────────
             //
-            // Each step fires ONLY while the page is still visible. Without the
-            // gate, a visitor whose `intent://` handoff already succeeded gets
-            // yanked out of Chrome and into Firefox 1.5s later, then Brave 1.5s
-            // after that — the exact regression 85c17dc describes ("they rip the
-            // user out of Safari and into Chrome ~1.5s after handoff"). That
-            // regression is why the chain was deleted from the iOS path rather
-            // than fixed. Gating is the better answer: it keeps the extra escape
-            // routes for the visitor who is still stuck, and costs nothing for
-            // the one who already left, because a departed page is `hidden`.
+            // These fire UNCONDITIONALLY, and that is deliberate. 2603ec8 gated
+            // each step on `document.visibilityState === "visible"`, reasoning
+            // that a visitor whose intent:// already succeeded shouldn't be
+            // yanked on to the next browser. Measured in production, that gate
+            // took the escape arm's Android failure rate from 2.8% (8/282, over
+            // 2026-08-24..28) to 73% (11/15) — a 26x regression that landed
+            // exactly on its deploy, with the stay arm clean at zero.
             //
-            // visibilityState is the right signal rather than a blur listener:
-            // it is what actually flips when the OS foregrounds another app, and
-            // it is already the mechanism the escape-failure beacon below uses,
-            // so success and failure are judged by the same test.
-            const scheduleFallback = (ms: number, href: string) => {
-              setTimeout(() => {
-                if (document.visibilityState !== "visible") return;
-                try { window.location.href = href; } catch { /* noop */ }
-              }, ms);
-            };
-            scheduleFallback(1500, "googlechromes://" + bare);
-            scheduleFallback(3000, "firefox://open-url?url=" + encodeURIComponent(full));
-            scheduleFallback(4500, "brave://open-url?url=" + encodeURIComponent(full));
+            // The likely reason: on Android, intent:// raises the "open with"
+            // chooser, which backgrounds the page. visibilityState flips to
+            // `hidden`, so every gated step bails out — and the visitor who is
+            // dismissed back into the WebView, i.e. precisely the stuck visitor
+            // the cascade exists to rescue, gets nothing. The gate cannot tell
+            // "left for Chrome" from "looking at a chooser dialog".
+            //
+            // The wart it was trying to fix (a successful visitor bounced on to
+            // Firefox 1.5s later) is real but minor, and this ran that way for
+            // months. Do not re-add the gate without an on-device test on
+            // Android showing the chooser does not suppress the cascade.
+            setTimeout(() => {
+              try { window.location.href = "googlechromes://" + bare; } catch { /* noop */ }
+            }, 1500);
+            setTimeout(() => {
+              try { window.location.href = "firefox://open-url?url=" + encodeURIComponent(full); } catch { /* noop */ }
+            }, 3000);
+            setTimeout(() => {
+              try { window.location.href = "brave://open-url?url=" + encodeURIComponent(full); } catch { /* noop */ }
+            }, 4500);
           };
           if (typeof requestAnimationFrame === "function") {
             requestAnimationFrame(() => setTimeout(fire, 0));
