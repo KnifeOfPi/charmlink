@@ -138,10 +138,13 @@ async function healDomain(
 async function main() {
   const args = process.argv.slice(2);
   const healAll = args.includes("--all");
-  const singleDomain = args.find((a) => !a.startsWith("--"));
+  // filter, not find: the CLI accepts several domains and used to silently drop
+  // every one after the first, so a batch invocation reported a clean run having
+  // never touched most of what was passed to it.
+  const namedDomains = args.filter((a) => !a.startsWith("--"));
 
-  if (!healAll && !singleDomain) {
-    console.error("Usage: npm run cf-heal -- <domain>  OR  npm run cf-heal -- --all");
+  if (!healAll && namedDomains.length === 0) {
+    console.error("Usage: npm run cf-heal -- <domain> [domain...]  OR  npm run cf-heal -- --all");
     process.exit(1);
   }
 
@@ -199,8 +202,8 @@ async function main() {
 
   let domains: string[];
 
-  if (singleDomain && !healAll) {
-    domains = [singleDomain];
+  if (namedDomains.length > 0 && !healAll) {
+    domains = namedDomains;
   } else {
     // --all: fetch every domain from charmlink_creator_domains
     const dbUrl = process.env.DATABASE_URL;
@@ -246,9 +249,13 @@ async function main() {
   }
 
   console.log("\n── Summary ──────────────────────────────────────────");
-  console.log(`   ✅ already healthy (no-op): ${noopCount}`);
-  console.log(`   ✅ healed:                  ${healedCount}`);
-  console.log(`   ❌ failed:                  ${failCount}`);
+  console.log(`   checked: ${domains.length} domain(s): ${domains.join(", ")}`);
+  // Wording is deliberate: the old summary said "already healthy", which was
+  // true of a gray-cloud domain serving 200 from Vercel and read as all-clear
+  // while it sat outside Cloudflare. Serving is not the claim being made here.
+  console.log(`   ✅ healthy AND proxied (no-op): ${noopCount}`);
+  console.log(`   ✅ repaired:                    ${healedCount}`);
+  console.log(`   ❌ failed:                      ${failCount}`);
 
   process.exit(failCount > 0 ? 1 : 0);
 }
