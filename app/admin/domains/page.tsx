@@ -23,6 +23,10 @@ interface VercelDomain {
    *  purpose: an unproxied domain serves a perfect 200 and reads as healthy while
    *  sitting outside the WAF entirely. null = couldn't determine. */
   proxied?: boolean | null;
+  /** Is the domain in a CF zone we control at all? false = on foreign
+   *  nameservers, never onboarded — worse than gray and NOT fixable by Heal
+   *  (needs a CF zone + registrar NS repoint). null = couldn't determine. */
+  onCloudflare?: boolean | null;
   healing?: boolean;
   healMessage?: string;
 }
@@ -346,7 +350,15 @@ export default function DomainsPage() {
                         SSL broken
                       </span>
                     )}
-                    {domain.health !== "broken" && domain.proxied === false && (
+                    {domain.onCloudflare === false && (
+                      <span
+                        className="text-xs px-2 py-0.5 rounded-full bg-red-900 text-red-300"
+                        title="This domain is on foreign nameservers and was never onboarded to Cloudflare — origin exposed, no WAF/DDoS. Heal CANNOT fix this: it needs a CF zone created and the registrar's nameservers repointed. Populate the CF zone's proxied CNAME BEFORE switching NS, or the domain goes dark during propagation."
+                      >
+                        Not on Cloudflare
+                      </span>
+                    )}
+                    {domain.health !== "broken" && domain.onCloudflare !== false && domain.proxied === false && (
                       <span
                         className="text-xs px-2 py-0.5 rounded-full bg-amber-900 text-amber-300"
                         title="Serving fine, but gray-cloud: Cloudflare is not in front of it, so no WAF, no Turnstile, and the origin is exposed. Heal to flip it back to orange."
@@ -354,16 +366,20 @@ export default function DomainsPage() {
                         Not proxied
                       </span>
                     )}
-                    {(domain.health === "broken" || domain.proxied === false) && (
-                      <button
-                        onClick={() => handleHeal(domain.name)}
-                        disabled={domain.healing}
-                        className="bg-[#e91e8a] hover:bg-[#d01577] disabled:opacity-50 text-white font-semibold text-xs px-3 py-1 rounded-lg transition-colors"
-                        title="Re-run the cf-heal flow: unproxy → wait for Vercel cert → re-proxy"
-                      >
-                        {domain.healing ? "Healing…" : "🩹 Heal"}
-                      </button>
-                    )}
+                    {/* Heal only offers itself where it can actually help — a
+                        domain not on Cloudflare at all has no zone to flip, so
+                        showing Heal there would just fail confusingly. */}
+                    {domain.onCloudflare !== false &&
+                      (domain.health === "broken" || domain.proxied === false) && (
+                        <button
+                          onClick={() => handleHeal(domain.name)}
+                          disabled={domain.healing}
+                          className="bg-[#e91e8a] hover:bg-[#d01577] disabled:opacity-50 text-white font-semibold text-xs px-3 py-1 rounded-lg transition-colors"
+                          title="Re-run the cf-heal flow: unproxy → wait for Vercel cert → re-proxy"
+                        >
+                          {domain.healing ? "Healing…" : "🩹 Heal"}
+                        </button>
+                      )}
                     <button
                       onClick={() => checkStatus(domain.name)}
                       className="text-gray-500 hover:text-white text-xs transition-colors px-2"

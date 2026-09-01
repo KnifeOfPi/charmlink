@@ -41,7 +41,7 @@ async function probeHealth(domain: string): Promise<{ health: "healthy" | "broke
  * dashboard. null = we couldn't tell (no CF token, or the zone lookup failed).
  */
 function deriveProxied(
-  cloudflare: { records: Array<{ type: string; proxied: boolean }> } | null
+  cloudflare: { zoneFound?: boolean; records: Array<{ type: string; proxied: boolean }> } | null
 ): boolean | null {
   if (!cloudflare || cloudflare.records.length === 0) return null;
   const routable = cloudflare.records.filter((r) =>
@@ -49,6 +49,26 @@ function deriveProxied(
   );
   if (routable.length === 0) return null;
   return routable.some((r) => r.proxied);
+}
+
+/**
+ * Is this domain in a Cloudflare zone we control at all?
+ *
+ * The state one level worse than gray-cloud, and it hid the same way: a domain
+ * on foreign nameservers (never onboarded to CF) has no zone to inspect, so
+ * checkDnsStatus returns zoneFound:false with an empty record list — which
+ * deriveProxied reports as `null` ("couldn't tell"), i.e. no badge at all. Four
+ * of the fleet's highest-traffic domains sat on GoDaddy nameservers, fully
+ * origin-exposed, rendering as healthy-and-green the whole time. This surfaces
+ * that as its own explicit state. null = CF token missing, so genuinely unknown.
+ */
+function deriveOnCloudflare(
+  cloudflare: { zoneFound?: boolean } | null,
+  cfEnabled: boolean
+): boolean | null {
+  if (!cfEnabled) return null; // no token — we truly can't say
+  if (!cloudflare) return false; // lookup ran and found no zone
+  return cloudflare.zoneFound === true;
 }
 
 export async function GET(request: NextRequest) {
@@ -60,9 +80,10 @@ export async function GET(request: NextRequest) {
 
   try {
     if (domain) {
+      const cfEnabled = !!process.env.CLOUDFLARE_API_TOKEN;
       const vercelStatus = await getDomainStatus(domain);
       let cloudflareStatus = null;
-      if (process.env.CLOUDFLARE_API_TOKEN) {
+      if (cfEnabled) {
         cloudflareStatus = await checkDnsStatus(domain);
       }
       const probe = await probeHealth(domain);
@@ -70,6 +91,7 @@ export async function GET(request: NextRequest) {
         vercel: vercelStatus,
         cloudflare: cloudflareStatus,
         proxied: deriveProxied(cloudflareStatus),
+        onCloudflare: deriveOnCloudflare(cloudflareStatus, cfEnabled),
         ...probe,
       });
     } else {
@@ -90,7 +112,13 @@ export async function GET(request: NextRequest) {
               cloudflare = null;
             }
           }
-          return { ...d, ...probe, cloudflare, proxied: deriveProxied(cloudflare) };
+          return {
+            ...d,
+            ...probe,
+            cloudflare,
+            proxied: deriveProxied(cloudflare),
+            onCloudflare: deriveOnCloudflare(cloudflare, cfEnabled),
+          };
         })
       );
       return NextResponse.json(enriched);
