@@ -1130,6 +1130,15 @@ export async function getAnalytics(
   // has no candidate photos, so the analytics card simply omits the section.
   const avatarRows = await getAvatarStatsBySlug(creatorSlug, period);
 
+  // Auto-redirect arrivals. Counted separately from everything above and left
+  // out of views/clicks/CTR on purpose — see AnalyticsSummary.autoredirectVisits.
+  const arRows = await query<{ visits: string }>(
+    `SELECT COUNT(*) AS visits
+     FROM charmlink_events e
+     WHERE e.type = 'autoredirect' AND NOT e.is_bot AND e.creator_slug = $1 ${timeFilter}`,
+    params
+  );
+
   const pv = pvRows[0];
   const clk = clkRows[0];
   const totalViews = parseInt(pv?.total ?? "0");
@@ -1161,6 +1170,7 @@ export async function getAnalytics(
     premiumClicks,
     socialClicks,
     convertingSessions,
+    autoredirectVisits: parseInt(arRows[0]?.visits ?? "0"),
     ctr,
     topReferrers: refRows.map((r) => ({
       referer: r.referer || "direct",
@@ -1216,7 +1226,7 @@ export async function getAnalyticsBatch(
   const tf = cutoff ? "AND e.created_at >= $1" : "";
   const bucketUnit = timeseriesBucketUnit(period);
 
-  const [pv, clk, refs, dev, cnt, lnk, ts, av] = await Promise.all([
+  const [pv, clk, refs, dev, cnt, lnk, ts, av, ar] = await Promise.all([
     query<{ creator_slug: string; total: string; human: string; bot: string; instagram: string; unique_sessions: string }>(
       `SELECT creator_slug, COUNT(*) AS total,
               COUNT(*) FILTER (WHERE NOT is_bot) AS human,
@@ -1273,6 +1283,12 @@ export async function getAnalyticsBatch(
          ON e.avatar_id = a.id AND e.creator_slug = c.slug ${tf} ${AVATAR_EPOCH_FILTER}
        GROUP BY c.slug, a.id, a.url, a.is_pinned, a.is_active, a.sort_order, a.created_at
        ORDER BY a.sort_order ASC, a.created_at ASC`, params),
+    // Auto-redirect arrivals per slug. Its own aggregate because this event type
+    // is excluded from every other one above — see AnalyticsSummary.autoredirectVisits.
+    query<{ creator_slug: string; visits: string }>(
+      `SELECT creator_slug, COUNT(*) AS visits
+       FROM charmlink_events e
+       WHERE e.type='autoredirect' AND NOT e.is_bot ${tf} GROUP BY creator_slug`, params),
   ]);
 
   const bySlug = <T extends { creator_slug: string }>(rows: T[]) => {
@@ -1288,6 +1304,7 @@ export async function getAnalyticsBatch(
   const clkBy = new Map(clk.map((r) => [r.creator_slug, r]));
   const refBy = bySlug(refs), devBy = bySlug(dev), cntBy = bySlug(cnt);
   const lnkBy = bySlug(lnk), tsBy = bySlug(ts), avBy = bySlug(av);
+  const arBy = new Map(ar.map((r) => [r.creator_slug, r]));
 
   const creators = await getAllCreators();
   return creators.map((c): AnalyticsSummary => {
@@ -1312,6 +1329,7 @@ export async function getAnalyticsBatch(
       premiumClicks,
       socialClicks: parseInt(k?.social ?? "0"),
       convertingSessions,
+      autoredirectVisits: parseInt(arBy.get(c.slug)?.visits ?? "0"),
       // Sessions, not taps — see AnalyticsSummary.ctr.
       ctr: humanViews > 0 ? Math.round((convertingSessions / humanViews) * 10000) / 100 : 0,
       topReferrers: (refBy.get(c.slug) ?? []).map((r) => ({ referer: r.referer || "direct", count: parseInt(r.count) })),

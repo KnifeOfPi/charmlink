@@ -144,6 +144,22 @@ export interface AnalyticsSummary {
    */
   convertingSessions: number;
   /**
+   * Visitors handed straight to a link by an auto-redirect site, which has no
+   * page to view and nothing to tap.
+   *
+   * Reported on its own and deliberately absent from views, clicks and CTR:
+   * counting a redirect as a pageview drags the creator's rate toward zero,
+   * counting it as pageview+click pins it at 100%. Both are wrong, which is
+   * why the event type is excluded from every other aggregate.
+   *
+   * It has to be surfaced somewhere, though. Without it an auto-redirect
+   * domain reads as 0 views / 0 clicks / 0% no matter how much traffic it
+   * carries, and the only honest conclusion from that dashboard is that the
+   * domain is dead. On 2026-09-03 those three domains showed zero here while
+   * OnlyFans recorded 152 clicks against the same links over seven days.
+   */
+  autoredirectVisits: number;
+  /**
    * convertingSessions / humanViews. NOT premiumClicks / humanViews: that read
    * 104.8% on fav-site.com once the escape de-duplication stopped inflating the
    * denominator (125 views, 131 taps, 87 actual visitors). The doubled view

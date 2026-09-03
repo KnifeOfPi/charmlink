@@ -506,6 +506,29 @@ function CreatorCard({
         <StatCard label="IG Traffic" value={active.instagramTraffic} sub="from Instagram" />
       </div>
 
+      {/* Auto-redirect arrivals. Shown only where they exist, and never merged
+          into the four cards above: a redirect site has no pageview and no
+          click, so it reports 0/0/0% there no matter how much traffic it
+          carries. Without this row the only reading of that dashboard is that
+          the domain is dead — which is exactly how three live redirect domains
+          were misread while OnlyFans recorded 152 clicks against them. */}
+      {active.autoredirectVisits > 0 && (
+        <div className="mb-6 rounded-xl border border-[#333] bg-[#141414] px-4 py-3">
+          <div className="flex items-baseline gap-2">
+            <span className="text-2xl font-semibold text-white">
+              {active.autoredirectVisits.toLocaleString()}
+            </span>
+            <span className="text-sm text-gray-300">auto-redirect arrivals</span>
+          </div>
+          <p className="mt-1 text-xs text-gray-500">
+            Sent straight to the link — no page to view, nothing to tap, so these
+            are deliberately excluded from Page Views, Premium Clicks and CTR
+            above. Conversion for these domains is measured in OnlyFans, keyed on
+            the tracking link&apos;s full URL (campaign codes collide across accounts).
+          </p>
+        </div>
+      )}
+
       {/* Clicks over time */}
       <div className="mb-6">
         <ClickTimeseriesChart data={active.clickTimeseries} period={period} />

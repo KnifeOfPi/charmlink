@@ -126,6 +126,9 @@ export function buildSummary(
     premiumClicks,
     socialClicks,
     convertingSessions,
+    // Always 0 here: this is the legacy file-based analytics path, kept for
+    // reference only, and it predates auto-redirect sites entirely.
+    autoredirectVisits: 0,
     ctr,
     topReferrers,
     deviceBreakdown,

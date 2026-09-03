@@ -116,6 +116,10 @@ export function rollupByModel(
       premiumClicks,
       socialClicks: sum((s) => s.socialClicks),
       convertingSessions,
+      // Summed like any other count, and deliberately kept out of the ctr below:
+      // an auto-redirect site contributes redirects but no views, so folding it
+      // into either side of that ratio would distort every model it belongs to.
+      autoredirectVisits: sum((s) => s.autoredirectVisits),
       ctr: humanViews > 0 ? Math.round((convertingSessions / humanViews) * 10000) / 100 : 0,
       instagramTraffic: sum((s) => s.instagramTraffic),
       deviceBreakdown,
