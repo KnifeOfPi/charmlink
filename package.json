@@ -9,7 +9,8 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "cf-backfill": "tsx scripts/cf-backfill.ts",
-    "cf-heal": "tsx scripts/cf-heal.ts"
+    "cf-heal": "tsx scripts/cf-heal.ts",
+    "check:event-types": "tsx scripts/check-event-types.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",

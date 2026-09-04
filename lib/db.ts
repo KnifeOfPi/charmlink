@@ -922,6 +922,39 @@ export async function recordEvent(input: RecordEventInput): Promise<void> {
     );
   } catch (err) {
     console.error("[db:recordEvent] error", err);
+    // Record the drop, so a rejected write stops being indistinguishable from
+    // "no traffic". This is the failure mode that hid the autoredirect type
+    // constraint for the life of the feature and ~697 escape_fallback beacons
+    // before that — in both cases the only symptom was a metric reading zero.
+    //
+    // Best-effort and deliberately last: it must never throw, never retry, and
+    // never be awaited by the caller in a way that could fail the request the
+    // event describes. A constraint violation still reaches the database, so
+    // this lands precisely when it is most needed; a full outage takes it too,
+    // but that is loud through other channels.
+    void logEventWriteFailure(input, err);
+  }
+}
+
+/** @see recordEvent — best-effort, swallows everything including its own errors. */
+async function logEventWriteFailure(
+  input: RecordEventInput,
+  err: unknown
+): Promise<void> {
+  try {
+    const code =
+      typeof err === "object" && err !== null && "code" in err
+        ? String((err as { code?: unknown }).code)
+        : null;
+    const message = err instanceof Error ? err.message : String(err);
+    await query(
+      `INSERT INTO charmlink_event_write_failures
+         (event_type, creator_slug, error_code, error_message)
+       VALUES ($1,$2,$3,$4)`,
+      [input.type, input.creator_slug, code, message.slice(0, 2000)]
+    );
+  } catch {
+    // Nothing further to do — the console.error above is the last resort.
   }
 }
 
@@ -949,6 +982,32 @@ export const REDIRECT_EVENT_SESSION_ID = "redirect";
 
 /** SQL predicate isolating the beacon-sourced click rows (one per journey). */
 const DEDUPED_CLICKS = `e.type = 'click' AND e.session_id <> '${REDIRECT_EVENT_SESSION_ID}'`;
+
+/**
+ * Sentinel session id on the SERVER-written auto-redirect arrival row.
+ *
+ * An auto-redirect page hands the visitor to a native app roughly one frame
+ * after firing its beacon. That is not a page unload — the OS can suspend or
+ * kill the WebView before the queued beacon reaches the wire — so the client
+ * signal is lossy by construction and the loss is invisible: a beacon that
+ * never arrives is indistinguishable from a visitor who never came.
+ *
+ * The server does not have that problem. `/[creator]` is force-dynamic, so it
+ * renders on every visit and already knows the arrival happened before any
+ * JavaScript runs. It records one row here, and that row is what the arrival
+ * metric counts.
+ *
+ * The client beacon is deliberately kept alongside it: it carries the real
+ * session id (which links a visit to its escape_fallback rows) and the surface
+ * flag, and the ratio between the two series is the beacon delivery rate —
+ * previously unmeasurable, now just a query. Same shape as the redirect
+ * sentinel above; do not change the value without backfilling.
+ */
+export const AUTOREDIRECT_SSR_SESSION_ID = "ssr-autoredirect";
+
+/** SQL predicate for authoritative (server-recorded) auto-redirect arrivals. */
+const AUTOREDIRECT_ARRIVALS =
+  `e.type = 'autoredirect' AND e.session_id = '${AUTOREDIRECT_SSR_SESSION_ID}' AND NOT e.is_bot`;
 
 /**
  * Start of an analytics window.
@@ -1135,7 +1194,7 @@ export async function getAnalytics(
   const arRows = await query<{ visits: string }>(
     `SELECT COUNT(*) AS visits
      FROM charmlink_events e
-     WHERE e.type = 'autoredirect' AND NOT e.is_bot AND e.creator_slug = $1 ${timeFilter}`,
+     WHERE ${AUTOREDIRECT_ARRIVALS} AND e.creator_slug = $1 ${timeFilter}`,
     params
   );
 
@@ -1288,7 +1347,7 @@ export async function getAnalyticsBatch(
     query<{ creator_slug: string; visits: string }>(
       `SELECT creator_slug, COUNT(*) AS visits
        FROM charmlink_events e
-       WHERE e.type='autoredirect' AND NOT e.is_bot ${tf} GROUP BY creator_slug`, params),
+       WHERE ${AUTOREDIRECT_ARRIVALS} ${tf} GROUP BY creator_slug`, params),
   ]);
 
   const bySlug = <T extends { creator_slug: string }>(rows: T[]) => {

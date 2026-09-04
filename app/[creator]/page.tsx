@@ -1,8 +1,15 @@
 import { cache } from "react";
 import { notFound } from "next/navigation";
 import { headers, cookies } from "next/headers";
+import { after } from "next/server";
 import { Metadata } from "next";
-import { getCreatorBySlug, getCreatorLinks } from "../../lib/db";
+import {
+  getCreatorBySlug,
+  getCreatorLinks,
+  recordEvent,
+  AUTOREDIRECT_SSR_SESSION_ID,
+} from "../../lib/db";
+import { parseDeviceType } from "../../lib/analytics";
 import { Creator } from "../../lib/types";
 import { CreatorPage } from "./CreatorPage";
 import { AutoRedirect } from "./AutoRedirect";
@@ -143,6 +150,48 @@ export default async function CreatorPageServer({ params, searchParams }: PagePr
     if (target) {
       const headersList = await headers();
       const flaggedBot = headersList.get("x-is-bot") === "true";
+
+      // Record the arrival HERE, on the server, rather than trusting the
+      // client beacon to survive.
+      //
+      // AutoRedirect fires its beacon and then hands the visitor to a native
+      // app about one frame later. That is not a page unload: the OS can
+      // suspend or kill the WebView before the queued beacon reaches the wire,
+      // and a beacon that never arrives looks exactly like a visitor who never
+      // came. This route is force-dynamic, so it runs on every visit and knows
+      // the arrival is real before any JavaScript executes.
+      //
+      // after() so the write happens once the response is already on its way —
+      // an un-awaited promise would otherwise be killed when the serverless
+      // invocation returns, and awaiting it would delay the redirect.
+      //
+      // Prefetches are excluded: a speculative fetch is not an arrival. Bots
+      // are recorded with the flag set rather than dropped, so the row exists
+      // and the analytics predicate filters it.
+      const isPrefetch =
+        headersList.get("next-router-prefetch") === "1" ||
+        (headersList.get("sec-purpose") ?? "").includes("prefetch");
+      if (!isPrefetch) {
+        const ua = headersList.get("user-agent") ?? "";
+        after(async () => {
+          await recordEvent({
+            type: "autoredirect",
+            creator_id: dbCreator.id,
+            creator_slug: slug,
+            link_label: target.label,
+            link_url: target.id,
+            link_type: "premium",
+            session_id: AUTOREDIRECT_SSR_SESSION_ID,
+            user_agent: ua,
+            referer: headersList.get("referer") ?? "",
+            country: headersList.get("x-vercel-ip-country") ?? "unknown",
+            device: parseDeviceType(ua),
+            is_bot: flaggedBot,
+            is_instagram: /instagram|barcelona/i.test(ua),
+          });
+        });
+      }
+
       return (
         <AutoRedirect
           slug={slug}
