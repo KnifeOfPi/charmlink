@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { AnalyticsSummary } from "../../../lib/types";
 import type { ModelAnalytics } from "../../../lib/analytics-rollup";
+import { siteTraffic } from "../../../lib/analytics-rollup";
 import { STATS_EPOCH } from "../../../lib/stats-epoch";
 
 const PREMIUM_COLOR = "#e91e8a";
@@ -353,7 +354,12 @@ function SiteBreakdown({
             <thead>
               <tr className="text-gray-500 border-b border-gray-800">
                 <th className="py-1.5 pr-3 font-normal">Domain</th>
-                <th className="py-1.5 pr-3 font-normal text-right">Views</th>
+                <th
+                  className="py-1.5 pr-3 font-normal text-right"
+                  title="Page views, or arrivals for an auto-redirect domain (marked)"
+                >
+                  Views
+                </th>
                 <th className="py-1.5 pr-3 font-normal text-right" title="Taps — a visitor clicking two offers counts twice">
                   Premium
                 </th>
@@ -378,7 +384,15 @@ function SiteBreakdown({
                       <span className="text-gray-600 ml-1.5">/{s.creator}</span>
                     </td>
                     <td className="py-1.5 pr-3 tabular-nums text-right">
-                      {s.totalViews.toLocaleString()}
+                      {siteTraffic(s).count.toLocaleString()}
+                      {s.isAutoRedirect && (
+                        <span
+                          className="text-gray-600 ml-1"
+                          title="Arrivals — a redirect domain records no page view or click, so Premium and CTR read 0 here by construction"
+                        >
+                          &#8599;
+                        </span>
+                      )}
                     </td>
                     <td className="py-1.5 pr-3 tabular-nums text-right">
                       {s.premiumClicks.toLocaleString()}
@@ -425,12 +439,23 @@ function DomainTabs({
           type="button"
           onClick={() => onScope(s.creator)}
           className={chip(scope === s.creator)}
-          title={`/${s.creator} · ${s.totalViews.toLocaleString()} views`}
+          title={`/${s.creator} · ${siteTraffic(s).count.toLocaleString()} ${siteTraffic(s).kind}`}
         >
           {domainLabel(s)}
           <span className={scope === s.creator ? "text-pink-200 ml-1.5" : "text-gray-600 ml-1.5"}>
-            {formatCompact(s.totalViews)}
+            {formatCompact(siteTraffic(s).count)}
           </span>
+          {/* A redirect domain's count is arrivals, not views. Marked so the
+              row is not read as one scale — the alternative, showing its
+              totalViews, is a hard 0 on a domain doing real traffic. */}
+          {s.isAutoRedirect && (
+            <span
+              className={scope === s.creator ? "text-pink-200 ml-1" : "text-gray-600 ml-1"}
+              title="Auto-redirect domain — this count is arrivals, not page views"
+            >
+              &#8599;
+            </span>
+          )}
         </button>
       ))}
     </div>

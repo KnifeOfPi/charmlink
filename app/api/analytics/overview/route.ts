@@ -45,6 +45,10 @@ export async function GET(request: NextRequest) {
           modelId: c.model_id,
           modelName: (c.model_id && modelName.get(c.model_id)) || c.name,
           customDomain: c.custom_domain,
+          // Drives which number the UI shows for this domain. A redirect site
+          // reports 0 views and 0 clicks by construction, so without this flag
+          // the domain list renders it as dead traffic.
+          isAutoRedirect: c.autoredirect_link_id !== null,
         },
       ])
     );

@@ -4,7 +4,30 @@ import type { AnalyticsSummary } from "./types";
 export interface ModelAnalytics extends AnalyticsSummary {
   modelId: string | null;
   modelName: string;
-  sites: Array<AnalyticsSummary & { customDomain: string | null }>;
+  sites: Array<AnalyticsSummary & { customDomain: string | null; isAutoRedirect: boolean }>;
+}
+
+/**
+ * The headline traffic number for one domain, and what it actually counts.
+ *
+ * An auto-redirect domain hands the visitor straight to the offer, so it
+ * records no pageview and no click: totalViews is ~0 there no matter how much
+ * traffic it carries. Reading that field as "traffic" is exactly how three live
+ * domains showed 0 in the admin UI while OnlyFans recorded 152 clicks against
+ * the same links in a week, and were reported as dead.
+ *
+ * The two counts stay separate everywhere else on purpose (see
+ * AnalyticsSummary.autoredirectVisits). This picks whichever one is meaningful
+ * for the domain rather than summing them into a number that means neither.
+ */
+export function siteTraffic(s: {
+  totalViews: number;
+  autoredirectVisits: number;
+  isAutoRedirect: boolean;
+}): { count: number; kind: "views" | "arrivals" } {
+  return s.isAutoRedirect
+    ? { count: s.autoredirectVisits, kind: "arrivals" }
+    : { count: s.totalViews, kind: "views" };
 }
 
 type Keyed = { key: string; count: number };
@@ -40,7 +63,15 @@ function mergeCounts<T>(
  */
 export function rollupByModel(
   summaries: AnalyticsSummary[],
-  siteMeta: Map<string, { modelId: string | null; modelName: string; customDomain: string | null }>
+  siteMeta: Map<
+    string,
+    {
+      modelId: string | null;
+      modelName: string;
+      customDomain: string | null;
+      isAutoRedirect: boolean;
+    }
+  >
 ): ModelAnalytics[] {
   const groups = new Map<string, AnalyticsSummary[]>();
   for (const s of summaries) {
@@ -163,9 +194,16 @@ export function rollupByModel(
         );
       })(),
       avatarPerformance,
+      // Sorted by siteTraffic, not totalViews: ordering on views alone sinks
+      // every auto-redirect domain to the bottom of the list at 0, however
+      // much traffic it is actually carrying.
       sites: sites
-        .map((s) => ({ ...s, customDomain: siteMeta.get(s.creator)?.customDomain ?? null }))
-        .sort((a, b) => b.totalViews - a.totalViews),
+        .map((s) => ({
+          ...s,
+          customDomain: siteMeta.get(s.creator)?.customDomain ?? null,
+          isAutoRedirect: siteMeta.get(s.creator)?.isAutoRedirect ?? false,
+        }))
+        .sort((a, b) => siteTraffic(b).count - siteTraffic(a).count),
     });
     void key;
   }
