@@ -155,21 +155,21 @@ def status(word):
 # COVER
 # ══════════════════════════════════════════════════════════════════════════════
 
-spacer(30)
+spacer(18)
 title("Analytics Trust Ledger")
 subtitle("CharmLink Reporting Note")
-body("Version 1.0 — 4 September 2026")
+body("Version 1.1 — 9 September 2026")
 body("Applies to: CharmLink admin dashboard and OnlyFans tracking links")
 spacer(16)
 
 body(
-    "Three separate faults in our analytics were found and fixed this week. Each "
-    "one changes how the dashboard reads, and two of them produced numbers that "
-    "were confidently wrong rather than obviously broken."
+    "Four separate faults in our analytics were found and fixed over the past two "
+    "weeks. Each one changes how the dashboard reads, and three of them produced "
+    "numbers that were confidently wrong rather than obviously broken."
 )
 body(
     "This note records which figures can be trusted, which should be ignored, and "
-    "the three dates that account for every apparent jump in the graphs. It is "
+    "the four dates that account for every apparent jump in the graphs. It is "
     "written to be read before the next weekly review."
 )
 spacer(10)
@@ -178,7 +178,7 @@ subhead("Contents")
 for item in [
     "1. If you read nothing else",
     "2. The trust ledger",
-    "3. Three dates that explain the graphs",
+    "3. Four dates that explain the graphs",
     "4. The one real decline",
     "5. Traps worth knowing about",
     "6. Standing rules",
@@ -197,9 +197,16 @@ bullet(
     "on the same day, because we stopped counting some visitors twice."
 )
 bullet(
-    "<b>The three auto-redirect domains were never broken. The counter was.</b> "
-    "They reported zero for their entire life while OnlyFans recorded 152 clicks "
-    "against those same links in a single week."
+    "<b>The three auto-redirect domains were never broken. The counter was</b> "
+    "— twice. First it reported zero for their entire life while OnlyFans recorded "
+    "152 clicks against those same links in a week. Then, once switched on, it "
+    "counted about five visitors for every real one."
+)
+bullet(
+    "<b>The Instagram-to-OnlyFans handoff is close to lossless.</b> Measured over "
+    "5-9 September with the automated traffic removed: 167 real arrivals produced "
+    "151 OnlyFans clicks, roughly 90 per cent. About 4 per cent of those clicks "
+    "became subscribers."
 )
 bullet(
     "<b>One decline is real: fav-site.com is down about a third,</b> confirmed "
@@ -241,8 +248,10 @@ grid([
      "Built on page views, so it read artificially low before the fix."],
     ["Photo performance", status("TRUST AFTER"), "30 Aug 2026",
      "Earlier results credited the wrong photo and cannot be recovered."],
-    ["Auto-redirect arrivals", status("TRUST AFTER"), "4 Sep 2026",
-     "Nothing at all was recorded before 3 Sep. There is no history to compare against."],
+    ["Auto-redirect arrivals", status("TRUST AFTER"), "9 Sep 2026",
+     "Nothing was recorded before 3 Sep, and from 3-9 Sep the figure counted roughly five "
+     "visitors for every real one: 81% of it was automated traffic that our filters did not "
+     "recognise. Corrected on 9 Sep, and the history was corrected with it."],
     ["Escape failures", status("IGNORE"), "n/a",
      "Measures how long someone took to tap a dialog, not whether they got stuck. Half of the "
      "sessions it flagged as failures went on to convert."],
@@ -252,10 +261,10 @@ grid([
 ], [1.45 * inch, 1.05 * inch, 1.0 * inch, 3.5 * inch])
 
 # ══════════════════════════════════════════════════════════════════════════════
-section("3. Three dates that explain the graphs")
+section("3. Four dates that explain the graphs")
 # ══════════════════════════════════════════════════════════════════════════════
 
-body("Any sharp step in this week's charts traces back to one of these three dates.")
+body("Any sharp step in the charts traces back to one of these four dates.")
 
 dated("30 Aug", "Views fell, CTR tripled, nothing actually changed", [
     "When an Instagram visitor was bounced out to Safari, the second page load was "
@@ -282,6 +291,20 @@ dated("4 Sep", "Redirect arrivals become near-complete", [
     "itself, so it no longer depends on the visitor's phone cooperating.",
     "<b>Read it as:</b> a modest step up in reported arrivals on those three domains "
     "around 4 September, reflecting better capture rather than more people.",
+])
+
+dated("9 Sep", "Redirect arrivals stop counting robots as people", [
+    "With arrivals finally recording, the number turned out to be roughly five "
+    "times too high. 81 per cent of it was automated: traffic claiming to be "
+    "desktop computers on domains that only ever receive Instagram taps, plus "
+    "several hundred hits all sharing one iPhone software version from 2019. Our "
+    "filters had classified every one of them as a person.",
+    "This mattered beyond the headline count. Taken at face value it made the "
+    "handoff to OnlyFans look like 34 per cent — as though two thirds of visitors "
+    "were being lost on the way. With the robots removed it is about 90 per cent.",
+    "<b>Read it as:</b> arrivals on these three domains drop sharply on 9 September "
+    "and the earlier figures were corrected to match, so the history is comparable. "
+    "Nothing about the real audience changed.",
 ])
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -325,17 +348,24 @@ section("5. Traps worth knowing about")
 subhead("Never total OnlyFans figures by campaign code")
 body(
     "Campaign codes repeat across her two OnlyFans accounts. Code 1079 exists on "
-    "both: one carries 62 clicks, the other 315. Adding by code silently merges "
-    "two unrelated links into one wrong number. Always match on the full tracking "
-    "URL instead."
+    "both: on one account it is a link carrying 321 clicks and 71 subscribers, on "
+    "the other it is tap-dat.com, carrying 146 clicks and no subscribers at all. "
+    "Adding by code merges two unrelated links into one wrong number — in this "
+    "case it would report tap-dat.com converting at 15 per cent when its true "
+    "figure is zero. Always match on the full tracking URL instead."
 )
 
-subhead("Our counts will sit below OnlyFans on redirect domains")
+subhead("Our counts should sit slightly ABOVE OnlyFans on redirect domains")
 body(
-    "We count someone arriving at our page. OnlyFans counts them landing on the "
-    "offer. Those are different points in the same funnel, so a gap between the two "
-    "is expected and healthy. Use ours for traffic direction and theirs for "
-    "conversion, and do not treat the difference as lost data."
+    "We count someone arriving at our page. OnlyFans counts them a moment later, "
+    "landing on the offer. Arriving comes first, so our number is the larger one and "
+    "the small gap between them is people who left mid-handoff."
+)
+body(
+    "Measured 5-9 September: 167 human arrivals against 151 OnlyFans clicks, a handoff "
+    "of about 90 per cent. <b>If our number ever drops below OnlyFans', that is a "
+    "counting fault, not a funnel that improved.</b> Use ours for traffic direction "
+    "and theirs for conversion."
 )
 
 subhead("A zero has meant two different things")
@@ -360,16 +390,17 @@ body("How to read the dashboard from here.")
 grid([
     ["#", "Rule"],
     ["1", "Do not compare views or CTR across 30 August. Clicks are safe to compare across any date."],
-    ["2", "Treat the auto-redirect domains as having no history before 4 September."],
+    ["2", "Treat the auto-redirect domains as having no history before 4 September, and treat their arrival counts before 9 September as roughly five times too high."],
     ["3", "For anything about revenue, quote OnlyFans, matched on the full tracking URL."],
     ["4", "Ignore the escape-failure and top-referrer panels entirely until they are rebuilt."],
     ["5", "Before calling a domain dead, check OnlyFans for the same link."],
     ["6", "The escape-versus-stay experiment is switched off. No test is running, and no result should be quoted from it."],
+    ["7", "A sudden jump in traffic with no matching movement in OnlyFans clicks is robots until proven otherwise. Real visitors move both numbers."],
 ], [0.4 * inch, 6.4 * inch])
 
 spacer(6)
 body(
-    "<i>Figures verified against production data and OnlyFans tracking on 4 "
+    "<i>Figures verified against production data and OnlyFans tracking on 9 "
     "September 2026. Questions on any single number should go to engineering with "
     "the domain and date range attached.</i>"
 )
