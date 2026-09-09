@@ -2,6 +2,7 @@ import { cache } from "react";
 import { notFound } from "next/navigation";
 import { headers, cookies } from "next/headers";
 import { after } from "next/server";
+import { looksSynthetic } from "../../lib/synthetic-traffic";
 import { Metadata } from "next";
 import {
   getCreatorBySlug,
@@ -186,7 +187,11 @@ export default async function CreatorPageServer({ params, searchParams }: PagePr
             referer: headersList.get("referer") ?? "",
             country: headersList.get("x-vercel-ip-country") ?? "unknown",
             device: parseDeviceType(ua),
-            is_bot: flaggedBot,
+            // Middleware's verdict OR the UA heuristics. Counting only, and
+            // deliberately not fed back into `flaggedBot` above: that variable
+            // decides whether this visitor is shown the decoy, and a heuristic
+            // false positive there costs a sale rather than a row in a chart.
+            is_bot: flaggedBot || looksSynthetic(ua, { mobileOnlyAudience: true }),
             is_instagram: /instagram|barcelona/i.test(ua),
           });
         });
