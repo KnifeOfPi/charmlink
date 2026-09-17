@@ -1120,7 +1120,28 @@ export async function getAnalytics(
 ): Promise<AnalyticsSummary> {
   const cutoff = periodCutoff(period);
   const timeFilter = cutoff ? "AND e.created_at >= $2" : "";
-  const params: unknown[] = cutoff ? [creatorSlug, cutoff] : [creatorSlug];
+
+  // Resolve the slug to the creator's id ONCE, then key every query below on
+  // the id rather than the slug.
+  //
+  // Events carry both, but the slug is editable: renaming it detaches the
+  // site's whole history while the site keeps serving. 'kai' was renamed to
+  // 'reynaa' and stranded 845 pageviews and 379 premium clicks, so
+  // bouncedat.club read as less than half its real performance for three
+  // months. The id never changes, so the history follows the creator.
+  //
+  // A slug that matches no creator yields null and therefore zeroes, which is
+  // what the slug-keyed version already returned for an unknown slug. The one
+  // behaviour change is for events whose creator_id is null: only the two
+  // 'demo-spotlight' rows from a deleted test creator, which previously
+  // counted and now do not.
+  const idRows = await query<{ id: string }>(
+    "SELECT id FROM charmlink_creators WHERE slug = $1",
+    [creatorSlug]
+  );
+  const creatorId = idRows[0]?.id ?? null;
+
+  const params: unknown[] = cutoff ? [creatorId, cutoff] : [creatorId];
 
   // Pageviews
   const pvRows = await query<{
@@ -1137,7 +1158,7 @@ export async function getAnalytics(
       COUNT(*) FILTER (WHERE is_instagram) AS instagram,
       COUNT(DISTINCT session_id) AS unique_sessions
      FROM charmlink_events e
-     WHERE e.type = 'pageview' AND e.creator_slug = $1 ${timeFilter}`,
+     WHERE e.type = 'pageview' AND e.creator_id = $1::uuid ${timeFilter}`,
     params
   );
 
@@ -1154,7 +1175,7 @@ export async function getAnalytics(
       COUNT(*) FILTER (WHERE link_type = 'social') AS social,
       COUNT(DISTINCT session_id) FILTER (WHERE link_type = 'premium') AS converting_sessions
      FROM charmlink_events e
-     WHERE ${DEDUPED_CLICKS} AND e.creator_slug = $1 ${timeFilter}`,
+     WHERE ${DEDUPED_CLICKS} AND e.creator_id = $1::uuid ${timeFilter}`,
     params
   );
 
@@ -1171,7 +1192,7 @@ export async function getAnalytics(
       END AS referer,
       COUNT(*) AS count
      FROM charmlink_events e
-     WHERE e.creator_slug = $1 AND e.type = 'pageview' ${timeFilter}
+     WHERE e.creator_id = $1::uuid AND e.type = 'pageview' ${timeFilter}
      GROUP BY 1 ORDER BY count DESC LIMIT 10`,
     params
   );
@@ -1180,7 +1201,7 @@ export async function getAnalytics(
   const devRows = await query<{ device: string; count: string }>(
     `SELECT device, COUNT(*) AS count
      FROM charmlink_events e
-     WHERE e.creator_slug = $1 AND e.type = 'pageview' ${timeFilter}
+     WHERE e.creator_id = $1::uuid AND e.type = 'pageview' ${timeFilter}
      GROUP BY device`,
     params
   );
@@ -1189,7 +1210,7 @@ export async function getAnalytics(
   const cntRows = await query<{ country: string; count: string }>(
     `SELECT country, COUNT(*) AS count
      FROM charmlink_events e
-     WHERE e.creator_slug = $1 AND e.type = 'pageview' ${timeFilter}
+     WHERE e.creator_id = $1::uuid AND e.type = 'pageview' ${timeFilter}
      GROUP BY country ORDER BY count DESC LIMIT 10`,
     params
   );
@@ -1198,7 +1219,7 @@ export async function getAnalytics(
   const lnkRows = await query<{ link_label: string; link_url: string; link_type: string; count: string }>(
     `SELECT link_label, link_url, link_type, COUNT(*) AS count
      FROM charmlink_events e
-     WHERE e.creator_slug = $1 AND ${DEDUPED_CLICKS} ${timeFilter}
+     WHERE e.creator_id = $1::uuid AND ${DEDUPED_CLICKS} ${timeFilter}
      GROUP BY link_label, link_url, link_type ORDER BY count DESC`,
     params
   );
@@ -1212,7 +1233,7 @@ export async function getAnalytics(
     `WITH bounds AS (
        SELECT
          date_trunc($2, COALESCE($3::timestamptz, (
-           SELECT MIN(created_at) FROM charmlink_events WHERE creator_slug = $1
+           SELECT MIN(created_at) FROM charmlink_events WHERE creator_id = $1::uuid
          ))) AS start_ts,
          date_trunc($2, now()) AS end_ts
      ),
@@ -1227,11 +1248,11 @@ export async function getAnalytics(
        COUNT(e.id) FILTER (WHERE e.link_type = 'premium') AS premium
      FROM buckets b
      LEFT JOIN charmlink_events e
-       ON e.creator_slug = $1 AND ${DEDUPED_CLICKS}
+       ON e.creator_id = $1::uuid AND ${DEDUPED_CLICKS}
        AND date_trunc($2, e.created_at) = b.bucket
      GROUP BY b.bucket
      ORDER BY b.bucket`,
-    [creatorSlug, bucketUnit, cutoff]
+    [creatorId, bucketUnit, cutoff]
   );
 
   // Avatar carousel results. Returns [] for the (currently typical) creator who
@@ -1243,7 +1264,7 @@ export async function getAnalytics(
   const arRows = await query<{ visits: string }>(
     `SELECT COUNT(*) AS visits
      FROM charmlink_events e
-     WHERE ${AUTOREDIRECT_ARRIVALS} AND e.creator_slug = $1 ${timeFilter}`,
+     WHERE ${AUTOREDIRECT_ARRIVALS} AND e.creator_id = $1::uuid ${timeFilter}`,
     params
   );
 
