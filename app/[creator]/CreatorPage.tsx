@@ -1668,6 +1668,15 @@ export function CreatorPage({
           // Instagram's in-app browser usually strips it — and is shown as
           // "direct" rather than guessed at.
           referrer: typeof document !== "undefined" ? document.referrer : "",
+          // A prefetched/pre-rendered page runs this script while hidden, so
+          // false means nobody ever looked at it. This is how we find out
+          // whether the Facebook in-app surface (a third of traffic, 95.5% of
+          // it clicking nothing) is real visitors or Meta pre-rendering links
+          // people merely scrolled past.
+          visible:
+            typeof document !== "undefined"
+              ? document.visibilityState === "visible"
+              : true,
         });
       }
     }

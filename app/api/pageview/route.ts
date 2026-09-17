@@ -24,6 +24,8 @@ interface PageViewPayload {
    * referential. Untrusted display-only text; truncated on the way in.
    */
   referrer?: string;
+  /** See RecordEventInput.was_visible. Absent from stale client bundles. */
+  visible?: boolean;
 }
 
 export async function POST(request: NextRequest) {
@@ -60,6 +62,9 @@ export async function POST(request: NextRequest) {
       device: parseDeviceType(ua),
       is_bot: resolveIsBot(request),
       is_instagram: body.isInstagram || false,
+      // Only forwarded when the client actually reported it; a stale bundle
+      // sends nothing and must record NULL rather than a made-up false.
+      was_visible: typeof body.visible === "boolean" ? body.visible : undefined,
       avatar_id: body.avatarId ?? null,
     });
 

@@ -880,6 +880,13 @@ export interface RecordEventInput {
   session_id: string;
   user_agent?: string;
   referer?: string;
+  /**
+   * document.visibilityState === "visible" when the beacon fired. A prefetched
+   * or pre-rendered page runs its scripts while hidden, so false here means the
+   * page was never actually on screen. Measurement only — see the migration
+   * 20260917000000_events_was_visible.sql for why nothing reads it yet.
+   */
+  was_visible?: boolean;
   country?: string;
   device?: string;
   is_bot?: boolean;
@@ -901,8 +908,8 @@ export async function recordEvent(input: RecordEventInput): Promise<void> {
       `INSERT INTO charmlink_events
         (type, creator_id, creator_slug, link_label, link_url, link_type,
          session_id, user_agent, referer, country, device, is_bot, is_instagram,
-         avatar_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+         avatar_id, was_visible)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
       [
         input.type,
         input.creator_id ?? null,
@@ -918,6 +925,9 @@ export async function recordEvent(input: RecordEventInput): Promise<void> {
         input.is_bot ?? false,
         input.is_instagram ?? false,
         avatarId,
+        // undefined -> NULL "not reported", which is NOT the same as false.
+        // Only a client that actually told us gets a true/false.
+        input.was_visible ?? null,
       ]
     );
   } catch (err) {
