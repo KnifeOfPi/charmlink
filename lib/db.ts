@@ -352,12 +352,12 @@ export async function getModelsWithSites(): Promise<ModelWithSites[]> {
             COALESCE(v.premium_clicks, 0) AS premium_clicks
      FROM charmlink_creators c
      LEFT JOIN (
-       SELECT creator_slug,
+       SELECT creator_id,
               COUNT(*) FILTER (WHERE type = 'pageview') AS views,
               COUNT(*) FILTER (WHERE ${DEDUPED_CLICKS} AND link_type = 'premium') AS premium_clicks
        FROM charmlink_events e
-       GROUP BY creator_slug
-     ) v ON v.creator_slug = c.slug
+       GROUP BY creator_id
+     ) v ON v.creator_id = c.id
      ORDER BY c.created_at ASC`
   );
 
