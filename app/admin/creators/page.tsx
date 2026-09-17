@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { UNASSIGNED_MODEL_ID } from "../../../lib/types";
 import { useRouter } from "next/navigation";
 import { useAdminAuth } from "../useAdminAuth";
 import { AdminNav } from "../AdminNav";
@@ -287,6 +288,10 @@ export default function CreatorsPage() {
           <div className="space-y-3">
             {models.map((m) => {
               const open = expanded.has(m.id);
+              // Not a real person: the bucket for sites no model claims. It has
+              // no row in charmlink_models, so it gets no Manage link and no
+              // theme swatches — only a route to fix each site.
+              const unassigned = m.id === UNASSIGNED_MODEL_ID;
               const totalViews = m.sites.reduce((n, s) => n + s.views, 0);
               const totalPrem = m.sites.reduce((n, s) => n + s.premium_clicks, 0);
               const cover = m.sites.find((s) => s.avatar_url)?.avatar_url ?? "";
@@ -307,25 +312,39 @@ export default function CreatorsPage() {
                       </div>
                     )}
                     <div className="flex-1 min-w-0">
-                      <p className="text-white text-sm font-semibold">{m.name}</p>
-                      <p className="text-gray-500 text-xs">
+                      <p className={`text-sm font-semibold ${unassigned ? "text-amber-400" : "text-white"}`}>
+                        {unassigned ? "Unassigned sites" : m.name}
+                      </p>
+                      <p className={`text-xs ${unassigned ? "text-amber-500/80" : "text-gray-500"}`}>
                         {m.sites.length} {m.sites.length === 1 ? "site" : "sites"}
-                        {m.photo_count > 0 && ` · ${m.photo_count} photos`}
+                        {!unassigned && m.photo_count > 0 && ` · ${m.photo_count} photos`}
                         {totalViews > 0 && ` · ${totalViews.toLocaleString()} views · ${totalPrem.toLocaleString()} premium`}
+                        {unassigned && " · live, but not attached to anyone — open one to assign it"}
                       </p>
                     </div>
-                    <div className="hidden sm:flex items-center gap-1">
-                      <span className="w-4 h-4 rounded" style={{ background: m.theme_bg, border: "1px solid #444" }} title="Background" />
-                      <span className="w-4 h-4 rounded" style={{ background: m.theme_accent }} title="Accent" />
-                      <span className="w-4 h-4 rounded" style={{ background: m.theme_text, border: "1px solid #444" }} title="Text" />
-                    </div>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); router.push(`/admin/models/${m.id}`); }}
-                      className="text-xs bg-[#e91e8a] hover:bg-[#d01577] text-white rounded-lg px-3 py-1.5 transition-colors flex-shrink-0"
-                      title="Photos, name, tagline and theme for every one of her sites"
-                    >
-                      Manage
-                    </button>
+                    {!unassigned && (
+                      <div className="hidden sm:flex items-center gap-1">
+                        <span className="w-4 h-4 rounded" style={{ background: m.theme_bg, border: "1px solid #444" }} title="Background" />
+                        <span className="w-4 h-4 rounded" style={{ background: m.theme_accent }} title="Accent" />
+                        <span className="w-4 h-4 rounded" style={{ background: m.theme_text, border: "1px solid #444" }} title="Text" />
+                      </div>
+                    )}
+                    {unassigned ? (
+                      <span
+                        className="text-xs bg-amber-500/15 text-amber-400 border border-amber-500/30 rounded-lg px-3 py-1.5 flex-shrink-0"
+                        title="These sites are live and serving visitors, but belong to no person, so they appear here instead of under a name."
+                      >
+                        Needs owner
+                      </span>
+                    ) : (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); router.push(`/admin/models/${m.id}`); }}
+                        className="text-xs bg-[#e91e8a] hover:bg-[#d01577] text-white rounded-lg px-3 py-1.5 transition-colors flex-shrink-0"
+                        title="Photos, name, tagline and theme for every one of her sites"
+                      >
+                        Manage
+                      </button>
+                    )}
                   </div>
 
                   {/* Sites — one row per domain, each with its own links */}

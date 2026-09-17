@@ -1,5 +1,5 @@
 import { Pool, PoolClient } from "pg";
-import { AnalyticsSummary, DeviceType } from "./types";
+import { AnalyticsSummary, DeviceType, UNASSIGNED_MODEL_ID } from "./types";
 import { AVATAR_EPOCH_FILTER, clampToEpoch } from "./stats-epoch";
 import { ESCAPE_ARM_SQL, ESCAPE_ARM_SESSION_GUARD } from "./escape-experiment";
 
@@ -315,6 +315,8 @@ export async function getModelSlugs(modelId: string): Promise<string[]> {
   return rows.map((r) => r.slug);
 }
 
+export { UNASSIGNED_MODEL_ID };
+
 export interface ModelWithSites extends DBModel {
   sites: Array<{
     id: string;
@@ -365,21 +367,58 @@ export async function getModelsWithSites(): Promise<ModelWithSites[]> {
   );
   const photoByModel = new Map(photos.map((p) => [p.model_id, parseInt(p.n)]));
 
-  return models.map((m) => ({
+  const shape = (s: (typeof sites)[number]) => ({
+    id: s.id,
+    slug: s.slug,
+    custom_domain: s.custom_domain,
+    is_active: s.is_active,
+    avatar_url: s.avatar_url,
+    views: parseInt(s.views),
+    premium_clicks: parseInt(s.premium_clicks),
+  });
+
+  const grouped: ModelWithSites[] = models.map((m) => ({
     ...m,
     photo_count: photoByModel.get(m.id) ?? 0,
-    sites: sites
-      .filter((s) => s.model_id === m.id)
-      .map((s) => ({
-        id: s.id,
-        slug: s.slug,
-        custom_domain: s.custom_domain,
-        is_active: s.is_active,
-        avatar_url: s.avatar_url,
-        views: parseInt(s.views),
-        premium_clicks: parseInt(s.premium_clicks),
-      })),
+    sites: sites.filter((s) => s.model_id === m.id).map(shape),
   }));
+
+  // Anything left over is a live site that no model claims. Surfaced last, in
+  // its own group, rather than dropped — being invisible in the admin list is
+  // strictly worse than being untidy in it, because the site is already
+  // serving real visitors either way.
+  const orphans = sites.filter((s) => s.model_id === null);
+  if (orphans.length > 0) {
+    // Every field is given a real value rather than spread from a cast: this
+    // object is rendered by the same component as a genuine model, and an
+    // undefined theme colour there would paint a broken swatch.
+    grouped.push({
+      id: UNASSIGNED_MODEL_ID,
+      name: "Unassigned",
+      tagline: "Live sites that belong to no one yet",
+      theme_bg: "#0a0a0a",
+      theme_accent: "#e91e8a",
+      theme_text: "#ffffff",
+      bg_type: "solid",
+      bg_gradient_type: "linear",
+      bg_gradient_direction: "to bottom",
+      bg_color_2: "#1a1a2e",
+      bg_color_3: null,
+      avatar_shape: "circle",
+      avatar_border_style: "solid",
+      avatar_border_color_1: "#ffffff",
+      avatar_border_color_2: "#f472b6",
+      avatar_border_color_3: "#fda4af",
+      is_verified: false,
+      font: "inter",
+      created_at: new Date(0).toISOString(),
+      updated_at: new Date(0).toISOString(),
+      photo_count: 0,
+      sites: orphans.map(shape),
+    });
+  }
+
+  return grouped;
 }
 
 // ── Creator CRUD ──────────────────────────────────────────────────────────────

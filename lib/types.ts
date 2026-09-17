@@ -1,3 +1,20 @@
+/**
+ * Group id for sites that belong to no model.
+ *
+ * Lives here, not in lib/db.ts, because the admin creators list is a client
+ * component and importing db.ts there would pull the Postgres pool into the
+ * browser bundle.
+ *
+ * getModelsWithSites used to build its list by looping over models, so a
+ * creator with model_id = NULL matched nothing and rendered NOWHERE — while
+ * live and serving traffic. A creator added on 2026-09-17 went live on its
+ * domain and was reported as "CharmLink is hiding it". Unassigned sites now
+ * come back in a synthetic group carrying this id; it is NOT a row in
+ * charmlink_models, so anything treating it as one (an edit link, an
+ * updateModel call) must check for it first.
+ */
+export const UNASSIGNED_MODEL_ID = "unassigned";
+
 export interface SocialLink {
   id?: string;
   label: string;
