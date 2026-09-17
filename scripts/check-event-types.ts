@@ -117,6 +117,73 @@ async function main() {
       console.log("\n✅ no event write failures logged in the last 24h");
     }
 
+    // ── Orphaned slugs ──────────────────────────────────────────────────────
+    //
+    // Analytics filter and join on creator_slug, so renaming a creator's slug
+    // detaches that site's entire history while the site keeps serving. 'kai'
+    // was renamed to 'reynaa' and stranded 845 pageviews and 379 premium
+    // clicks; bouncedat.club read as less than HALF its real performance for
+    // three months, and nothing anywhere said so.
+    //
+    // Recency is what separates an emergency from a backlog. An orphan still
+    // taking traffic means someone renamed a slug just now and live numbers
+    // are walking off a cliff — fail the build. An orphan whose traffic
+    // stopped long ago is known history awaiting the creator_id rekey — report
+    // it, but do not hold CI hostage to it.
+    const { rows: orphans } = await pool.query<{
+      creator_slug: string;
+      events: string;
+      last_seen: string;
+      recent: string;
+      recoverable: string;
+    }>(
+      `SELECT e.creator_slug,
+              COUNT(*)                                   AS events,
+              MAX(e.created_at)::date                    AS last_seen,
+              COUNT(*) FILTER (WHERE e.created_at >= now() - interval '7 days') AS recent,
+              COUNT(DISTINCT e.creator_id)               AS recoverable
+         FROM charmlink_events e
+        WHERE NOT EXISTS (
+                SELECT 1 FROM charmlink_creators c WHERE c.slug = e.creator_slug)
+        GROUP BY e.creator_slug
+        ORDER BY COUNT(*) DESC`
+    );
+
+    if (orphans.length === 0) {
+      console.log("\n✅ every event slug maps to a live creator");
+    } else {
+      // Threshold, not zero. A single stray hit — a crawler, or an engineer
+      // curling the domain to test it — is not a rename costing money, and a
+      // check that fails on day one for that reason gets muted and then
+      // ignored. Calibrated against the real floor: the quietest live domain
+      // in the estate (morefromhoney.com) still serves ~6 views a day, so
+      // anything genuinely live clears 3-in-7-days within hours, while one
+      // test request never does.
+      const ACTIVE_ORPHAN_MIN = 3;
+      const active = orphans.filter((o) => parseInt(o.recent) >= ACTIVE_ORPHAN_MIN);
+      for (const o of orphans) {
+        const via = parseInt(o.recoverable) > 0 ? "recoverable via creator_id" : "NOT recoverable";
+        console.log(
+          `   ${o.creator_slug}: ${o.events} events, last ${o.last_seen} (${via})`
+        );
+      }
+      if (active.length > 0) {
+        console.error(
+          `\n❌ ${active.length} slug(s) still taking real traffic map to no creator: ` +
+            active.map((o) => `${o.creator_slug} (${o.recent} in 7d)`).join(", ") +
+            `\n   A slug was almost certainly just renamed. Every dashboard figure` +
+            `\n   for that site is now missing its history and will keep diverging.` +
+            `\n\n   Fix by restoring the old slug, or finish the creator_id rekey.`
+        );
+        process.exit(1);
+      }
+      console.log(
+        `\n⚠️  ${orphans.length} orphaned slug(s) above, none over ${ACTIVE_ORPHAN_MIN} hits` +
+          `\n   in 7 days, so not failing. Their history stays invisible to the` +
+          `\n   dashboard until analytics key on creator_id.`
+      );
+    }
+
     console.log("\n✅ code and database agree on event types");
   } finally {
     await pool.end();
