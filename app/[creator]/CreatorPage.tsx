@@ -1661,6 +1661,13 @@ export function CreatorPage({
           isInstagram: igDetected,
           isBot: false,
           avatarId,
+          // The ONLY place the real referrer is visible. The server cannot read
+          // it: the Referer header on this fetch is the page making the call,
+          // i.e. our own domain, which is why the Top Referrers panel reported
+          // every domain against itself. Empty is a truthful answer here —
+          // Instagram's in-app browser usually strips it — and is shown as
+          // "direct" rather than guessed at.
+          referrer: typeof document !== "undefined" ? document.referrer : "",
         });
       }
     }

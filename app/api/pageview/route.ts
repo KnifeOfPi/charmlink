@@ -17,6 +17,13 @@ interface PageViewPayload {
   // UUID and FK-checked on insert, so a forged value can at worst attribute a
   // view to another real avatar of the same creator — not corrupt the table.
   avatarId?: string | null;
+  /**
+   * document.referrer, captured in the browser. Must come from the client:
+   * the Referer header on this request is the page that issued the fetch —
+   * always our own domain — which made every Top Referrers row self-
+   * referential. Untrusted display-only text; truncated on the way in.
+   */
+  referrer?: string;
 }
 
 export async function POST(request: NextRequest) {
@@ -43,7 +50,12 @@ export async function POST(request: NextRequest) {
       creator_slug: body.creator,
       session_id: body.sessionId || generateId(),
       user_agent: ua,
-      referer: request.headers.get("referer") || "",
+      // Client value only, with no fallback to the header: the header is the
+      // known-bad self-referential value, so falling back to it would quietly
+      // reintroduce the very bug this replaces. An empty string means the
+      // referrer was genuinely absent (Instagram strips it) and renders as
+      // "direct" — an honest unknown beats a confident wrong answer.
+      referer: (body.referrer ?? "").slice(0, 512),
       country,
       device: parseDeviceType(ua),
       is_bot: resolveIsBot(request),

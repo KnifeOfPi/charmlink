@@ -45,8 +45,25 @@ export async function detectBot(
     return { isBot: true, reason: "ua:meta-2026", confidence: "high" };
   }
 
-  // 3. Datacenter ASN check
-  const asn = request.headers.get("x-vercel-ip-asn");
+  // 3. Datacenter ASN check.
+  //
+  // DORMANT BY DEFAULT — DO NOT READ THIS AS ACTIVE PROTECTION. Vercel does
+  // not emit `x-vercel-ip-asn` on any plan (checked against their header docs
+  // and confirmed empirically: a request originating from GCP was not
+  // decoyed). For as long as no proxy supplies one of the headers below, this
+  // branch cannot fire, and the traffic it was written to stop walks straight
+  // through. That is not hypothetical — it is why 81% of auto-redirect
+  // arrivals were being recorded as human in September 2026, and why
+  // lib/synthetic-traffic.ts had to be written to catch them by user agent
+  // after the fact.
+  //
+  // TO ACTIVATE: the estate already sits behind Cloudflare, which knows the
+  // ASN but does not forward it by default. Add a Cloudflare Transform Rule
+  // (Rules -> Transform Rules -> Modify Request Header) on each zone setting
+  // `cf-ip-asn` to the dynamic value `ip.src.asnum`. This branch starts
+  // working the moment that header arrives; no code change is needed.
+  const asn =
+    request.headers.get("cf-ip-asn") ?? request.headers.get("x-vercel-ip-asn");
   if (isDatacenterAsn(asn)) {
     return { isBot: true, reason: "asn:datacenter", confidence: "high" };
   }
