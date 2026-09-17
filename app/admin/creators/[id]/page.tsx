@@ -1052,6 +1052,31 @@ export default function EditCreatorPage({ params }: { params: Promise<{ id: stri
                             onChange={(e) => setField("slug", e.target.value.toLowerCase())}
                             required
                           />
+                          {/* The slug is a live URL and the key analytics are
+                              recorded against, but it sits next to Name with
+                              nothing to say so — rename the person, tidy the
+                              slug to match, and you have silently 404'd every
+                              existing link and detached the traffic history.
+                              That happened within an hour of a creator being
+                              added: "I changed Sarah's name and it broke her
+                              link." Warn at the moment of editing, which is
+                              the only moment the person can still reconsider. */}
+                          {form.slug && creator.slug && form.slug !== creator.slug && (
+                            <p className="text-xs text-amber-500 leading-relaxed">
+                              Renaming the slug breaks every existing link to{" "}
+                              <span className="font-mono">/{creator.slug}</span> and detaches
+                              this site&apos;s traffic history, which is recorded against the
+                              slug. {creator.custom_domain ? (
+                                <>
+                                  <span className="font-mono">{creator.custom_domain}</span>{" "}
+                                  keeps working either way — change this only if that
+                                  domain is not the link in her bio.
+                                </>
+                              ) : (
+                                <>She has no custom domain, so this slug IS her link.</>
+                              )}
+                            </p>
+                          )}
                         </div>
                       </div>
                       <div className="space-y-1">
