@@ -1345,7 +1345,12 @@ export async function getAnalytics(
  * simultaneously at a pool capped at 3 connections, so they queued past
  * connectionTimeoutMillis and the whole endpoint 500'd — the dashboard rendered
  * zeros while the data was perfectly intact. Every query below is instead
- * grouped by creator_slug, so cost is flat in the number of creators.
+ * grouped by creator_id, so cost is flat in the number of creators.
+ *
+ * Keyed on creator_id, not creator_slug: the slug is editable, and renaming it
+ * detaches a site's entire history — or hands it to whoever takes the freed
+ * slug next, which has already happened here. The returned `creator` field is
+ * still the slug, so callers are unchanged.
  */
 export async function getAnalyticsBatch(
   period: "today" | "7d" | "30d" | "all"
@@ -1356,94 +1361,94 @@ export async function getAnalyticsBatch(
   const bucketUnit = timeseriesBucketUnit(period);
 
   const [pv, clk, refs, dev, cnt, lnk, ts, av, ar] = await Promise.all([
-    query<{ creator_slug: string; total: string; human: string; bot: string; instagram: string; unique_sessions: string }>(
-      `SELECT creator_slug, COUNT(*) AS total,
+    query<{ creator_id: string; total: string; human: string; bot: string; instagram: string; unique_sessions: string }>(
+      `SELECT creator_id, COUNT(*) AS total,
               COUNT(*) FILTER (WHERE NOT is_bot) AS human,
               COUNT(*) FILTER (WHERE is_bot) AS bot,
               COUNT(*) FILTER (WHERE is_instagram) AS instagram,
               COUNT(DISTINCT session_id) AS unique_sessions
-       FROM charmlink_events e WHERE e.type='pageview' ${tf} GROUP BY creator_slug`, params),
-    query<{ creator_slug: string; total: string; premium: string; social: string; converting_sessions: string }>(
-      `SELECT creator_slug, COUNT(*) AS total,
+       FROM charmlink_events e WHERE e.type='pageview' ${tf} GROUP BY creator_id`, params),
+    query<{ creator_id: string; total: string; premium: string; social: string; converting_sessions: string }>(
+      `SELECT creator_id, COUNT(*) AS total,
               COUNT(*) FILTER (WHERE link_type='premium') AS premium,
               COUNT(*) FILTER (WHERE link_type='social') AS social,
               COUNT(DISTINCT session_id) FILTER (WHERE link_type='premium') AS converting_sessions
-       FROM charmlink_events e WHERE ${DEDUPED_CLICKS} ${tf} GROUP BY creator_slug`, params),
-    query<{ creator_slug: string; referer: string; count: string }>(
-      `SELECT creator_slug, referer, count FROM (
-         SELECT creator_slug,
+       FROM charmlink_events e WHERE ${DEDUPED_CLICKS} ${tf} GROUP BY creator_id`, params),
+    query<{ creator_id: string; referer: string; count: string }>(
+      `SELECT creator_id, referer, count FROM (
+         SELECT creator_id,
                 CASE WHEN referer='' THEN '' ELSE regexp_replace(referer,'^https?://([^/]+).*$','\\1') END AS referer,
                 COUNT(*) AS count,
-                ROW_NUMBER() OVER (PARTITION BY creator_slug ORDER BY COUNT(*) DESC) AS rn
-         FROM charmlink_events e WHERE e.type='pageview' ${tf} GROUP BY creator_slug, 2
+                ROW_NUMBER() OVER (PARTITION BY creator_id ORDER BY COUNT(*) DESC) AS rn
+         FROM charmlink_events e WHERE e.type='pageview' ${tf} GROUP BY creator_id, 2
        ) t WHERE rn <= 10`, params),
-    query<{ creator_slug: string; device: string; count: string }>(
-      `SELECT creator_slug, device, COUNT(*) AS count FROM charmlink_events e
-       WHERE e.type='pageview' ${tf} GROUP BY creator_slug, device`, params),
-    query<{ creator_slug: string; country: string; count: string }>(
-      `SELECT creator_slug, country, count FROM (
-         SELECT creator_slug, country, COUNT(*) AS count,
-                ROW_NUMBER() OVER (PARTITION BY creator_slug ORDER BY COUNT(*) DESC) AS rn
-         FROM charmlink_events e WHERE e.type='pageview' ${tf} GROUP BY creator_slug, country
+    query<{ creator_id: string; device: string; count: string }>(
+      `SELECT creator_id, device, COUNT(*) AS count FROM charmlink_events e
+       WHERE e.type='pageview' ${tf} GROUP BY creator_id, device`, params),
+    query<{ creator_id: string; country: string; count: string }>(
+      `SELECT creator_id, country, count FROM (
+         SELECT creator_id, country, COUNT(*) AS count,
+                ROW_NUMBER() OVER (PARTITION BY creator_id ORDER BY COUNT(*) DESC) AS rn
+         FROM charmlink_events e WHERE e.type='pageview' ${tf} GROUP BY creator_id, country
        ) t WHERE rn <= 10`, params),
-    query<{ creator_slug: string; link_label: string; link_url: string; link_type: string; count: string }>(
-      `SELECT creator_slug, link_label, link_url, link_type, COUNT(*) AS count
+    query<{ creator_id: string; link_label: string; link_url: string; link_type: string; count: string }>(
+      `SELECT creator_id, link_label, link_url, link_type, COUNT(*) AS count
        FROM charmlink_events e WHERE ${DEDUPED_CLICKS} ${tf}
-       GROUP BY creator_slug, link_label, link_url, link_type ORDER BY count DESC`, params),
-    query<{ creator_slug: string; bucket: string; total: string; premium: string }>(
-      `SELECT creator_slug, date_trunc('${bucketUnit}', created_at) AS bucket,
+       GROUP BY creator_id, link_label, link_url, link_type ORDER BY count DESC`, params),
+    query<{ creator_id: string; bucket: string; total: string; premium: string }>(
+      `SELECT creator_id, date_trunc('${bucketUnit}', created_at) AS bucket,
               COUNT(*) AS total, COUNT(*) FILTER (WHERE link_type='premium') AS premium
        FROM charmlink_events e WHERE ${DEDUPED_CLICKS} ${tf}
-       GROUP BY creator_slug, 2 ORDER BY 2`, params),
-    query<{ creator_slug: string; avatar_id: string; url: string; is_pinned: boolean; is_active: boolean; impressions: string; premium_clicks: string }>(
-      // `e.creator_slug = c.slug` is what makes these rows per-DOMAIN. The photo
+       GROUP BY creator_id, 2 ORDER BY 2`, params),
+    query<{ creator_id: string; avatar_id: string; url: string; is_pinned: boolean; is_active: boolean; impressions: string; premium_clicks: string }>(
+      // `e.creator_id = c.id` is what makes these rows per-DOMAIN. The photo
       // pool is owned by the model, so without it every one of her slugs joined
       // the same model-wide events and reported identical totals — fine for the
       // rolled-up card, but it made the per-domain view claim a photo's whole
       // model-wide audience for one domain. rollupByModel sums these back up,
       // so the model-level number is unchanged.
-      `SELECT c.slug AS creator_slug, a.id AS avatar_id, a.url, a.is_pinned, a.is_active,
+      `SELECT c.id AS creator_id, a.id AS avatar_id, a.url, a.is_pinned, a.is_active,
               -- Visitors, not rows — see getAvatarStats.
               COUNT(DISTINCT e.session_id) FILTER (WHERE e.type='pageview' AND NOT e.is_bot) AS impressions,
               COUNT(DISTINCT e.session_id) FILTER (WHERE ${DEDUPED_CLICKS} AND e.link_type='premium') AS premium_clicks
        FROM charmlink_creator_avatars a
        JOIN charmlink_creators c ON c.model_id = a.model_id
        LEFT JOIN charmlink_events e
-         ON e.avatar_id = a.id AND e.creator_slug = c.slug ${tf} ${AVATAR_EPOCH_FILTER}
-       GROUP BY c.slug, a.id, a.url, a.is_pinned, a.is_active, a.sort_order, a.created_at
+         ON e.avatar_id = a.id AND e.creator_id = c.id ${tf} ${AVATAR_EPOCH_FILTER}
+       GROUP BY c.id, a.id, a.url, a.is_pinned, a.is_active, a.sort_order, a.created_at
        ORDER BY a.sort_order ASC, a.created_at ASC`, params),
     // Auto-redirect arrivals per slug. Its own aggregate because this event type
     // is excluded from every other one above — see AnalyticsSummary.autoredirectVisits.
-    query<{ creator_slug: string; visits: string }>(
-      `SELECT creator_slug, COUNT(*) AS visits
+    query<{ creator_id: string; visits: string }>(
+      `SELECT creator_id, COUNT(*) AS visits
        FROM charmlink_events e
-       WHERE ${AUTOREDIRECT_ARRIVALS} ${tf} GROUP BY creator_slug`, params),
+       WHERE ${AUTOREDIRECT_ARRIVALS} ${tf} GROUP BY creator_id`, params),
   ]);
 
-  const bySlug = <T extends { creator_slug: string }>(rows: T[]) => {
+  const byCreatorId = <T extends { creator_id: string }>(rows: T[]) => {
     const m = new Map<string, T[]>();
     for (const r of rows) {
-      const arr = m.get(r.creator_slug);
+      const arr = m.get(r.creator_id);
       if (arr) arr.push(r);
-      else m.set(r.creator_slug, [r]);
+      else m.set(r.creator_id, [r]);
     }
     return m;
   };
-  const pvBy = new Map(pv.map((r) => [r.creator_slug, r]));
-  const clkBy = new Map(clk.map((r) => [r.creator_slug, r]));
-  const refBy = bySlug(refs), devBy = bySlug(dev), cntBy = bySlug(cnt);
-  const lnkBy = bySlug(lnk), tsBy = bySlug(ts), avBy = bySlug(av);
-  const arBy = new Map(ar.map((r) => [r.creator_slug, r]));
+  const pvBy = new Map(pv.map((r) => [r.creator_id, r]));
+  const clkBy = new Map(clk.map((r) => [r.creator_id, r]));
+  const refBy = byCreatorId(refs), devBy = byCreatorId(dev), cntBy = byCreatorId(cnt);
+  const lnkBy = byCreatorId(lnk), tsBy = byCreatorId(ts), avBy = byCreatorId(av);
+  const arBy = new Map(ar.map((r) => [r.creator_id, r]));
 
   const creators = await getAllCreators();
   return creators.map((c): AnalyticsSummary => {
-    const p = pvBy.get(c.slug);
-    const k = clkBy.get(c.slug);
+    const p = pvBy.get(c.id);
+    const k = clkBy.get(c.id);
     const humanViews = parseInt(p?.human ?? "0");
     const premiumClicks = parseInt(k?.premium ?? "0");
     const convertingSessions = parseInt(k?.converting_sessions ?? "0");
     const deviceBreakdown: Record<DeviceType, number> = { mobile: 0, tablet: 0, desktop: 0 };
-    for (const d of devBy.get(c.slug) ?? []) {
+    for (const d of devBy.get(c.id) ?? []) {
       const key = d.device as DeviceType;
       if (key in deviceBreakdown) deviceBreakdown[key] = parseInt(d.count);
     }
@@ -1458,22 +1463,22 @@ export async function getAnalyticsBatch(
       premiumClicks,
       socialClicks: parseInt(k?.social ?? "0"),
       convertingSessions,
-      autoredirectVisits: parseInt(arBy.get(c.slug)?.visits ?? "0"),
+      autoredirectVisits: parseInt(arBy.get(c.id)?.visits ?? "0"),
       // Sessions, not taps — see AnalyticsSummary.ctr.
       ctr: humanViews > 0 ? Math.round((convertingSessions / humanViews) * 10000) / 100 : 0,
-      topReferrers: (refBy.get(c.slug) ?? []).map((r) => ({ referer: r.referer || "direct", count: parseInt(r.count) })),
+      topReferrers: (refBy.get(c.id) ?? []).map((r) => ({ referer: r.referer || "direct", count: parseInt(r.count) })),
       deviceBreakdown,
-      countryBreakdown: (cntBy.get(c.slug) ?? []).map((r) => ({ country: r.country, count: parseInt(r.count) })),
+      countryBreakdown: (cntBy.get(c.id) ?? []).map((r) => ({ country: r.country, count: parseInt(r.count) })),
       instagramTraffic: parseInt(p?.instagram ?? "0"),
-      linkBreakdown: (lnkBy.get(c.slug) ?? []).map((r) => ({
+      linkBreakdown: (lnkBy.get(c.id) ?? []).map((r) => ({
         label: r.link_label, url: r.link_url, type: r.link_type, clicks: parseInt(r.count),
       })),
-      clickTimeseries: (tsBy.get(c.slug) ?? []).map((r) => ({
+      clickTimeseries: (tsBy.get(c.id) ?? []).map((r) => ({
         bucket: new Date(r.bucket).toISOString(),
         total: parseInt(r.total),
         premium: parseInt(r.premium),
       })),
-      avatarPerformance: (avBy.get(c.slug) ?? []).map((r) => {
+      avatarPerformance: (avBy.get(c.id) ?? []).map((r) => {
         const impressions = parseInt(r.impressions);
         const pc = parseInt(r.premium_clicks);
         return {
@@ -1521,7 +1526,7 @@ export async function getEscapeExperimentStats(
     assigned AS (
       SELECT session_id, ${ESCAPE_ARM_SQL} AS arm, MIN(created_at) AS first_seen
       FROM charmlink_events
-      WHERE creator_slug = $1
+      WHERE creator_id = $1
         AND type = 'pageview' AND is_instagram AND NOT is_bot
         AND user_agent ILIKE '%instagram%'
         AND ${ESCAPE_ARM_SESSION_GUARD}
