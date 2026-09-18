@@ -158,18 +158,18 @@ def status(word):
 spacer(18)
 title("Analytics Trust Ledger")
 subtitle("CharmLink Reporting Note")
-body("Version 1.1 — 9 September 2026")
+body("Version 1.2 — 18 September 2026")
 body("Applies to: CharmLink admin dashboard and OnlyFans tracking links")
 spacer(16)
 
 body(
-    "Four separate faults in our analytics were found and fixed over the past two "
-    "weeks. Each one changes how the dashboard reads, and three of them produced "
+    "Five separate faults in our analytics were found and fixed over the past three "
+    "weeks. Each one changes how the dashboard reads, and four of them produced "
     "numbers that were confidently wrong rather than obviously broken."
 )
 body(
     "This note records which figures can be trusted, which should be ignored, and "
-    "the four dates that account for every apparent jump in the graphs. It is "
+    "the five dates that account for every apparent jump in the graphs. It is "
     "written to be read before the next weekly review."
 )
 spacer(10)
@@ -178,7 +178,7 @@ subhead("Contents")
 for item in [
     "1. If you read nothing else",
     "2. The trust ledger",
-    "3. Four dates that explain the graphs",
+    "3. Five dates that explain the graphs",
     "4. The one real decline",
     "5. Traps worth knowing about",
     "6. Standing rules",
@@ -239,7 +239,9 @@ grid([
     ["OnlyFans clicks and subs", status("TRUST"), "Always",
      "Recorded by OnlyFans, independent of our code. The reference for anything revenue-related."],
     ["Premium clicks", status("TRUST"), "Always",
-     "Never affected by the double-count. Safe to compare across any period."],
+     "Never affected by the double-count. Safe to compare across any period. Four domains "
+     "were under-reported until 18 Sep because their traffic was filed under an old name; "
+     "that history has been restored and the corrected figures now apply to the past too."],
     ["Instagram traffic", status("TRUST"), "Always",
      "Counted once per visit throughout."],
     ["Page views", status("TRUST AFTER"), "30 Aug 2026",
@@ -261,10 +263,10 @@ grid([
 ], [1.45 * inch, 1.05 * inch, 1.0 * inch, 3.5 * inch])
 
 # ══════════════════════════════════════════════════════════════════════════════
-section("3. Four dates that explain the graphs")
+section("3. Five dates that explain the graphs")
 # ══════════════════════════════════════════════════════════════════════════════
 
-body("Any sharp step in the charts traces back to one of these four dates.")
+body("Any sharp step in the charts traces back to one of these five dates.")
 
 dated("30 Aug", "Views fell, CTR tripled, nothing actually changed", [
     "When an Instagram visitor was bounced out to Safari, the second page load was "
@@ -305,6 +307,24 @@ dated("9 Sep", "Redirect arrivals stop counting robots as people", [
     "<b>Read it as:</b> arrivals on these three domains drop sharply on 9 September "
     "and the earlier figures were corrected to match, so the history is comparable. "
     "Nothing about the real audience changed.",
+])
+
+dated("18 Sep", "Four domains get their missing history back", [
+    "Traffic was filed under each site's short name, which is editable. Rename "
+    "the name and the site kept working while its entire past quietly detached "
+    "from it. Traffic is now filed under a permanent internal id instead, and "
+    "the stranded history has been reattached.",
+    "The largest case had been wrong since June. bouncedat.club was reporting "
+    "502 views and 334 premium clicks against a true 1,347 and 713 — less than "
+    "half its real performance, for a whole quarter, because it had been renamed. "
+    "Three other domains move by one or two visits.",
+    "It could also credit the wrong person. One site's first two visits had been "
+    "showing under a different creator entirely, because she was later given the "
+    "name the first site used to have.",
+    "<b>Read it as:</b> unlike the other four dates, this one corrects the past "
+    "rather than dividing it. The figures for earlier periods have changed, and "
+    "the new ones are right. bouncedat.club rising 168 per cent on 18 September "
+    "is recovery of traffic it always had, not new traffic.",
 ])
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -396,11 +416,12 @@ grid([
     ["5", "Before calling a domain dead, check OnlyFans for the same link."],
     ["6", "The escape-versus-stay experiment is switched off. No test is running, and no result should be quoted from it."],
     ["7", "A sudden jump in traffic with no matching movement in OnlyFans clicks is robots until proven otherwise. Real visitors move both numbers."],
+    ["8", "Renaming a creator's short name no longer loses her traffic history, but it still breaks any link that uses it. Change it only when the custom domain is what people actually visit."],
 ], [0.4 * inch, 6.4 * inch])
 
 spacer(6)
 body(
-    "<i>Figures verified against production data and OnlyFans tracking on 9 "
+    "<i>Figures verified against production data and OnlyFans tracking on 18 "
     "September 2026. Questions on any single number should go to engineering with "
     "the domain and date range attached.</i>"
 )
