@@ -745,12 +745,19 @@ async function issueCertWithRetry(domain: string): Promise<string | null> {
   return null;
 }
 
-export async function provisionZone(domain: string): Promise<{
+export async function provisionZone(
+  domain: string,
+  opts: { force?: boolean } = {}
+): Promise<{
   ok: boolean;
   zoneFound: boolean;
   zone?: ZoneInfo;
   steps: ProvisionStep[];
 }> {
+  // force: proactively re-issue the origin cert on an ALREADY-HEALTHY domain
+  // (e.g. the monitor sees it expiring within 14 days). No effect on the
+  // unhealthy path, which always issues a cert anyway.
+  const { force = false } = opts;
   const steps: ProvisionStep[] = [];
   const log = (msg: string) => console.log(`[provisionZone ${domain}] ${msg}`);
 
@@ -790,6 +797,37 @@ export async function provisionZone(domain: string): Promise<{
     // the admin Heal button, auto-heal on add) skipped such a domain and
     // reported success. Six domains sat unproxied for two months that way.
     steps.push(await repairProxyState(zone.id, domain, log));
+
+    // Forced cert reissue. Without this, a healthy domain never reached cert
+    // issuance at all (it lives only in the else-branch below), so the monitor's
+    // `cf-heal <domain> --force` on an expiring cert was a no-op and Vercel's
+    // autoRenew was the only thing standing between the domain and a 526.
+    // Deliberately does NOT touch the proxy state — the domain is already orange
+    // and serving; we only want a fresh cert. This is proactive maintenance, not
+    // a heal, so "forceCertReissue" is intentionally absent from criticalSteps
+    // and a failure here never flips the overall ok.
+    if (force) {
+      if (process.env.VERCEL_API_TOKEN) {
+        log("Force flag set — triggering proactive Vercel cert reissue...");
+        const certUid = await issueCertWithRetry(domain);
+        steps.push(
+          certUid
+            ? { name: "forceCertReissue", ok: true, detail: `cert reissue uid=${certUid}` }
+            : {
+                name: "forceCertReissue",
+                ok: false,
+                detail: "forced cert reissue failed after 6 attempts",
+              }
+        );
+      } else {
+        log("Force flag set but VERCEL_API_TOKEN not set — skipping cert reissue");
+        steps.push({
+          name: "forceCertReissue",
+          ok: false,
+          detail: "skipped — VERCEL_API_TOKEN not set",
+        });
+      }
+    }
   } else {
     steps.push({
       name: "idempotencyCheck",
