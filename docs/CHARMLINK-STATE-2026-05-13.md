@@ -2,11 +2,12 @@
 
 This is the "pick it up cold weeks later" doc. Reads top-to-bottom and assumes
 no prior context. For deep history per phase, see `memory/` daily logs
-referenced inline. **Last updated:** 2026-09-01 (Phase 11 — auto-redirect
-sites: a creator row can now skip the landing page entirely and redirect
-straight to one link, plus a per-creator cloak kill switch and the
-escape-vs-stay split test readout at `/admin/experiment`. See §2 Phase 11 row
-and the auto-redirect SOP at `docs/CharmLink-AutoRedirect-SOP.pdf`).
+referenced inline. **Last updated:** 2026-09-18 (Phase 12 — the analytics
+trust pass: auto-redirect arrivals recorded server-side and bot-filtered,
+referrers actually captured, analytics rekeyed off the editable slug onto
+`creator_id`, and the admin list stopped hiding live sites. See §2 Phase 12 row
+and the trust ledger at `docs/CharmLink-Analytics-Trust-Ledger.pdf`, which is
+the manager-facing version of which figures to believe and from when).
 
 ---
 
@@ -36,9 +37,11 @@ in-app WebView.
 
 ## 2. Current Production Status
 
-Phases 1–11 are **shipped + live**. Last sweep: 2026-09-01, verified against
+Phases 1–12 are **shipped + live**. Last sweep: 2026-09-18, verified against
 production DB queries and live Vercel deployment/runtime-log checks (not just
-"the commit merged") — see §7.9 for how that verification worked.
+"the commit merged") — see §7.9 for how that verification worked. Phase 12 in
+particular was verified by diffing every metric both ways for all 76 creators
+before it shipped, not by reading the diff.
 Branch `main` clean, no pending PRs.
 
 Note for anyone reading an older copy: Phase 9 shipped on 2026-08-27/28 but its
@@ -51,7 +54,7 @@ they are unusually detailed.
 
 | Phase | What it added | Commit / PR |
 |---|---|---|
-| 1 | `isbot` v5.1.40, datacenter ASN list, Sec-Fetch heuristics, scraper UA list, HMAC-locked links API, server-side `cl_age` cookie | `b6605a7` (PR #1) |
+| 1 | `isbot` v5.1.40, datacenter ASN list *(app-side check has never fired — Vercel emits no `x-vercel-ip-asn`; see Phase 12. The CF **edge** WAF ASN rules are separate and do work)*, Sec-Fetch heuristics, scraper UA list, HMAC-locked links API, server-side `cl_age` cookie | `b6605a7` (PR #1) |
 | 2 | KV rate limiter (30/min links, 10/min age), honeypot DB writes, diag, 12-item cleanup | `cb550c8` (PR #2) |
 | 3 | Cloudflare orange-cloud, 6 WAF custom rules via legacy `/firewall/rules` API, Turnstile escalation, origin lock on `*.vercel.app` | `5771b4c` (PR #3) + `3fac2de` + `49c7898` |
 | 3.3 | Gated Bot Fight Mode behind `CHARMLINK_ENABLE_BFM` (default off — Free-tier BFM blocks real Chrome) | `e96d91b` (PR #6) |
@@ -67,6 +70,7 @@ they are unusually detailed.
 | 9 | **2026-08-27/28** The person/site split and the photo experiment. `charmlink_models` makes the **person** the unit: creator rows became her individual *sites*, with identity and the photo pool owned by the model and overlaid onto each site (so detaching restores the site rather than blanking it). Avatar carousel added — up to 10 candidate photos, one drawn per render, its id stamped on that session's events so a conversion attributes back to the photo on screen. Analytics rewritten to match: `getAnalyticsBatch` groups every query by `creator_slug` instead of running `getAnalytics` per creator (the per-creator fan-out had grown to ~490 concurrent queries against a `max=3` pool and was 500'ing the whole dashboard), then `rollupByModel` folds sites into one row per person. Also: clicks-over-time chart, Threads in-app detection, the `escape_fallback` beacon, admin dark mode + searchable roster. | `365ae8c`, `940e174`, `49fa104`, `012f07f`, `0a110b1`, `4fa883e`, `69db21b`, `6b1f0ed`, `b9a87a2` |
 | 10 | **2026-08-29/30** Attribution. Found that the in-app-browser escape had been recording **one visitor as two people** since 2026-05-11 — inflating pageviews, understating every CTR, making in-app traffic look like it never converted, and crediting the wrong photo in the A/B test (§7.11). Also found Thompson sampling had never actually run: the sampler was reading its posterior with a creator id where a model id was required, so the carousel was a plain even split from launch (§7.12). Fixed both, reset photo stats, and held every dashboard window at a `STATS_EPOCH` boundary so no figure reaches back into the inflated period. Added per-domain analytics (domain tabs on the creator card) — the rolled-up number had been hiding a 10x spread between one person's domains. Separately, the long-open "Instagram open-an-app dialog" theory was tested on-device and disproved (§10). | `6b1d8b9`, `fe944f7`, `2a81a52`, `e44b72d` (+ `b305ff6`/`e60a717`, the disproved gesture experiment) |
 | 11 | **2026-08-31/09-01** Escape-vs-stay split test (`lib/escape-experiment.ts`, scoped to one creator from `ESCAPE_EXPERIMENT_START`) plus its `/admin/experiment` readout. Then **auto-redirect sites**: `charmlink_creators.autoredirect_link_id` (nullable FK → `charmlink_links.id`, `ON DELETE SET NULL`) turns a creator row into a site with no landing page — a visitor is sent straight to that link via the same escape cascade, recorded as a new `autoredirect` event type. Reuses the creator row (not a new table) so redirect domains inherit Cloudflare/Vercel provisioning, model grouping, and — critically — the decoy cloak, so a crawler still gets the wholesome blog. Added a per-creator `cloak_enabled` kill switch (Profile tab) to exempt one creator from cloaking without affecting anyone else. Also fixed a bug where a newly created domain could register but never resolve. Full runbook: `docs/CharmLink-AutoRedirect-SOP.pdf`. | `275bd7f`, `5ed54d3`, `5c76576`, `728630b`, `adc7097`, `a946c3d`, `6ff3c5b`, `582a5ce` |
+| 12 | **2026-09-03/18** The analytics trust pass. Four faults, each of which had produced a confidently wrong number rather than an obvious break. (a) `autoredirect` events were rejected by the type CHECK constraint for the whole life of the feature, so three live redirect domains read as zero while OnlyFans recorded 152 clicks against the same links in a week — reported as "those sites are dead". Arrivals are now recorded server-side via `after()`, and the domain chips show arrivals instead of a hard 0. (b) 81% of those arrivals turned out to be automated with `is_bot` false on every row, because the datacenter-ASN gate never fires (Vercel emits no `x-vercel-ip-asn`); `lib/synthetic-traffic.ts` catches them by UA, analytics-only and never gating. Taken at face value the Instagram->OnlyFans handoff read 34% when the human figure is ~93%. (c) Top Referrers was 100% self-referential — the server read the `Referer` of its own fetch — now captured from `document.referrer` client-side. (d) Analytics keyed on the **editable** `creator_slug`, so renaming a creator detached its history or handed it to whoever took the freed slug: `kai`->`reynaa` stranded 845 views and 379 premium clicks, leaving bouncedat.club reporting less than half its real performance for a quarter. All read paths now key on `creator_id`, with a CI guard that fails on a fresh rename. Plus: "Today" resets at Pacific midnight not UTC; premium URLs no longer leak into the RSC payload; gray-cloud domains are detected and healed; a site with no `model_id` can no longer be invisible in the admin list, nor be created. | `df8def4`, `a88a9ee`, `d630863`, `ac32422`, `1301f1c`, `adddb02`, `73378e3`, `288e124`, `697772b`, `56bc412` |
 
 See `memory/archive-2026-05-10.md` for Phase 1–3 ship-day notes and
 `memory/2026-05-11.md` for everything Phase 4 + 5 day-of.
@@ -91,8 +95,9 @@ charmlink/
 │  ├─ r/[linkId]/page.tsx         ← Phase 4 per-link sensitive interstitial
 │  └─ robots.ts                   ← noindex everywhere
 ├─ lib/
-│  ├─ bot-detect.ts               ← layered detection (isbot + ASN + Meta UA + Sec-Fetch)
-│  ├─ datacenter-asns.ts          ← 13 hosting ASN list
+│  ├─ bot-detect.ts               ← gating detection (isbot + Meta UA + Sec-Fetch; ASN dormant)
+│  ├─ datacenter-asns.ts          ← 13 hosting ASN list (app-side check dormant)
+│  ├─ synthetic-traffic.ts        ← UA heuristics for the analytics is_bot flag ONLY
 │  ├─ scraper-detect.ts           ← 12 link-preview UA patterns
 │  ├─ event-bot-flag.ts           ← (Phase 8) resolves is_bot for events from middleware's x-is-bot header
 │  ├─ rate-limit.ts               ← Vercel KV-based limiter
@@ -467,9 +472,12 @@ this data going forward. Fixed alongside the main fix (`8109fa3`, `f3e0c7f`):
   "Bot Views" in the admin dashboard had never shown a nonzero number.
   Fix: both routes now resolve it server-side from the `x-is-bot` header
   middleware stamps on the forwarded request (`lib/event-bot-flag.ts`) —
-  that header reflects full detection (isbot + Meta-2026 UAs + ASN + honeypot
-  ban list) and can't be spoofed by the client, since middleware overwrites
-  whatever the caller sent.
+  that header reflects middleware's detection (isbot + Meta-2026 UAs +
+  Sec-Fetch + honeypot ban list) and can't be spoofed by the client, since
+  middleware overwrites whatever the caller sent. **Correction (Phase 12):**
+  the ASN layer named here has never fired — Vercel emits no
+  `x-vercel-ip-asn` — so this header is weaker than it reads. See the Phase 12
+  row.
 - **Every creator-page 404 was logged as a database error.** `app/[creator]/page.tsx`
   called `notFound()` — which signals by *throwing* — inside a `try` whose
   `catch` logged `"[creator:page] DB error"`. The page still rendered the

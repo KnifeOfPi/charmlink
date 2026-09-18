@@ -123,6 +123,21 @@ Steps to fix:
 
 Run this once after deploying Phase 3 to provision all existing custom domains:
 
+> **Prerequisite the backfill cannot satisfy itself:** the domain must already
+> be delegated to Cloudflare. Provisioning manages a *zone*, and a zone only
+> exists for a domain whose nameservers point at Cloudflare. As of 2026-09-18,
+> 4 of 76 live domains (`gyozagirl.com`, `morefromhoney.com`, `moreofbella.com`,
+> `seemorekawaii.com`) still answer from `*.domaincontrol.com` — GoDaddy —
+> straight to Vercel's `76.76.21.21`. They serve fine and carry ~1,957 premium
+> clicks a week, but they get no WAF, no bot rules and no edge cloaking, and
+> neither `cf-heal` nor the Cloudflare API can reach them. Fixing that is a
+> nameserver change at the registrar, not a backfill run.
+>
+> Check before assuming a domain is provisionable:
+> ```bash
+> dig +short NS yourdomain.com   # expect *.ns.cloudflare.com
+> ```
+
 ```bash
 # Pull production env (includes DATABASE_URL)
 vercel env pull .env.local

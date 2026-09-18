@@ -1,6 +1,6 @@
 # CharmLink — Competitor Intel (Link-in-Bio for OF creators)
 
-*Last updated: 2026-06-05 (PDT). Teardowns of 3 live competitor pages. All findings from public requests — no auth, no scraping of private data.*
+*Last updated: 2026-09-17 (PDT). Teardowns of 4 live competitor pages. All findings from public requests — no auth, no scraping of private data, and no attempt to get past anyone's bot protection.*
 
 This doc compares CharmLink's IG-evasion stack against live competitor link-in-bio
 pages found in the wild. **Bottom line up front:** CharmLink is the strongest of
@@ -107,3 +107,60 @@ For any new competitor page:
    `x-render-origin-server`, asset CDN hostnames) and whether CF is in front.
 6. For redirect-style destinations, `curl -sIL` the redirect path with both a
    real-browser UA and a scraper UA to see if the redirect leaks to bots.
+
+---
+
+## hiiii.me (added 2026-09-17)
+
+Teardown of `hiiii.me/itsreyna`. Read from the public gate only — the page puts
+Turnstile in front of everything, and no attempt was made to get past it.
+
+**Their architecture is the opposite trade-off to ours.** Every visitor, human
+or not, gets a "Just checking" interstitial with Cloudflare Turnstile, then a
+`POST /verify` before seeing any link. Nothing automated is ever counted or
+served.
+
+| | **CharmLink (ours)** | **hiiii.me** |
+|---|---|---|
+| Bot exclusion | Layered, after the fact | Turnstile on 100% of visitors |
+| Friction for real visitors | None — content immediately | An interstitial every time |
+| Crawler view | Full plausible article, 1,991 bytes, zero mentions of the model or OnlyFans | 444-byte empty page, OG tag literally reads "Links from hiiii.me", `noindex,nofollow,noarchive` |
+| In-app escape coverage | Meta only (Instagram/Threads) | Meta + Telegram + X `t.co` + SFSafariViewController |
+| Escape retry discipline | Once per session (`cl_escape_fired`) | Once, explicitly — "never worth a loop" |
+
+**Where we are genuinely better:** the decoy. Ours serves a complete, credible
+article ("Notes on packing light for shoulder-season backpacking"). Theirs
+serves an empty page whose own OG description self-identifies as a link page —
+that is a stronger signal to a classifier than anything ours emits. And we
+don't tax every real visitor with a challenge.
+
+**Where they are genuinely better:** measurement. Their gate makes the entire
+class of problem we spent September excavating — 81% bot contamination, zeros
+that meant two different things — structurally impossible. The friction is not
+paranoia; it is what keeps their denominator honest.
+
+**Their comments are the real find.** The gate's inline JS is heavily commented
+with empirical results, and two of them are worth knowing:
+
+- Every third-party browser on iOS is a WKWebView, so `window.webkit.messageHandlers`
+  is present in Chrome, Firefox and Edge exactly as in an app's webview. They
+  were flagging those as in-app and pushing them to Safari — "about a tenth of
+  iOS traffic" — taking people out of the browser they chose. **We do not have
+  this bug**: our detection is UA-only (`Instagram`/`threads`/`barcelona`), so
+  iOS Chrome is correctly left alone.
+- SFSafariViewController (what X bio links and Reddit open) *is* Safari — same
+  engine, same cookie jar, byte-identical UA. Escaping it gains nothing. They
+  detect it by an absent referrer on iOS and allow exactly one attempt; looping
+  cost them 644 sessions that "came back still inside and were shown the page
+  again, which cost conversions and protected nothing". We already only fire
+  once per session, so this one we had right.
+
+**What it prompted that mattered more than the teardown:** asking why they
+handle non-Meta in-app surfaces led to checking ours, which surfaced that 33.7%
+of our traffic is the Facebook in-app browser converting at 4.5% against
+Instagram's 63.3%. That turned out to be a paid Facebook campaign to
+hannazuki.com, not a bug — see the Phase 12 row in the state doc.
+
+**Not adopted:** Turnstile-first. We solved the measurement problem by
+filtering instead, and a challenge on cold Instagram traffic would cost more
+than the bot noise did.

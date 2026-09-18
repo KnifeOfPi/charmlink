@@ -222,13 +222,22 @@ that a rate is still noise, and presenting it as a winner is how A/B tests get
 misread.
 
 ### Analytics: per-model rollup, per-domain drill-down
-`getAnalyticsBatch` groups every query by `creator_slug` rather than running
+`getAnalyticsBatch` groups every query by `creator_id` rather than running
 `getAnalytics` once per creator — the old fan-out reached ~490 concurrent
 queries against a `max=3` pool and 500'd the whole dashboard. `rollupByModel`
 then folds sites into one row per person, recomputing rates from summed
 numerators and denominators (**never averaging across sites** — averaging a
 40,000-view domain at 30% with a 40-view domain at 100% reports 65% instead of
 the true 30.07%).
+
+Keyed on `creator_id`, never `creator_slug`. The slug is editable, and renaming
+one used to detach that site's entire history while the site kept serving — or
+hand it to whoever took the freed slug next. Both happened: `kai` became
+`reynaa` and stranded 845 pageviews and 379 premium clicks, so bouncedat.club
+reported less than half its real performance for a quarter; and one creator's
+first two visits showed under a different person who was later given the slug
+the first had used. `npm run check:event-types` now fails the build when an
+event slug maps to no live creator and is still taking traffic.
 
 Each creator card has **domain tabs**: every panel — views, premium clicks, CTR,
 IG traffic, clicks-over-time, device, referrers, link clicks, countries, photo
@@ -372,9 +381,11 @@ charmlink/
 │                                  #   dropdown-menu, input, label, popover, select,
 │                                  #   separator, switch, tabs, tooltip)
 ├── lib/
-│   ├── bot-detect.ts             # Layered detection: isbot + Meta-2026 UAs + ASN + KV ban list
+│   ├── bot-detect.ts             # Gating detection: isbot + Meta-2026 UAs + Sec-Fetch + KV ban
+│   │                               #   list. Its ASN rule is DORMANT — see below
 │   ├── scraper-detect.ts         # Link-preview scraper UA patterns (for the decoy bypass)
-│   ├── datacenter-asns.ts        # Hosting-provider ASN list
+│   ├── datacenter-asns.ts        # Hosting-provider ASN list — currently unreachable, see below
+│   ├── synthetic-traffic.ts      # UA heuristics for the analytics is_bot flag ONLY, never gating
 │   ├── event-bot-flag.ts         # Resolves is_bot for analytics events from middleware's x-is-bot
 │   ├── rate-limit.ts             # Vercel KV sliding-window limiter
 │   ├── kv-ban.ts                 # Honeypot IP ban list (24h TTL)
@@ -494,21 +505,24 @@ Three tables, all prefixed with `charmlink_`:
 | `id` | UUID | Primary key |
 | `type` | VARCHAR(20) | `pageview`, `click`, `escape_fallback` (an in-app escape that didn't take), or `autoredirect` (a visitor arriving at an auto-redirect site) |
 | `creator_id` | UUID | FK → `charmlink_creators.id` (SET NULL on delete) |
-| `creator_slug` | VARCHAR(100) | Creator slug (denormalized for query speed) |
+| `creator_slug` | VARCHAR(100) | The slug in force when the event happened. Written on every event and shown in the recent-events feed, but **never read as identity** — analytics key on `creator_id`, because a slug can be renamed or reused. Keeping it is what made the `kai` and `mysocials` renames diagnosable |
 | `link_label` | VARCHAR(255) | Clicked link label (null for pageviews) |
 | `link_url` | TEXT | Clicked link URL (null for pageviews) |
 | `link_type` | VARCHAR(20) | `social` or `premium` (null for pageviews) |
 | `session_id` | VARCHAR(100) | Random UUID per browser session |
 | `user_agent` | TEXT | Visitor User-Agent |
-| `referer` | TEXT | HTTP referer header |
+| `referer` | TEXT | `document.referrer`, captured in the browser. NOT the request's `Referer` header — that header is the page issuing the fetch, i.e. our own domain, which made every Top Referrers row self-referential until 17 Sep 2026. Empty means genuinely absent (Instagram strips it) and renders as "direct" |
 | `country` | VARCHAR(10) | Country code (from Vercel `x-vercel-ip-country` header) |
 | `device` | VARCHAR(20) | `mobile`, `tablet`, or `desktop` |
 | `is_bot` | BOOLEAN | Whether the visitor was identified as a bot |
 | `is_instagram` | BOOLEAN | Whether the visitor came from a Meta in-app browser (Instagram **or** Threads) |
 | `avatar_id` | UUID | FK → `charmlink_creator_avatars.id` — which carousel photo was on screen. Null for creators without a carousel |
+| `was_visible` | BOOLEAN | `document.visibilityState === "visible"` when the pageview beacon fired. False means the page was never on screen (an in-app link prefetch). Measurement only — no dashboard metric reads it. Null = not reported (pre-17 Sep rows, or a stale client bundle) |
 | `created_at` | TIMESTAMPTZ | Event timestamp |
 
-**Indexes**: `creator_slug`, `created_at`, plus unique indexes on `creators.slug` and `creators.custom_domain`.
+**Indexes**: `creator_slug`, `created_at`, a partial index on `was_visible` where not null, plus unique indexes on `creators.slug` and `creators.custom_domain`.
+
+**Also**: `charmlink_event_write_failures` records events that could not be inserted, so a rejected write stops being indistinguishable from no traffic. A non-empty recent window means `charmlink_events` is undercounting and every figure derived from it is low.
 
 ## Setup
 
@@ -770,7 +784,9 @@ Tested architecture supports 100+ creators with custom domains from a single dep
 
 - **Admin key**: All admin routes require `CHARMLINK_ADMIN_KEY` via Bearer token. Set a strong, random key.
 - **No credentials in code**: All secrets are environment variables. `CHARMLINK_LINK_TOKEN_SECRET` is the one exception worth knowing about: there's a hardcoded dev fallback for local development, but the app refuses to start in production (`NODE_ENV=production`) if the real secret isn't set, rather than silently signing tokens with a value that's public in this repo.
-- **Bot detection is defense-in-depth**: Multiple layers (UA matching, ASN checks, HMAC-locked links API, decoy cloaking, honeypot, rate limiting, Turnstile escalation) make it progressively harder for bots to access premium links.
+- **Bot detection is defense-in-depth**: Multiple layers (UA matching, HMAC-locked links API, decoy cloaking, honeypot, rate limiting, Turnstile escalation) make it progressively harder for bots to access premium links.
+- **The datacenter-ASN layer does NOT currently fire, and must not be counted as protection.** `lib/bot-detect.ts` step 3 reads `x-vercel-ip-asn`, which Vercel does not emit on any plan (checked against their header docs, and confirmed empirically — a request originating from GCP was not decoyed). So a scraper sending an ordinary desktop Chrome User-Agent passes every check. That is not theoretical: 81% of auto-redirect arrivals over 5-9 Sep 2026 were automated and `is_bot` was true for none of them, which is why `lib/synthetic-traffic.ts` exists to catch them by User-Agent after the fact. To activate the real gate, add a Cloudflare Transform Rule setting `cf-ip-asn` to `ip.src.asnum` on each zone — the code already reads that header, so no change is needed. Note this is **only** the app-side check: the Cloudflare WAF rules that managed-challenge 8 hosting ASNs at the edge are a separate mechanism and do work, so ASN defence is degraded, not absent.
+- **`lib/synthetic-traffic.ts` is analytics-only and must stay that way**: its rules are heuristics with real false-positive risk (a genuine visitor on an old iPhone trips one). Wiring them into `detectBot()` would serve the decoy to anyone they match, turning a miscounted visitor into a lost sale. Counting errors cost a row in a chart; gating errors cost money.
 - **Rate limiting**: The links API limits to 30 requests/minute per IP to prevent scraping.
 - **No NSFW in HTML source**: Premium link URLs never appear in server-rendered HTML, page source, or OG meta tags.
 - **Honeypot monitoring**: Check Vercel function logs for `[honeypot]` entries (each one now says `banned: true|false`) to identify bot IPs, or read `GET /api/admin/bans` for the current ban count.

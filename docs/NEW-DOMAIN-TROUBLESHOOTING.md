@@ -44,6 +44,7 @@ The 525 hits when **one** of three things races:
 | **A. Cert race** | `waitForVercelCert` timed out at 180s but Vercel issued the cert at ~190s. CNAME stayed gray, OR was flipped orange while Vercel was still presenting a stale SAN. | Re-runs full `gray → cert-issuance retry (6× backoff) → HEAD via Vercel IP → orange flip`. |
 | **B. SSL=strict pre-cert** | Standard settings get applied (SSL=Full Strict) *before* Vercel's cert is live for that hostname. CF tries to TLS-handshake with origin, fails, returns 525. | Skips re-applying settings if zone is already configured (idempotent); waits for cert; flips orange. |
 | **C. Already-orange stuck** | A previous provision attempt flipped to orange but the cert never validated. Subsequent ACME challenges can't reach Vercel through CF proxy → cert stays unverified forever. | Detects unhealthy domain via HEAD probe, **flips orange→gray**, re-triggers cert, then **flips back to orange**. |
+| **D. Silently gray-cloud** | The one that does NOT 525. A gray-cloud record serves a flawless `200` straight from Vercel, so the domain looks perfect while sitting entirely outside Cloudflare — no WAF, no bot rules, no origin hiding. Six of Hanna's domains sat like this from 2026-07-03 to 2026-09-01 and the admin dashboard showed them all green. | `repairProxyState` reads the record's actual proxied flag, flips gray→orange, then polls health 5× at 5s and reverts to gray if the flip broke it. Runs on the healthy path too, which is the whole point. |
 
 `provisionZone()` is **idempotent** — running it again is always safe.
 
@@ -57,8 +58,25 @@ The 525 hits when **one** of three things races:
 curl -sI https://yourdomain.com/ -o /dev/null -w "%{http_code}\n"
 ```
 
-- `200`, `307`, `308` → already healthy, no-op
 - `525`, `526`, `1016`, `522`, no response → unhealthy, proceed
+- `200`, `307`, `308` → **serving, but that does NOT mean provisioned.** Check
+  whether Cloudflare is actually in front of it before you stop:
+
+  ```bash
+  dig +short A yourdomain.com      # 104.21.* / 172.67.* / 188.114.* = proxied
+                                   # 76.76.21.21 = straight to Vercel, NOT proxied
+  curl -sI https://yourdomain.com/ | grep -i '^server:'   # expect: cloudflare
+  ```
+
+  A `200` from `76.76.21.21` is race D above. Treating "responds 200" as
+  "healthy" is the exact conflation that hid six unproxied domains for two
+  months — it short-circuited the repair in three separate places and reported
+  success. Run `cf-heal` anyway; it is idempotent and, on a genuinely healthy
+  domain, does nothing but correct the proxy flag.
+- `dig +short NS yourdomain.com` returning anything other than `*.ns.cloudflare.com`
+  means the domain is not delegated to Cloudflare at all. `cf-heal` cannot fix
+  that and neither can the Cloudflare API — the zone does not exist there. It
+  needs a nameserver change at the registrar.
 
 ### 1. Run cf-heal
 
