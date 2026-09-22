@@ -5,11 +5,16 @@
  * Usage:
  *   npm run cf-heal -- example.com          # heal a single domain
  *   npm run cf-heal -- --all                # heal every unhealthy domain in charmlink_creator_domains
+ *   npm run cf-heal -- example.com --force  # also proactively re-issue the origin cert on an
+ *                                           # already-healthy domain (used by the domain monitor
+ *                                           # when a cert expires within 14 days)
  *
  * Behavior per domain:
  *   1. HEAD https://${domain}/ — if < 500, log "healthy, no-op" and skip.
  *   2. If 5xx (especially 525): call provisionZone (idempotent gray→cert→orange fix).
- *   3. Log result.
+ *   3. With --force, a healthy domain additionally gets a proactive Vercel cert reissue
+ *      (proxy state untouched). A failed forced reissue is logged but is NOT a heal failure.
+ *   4. Log result.
  *
  * Exit code: 0 if all domains healed (or already healthy), 1 if any domain failed.
  *
@@ -70,7 +75,8 @@ async function isHealthy(domain: string): Promise<{ healthy: boolean; status?: n
 
 async function healDomain(
   domain: string,
-  provisionZone: (d: string) => Promise<{ ok: boolean; zoneFound: boolean; steps: Array<{ name: string; ok: boolean; detail?: string }> }>
+  provisionZone: (d: string, opts?: { force?: boolean }) => Promise<{ ok: boolean; zoneFound: boolean; steps: Array<{ name: string; ok: boolean; detail?: string }> }>,
+  force: boolean
 ): Promise<{ healed: boolean; wasHealthy: boolean; error?: string }> {
   const check = await isHealthy(domain);
 
@@ -87,7 +93,7 @@ async function healDomain(
   }
 
   try {
-    const result = await provisionZone(domain);
+    const result = await provisionZone(domain, { force });
 
     if (!result.zoneFound) {
       console.log(`  [cf-heal] ${domain}: ❌ CF zone not found — add zone to Cloudflare first`);
@@ -96,6 +102,23 @@ async function healDomain(
 
     const failedSteps = result.steps.filter((s) => !s.ok);
     const proxyStep = result.steps.find((s) => s.name === "proxyStateRepair");
+
+    // --force: provisionZone only adds this step on its already-healthy branch
+    // (the unhealthy path issues a cert as part of the normal heal). Surface it
+    // here so a proactive reissue — or its failure — is visible in the log; it
+    // never changes the healed/failed outcome below.
+    if (force && check.healthy) {
+      const forceStep = result.steps.find((s) => s.name === "forceCertReissue");
+      console.log(`  [cf-heal] ${domain}: 🔄 forced cert reissue requested`);
+      if (forceStep?.ok && forceStep.detail?.includes("already-exists")) {
+        // Vercel 409 no-op: the existing cert is still valid, nothing was renewed.
+        console.log(`  [cf-heal] ${domain}: ℹ️  cert still valid — Vercel returned no-op (autoRenew will handle renewal)`);
+      } else if (forceStep) {
+        console.log(`  [cf-heal] ${domain}: ${forceStep.ok ? "✅" : "⚠️ "} forceCertReissue — ${forceStep.detail ?? (forceStep.ok ? "ok" : "failed")}`);
+      } else {
+        console.log(`  [cf-heal] ${domain}: ⚠️  forceCertReissue did not run (domain went unhealthy before provisioning — normal heal path applies)`);
+      }
+    }
 
     if (result.ok) {
       // Distinguish "nothing needed doing" from "was silently unproxied and is
@@ -142,9 +165,14 @@ async function main() {
   // every one after the first, so a batch invocation reported a clean run having
   // never touched most of what was passed to it.
   const namedDomains = args.filter((a) => !a.startsWith("--"));
+  // --force used to be swallowed by the filter above and never acted on, so the
+  // monitor's "reissue this expiring cert" call silently did nothing. It now
+  // requests a proactive cert reissue on domains that are already healthy.
+  const force = args.includes("--force");
 
   if (!healAll && namedDomains.length === 0) {
-    console.error("Usage: npm run cf-heal -- <domain> [domain...]  OR  npm run cf-heal -- --all");
+    console.error("Usage: npm run cf-heal -- <domain> [domain...] [--force]  OR  npm run cf-heal -- --all [--force]");
+    console.error("  --force  proactively re-issue the origin cert on an already-healthy domain");
     process.exit(1);
   }
 
@@ -238,7 +266,7 @@ async function main() {
   let healedCount = 0;
 
   for (const domain of domains) {
-    const result = await healDomain(domain, provisionZone);
+    const result = await healDomain(domain, provisionZone, force);
     if (result.wasHealthy) {
       noopCount++;
     } else if (result.healed) {
