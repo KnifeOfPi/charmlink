@@ -158,18 +158,18 @@ def status(word):
 spacer(18)
 title("Analytics Trust Ledger")
 subtitle("CharmLink Reporting Note")
-body("Version 1.2 — 18 September 2026")
+body("Version 1.3 — 22 September 2026")
 body("Applies to: CharmLink admin dashboard and OnlyFans tracking links")
 spacer(16)
 
 body(
-    "Five separate faults in our analytics were found and fixed over the past three "
-    "weeks. Each one changes how the dashboard reads, and four of them produced "
+    "Six separate faults in our analytics were found and fixed over the past three "
+    "weeks. Each one changes how the dashboard reads, and five of them produced "
     "numbers that were confidently wrong rather than obviously broken."
 )
 body(
     "This note records which figures can be trusted, which should be ignored, and "
-    "the five dates that account for every apparent jump in the graphs. It is "
+    "the six dates that account for every apparent jump in the graphs. It is "
     "written to be read before the next weekly review."
 )
 spacer(10)
@@ -178,7 +178,7 @@ subhead("Contents")
 for item in [
     "1. If you read nothing else",
     "2. The trust ledger",
-    "3. Five dates that explain the graphs",
+    "3. Six dates that explain the graphs",
     "4. The one real decline",
     "5. Traps worth knowing about",
     "6. Standing rules",
@@ -250,6 +250,9 @@ grid([
      "Built on page views, so it read artificially low before the fix."],
     ["Photo performance", status("TRUST AFTER"), "30 Aug 2026",
      "Earlier results credited the wrong photo and cannot be recovered."],
+    ["Sent to OnlyFans (headline)", status("TRUST AFTER"), "22 Sep 2026",
+     "Counts taps AND redirect arrivals. Before this date the headline counted taps only, so "
+     "any creator with redirect domains was understated — Hanna by 2.3x on 22 Sep."],
     ["Auto-redirect arrivals", status("TRUST AFTER"), "9 Sep 2026",
      "Nothing was recorded before 3 Sep, and from 3-9 Sep the figure counted roughly five "
      "visitors for every real one: 81% of it was automated traffic that our filters did not "
@@ -263,10 +266,10 @@ grid([
 ], [1.45 * inch, 1.05 * inch, 1.0 * inch, 3.5 * inch])
 
 # ══════════════════════════════════════════════════════════════════════════════
-section("3. Five dates that explain the graphs")
+section("3. Six dates that explain the graphs")
 # ══════════════════════════════════════════════════════════════════════════════
 
-body("Any sharp step in the charts traces back to one of these five dates.")
+body("Any sharp step in the charts traces back to one of these six dates.")
 
 dated("30 Aug", "Views fell, CTR tripled, nothing actually changed", [
     "When an Instagram visitor was bounced out to Safari, the second page load was "
@@ -325,6 +328,26 @@ dated("18 Sep", "Four domains get their missing history back", [
     "rather than dividing it. The figures for earlier periods have changed, and "
     "the new ones are right. bouncedat.club rising 168 per cent on 18 September "
     "is recovery of traffic it always had, not new traffic.",
+])
+
+dated("22 Sep", "The headline figure starts counting the redirect domains", [
+    "The main number counted taps on a landing page and nothing else. The "
+    "redirect domains have no page to tap — they send the visitor straight to "
+    "OnlyFans — so everyone they sent was missing from it, and those domains "
+    "read as contributing nothing at all.",
+    "On the day this was found, Hanna's landing pages took 172 taps while her "
+    "redirect domains sent a further 224 people. The real figure was 396 and "
+    "the dashboard was showing 172. tap-dat.com by itself sent 207 people that "
+    "day, more than all her landing pages combined, and displayed as zero.",
+    "The headline is now <b>Sent to OnlyFans</b> and counts both routes, with "
+    "the split shown underneath. CTR deliberately still counts taps only, "
+    "because the redirect domains have no page views to measure a rate "
+    "against, and it now says so on the card.",
+    "<b>Read it as:</b> the number got wider, not the traffic. Expect a step up "
+    "on 22 September of roughly a fifth account-wide, and far more than that "
+    "for anyone running redirect domains. Nothing about the audience changed.",
+    "Found by Kayla, from the outside, in a day — after it had been wrong "
+    "since 4 September.",
 ])
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -417,11 +440,12 @@ grid([
     ["6", "The escape-versus-stay experiment is switched off. No test is running, and no result should be quoted from it."],
     ["7", "A sudden jump in traffic with no matching movement in OnlyFans clicks is robots until proven otherwise. Real visitors move both numbers."],
     ["8", "Renaming a creator's short name no longer loses her traffic history, but it still breaks any link that uses it. Change it only when the custom domain is what people actually visit."],
+    ["9", "The headline counts both routes to the offer; CTR counts taps only. If a number looks too low for a creator running redirect domains, check which of the two you are reading."],
 ], [0.4 * inch, 6.4 * inch])
 
 spacer(6)
 body(
-    "<i>Figures verified against production data and OnlyFans tracking on 18 "
+    "<i>Figures verified against production data and OnlyFans tracking on 22 "
     "September 2026. Questions on any single number should go to engineering with "
     "the domain and date range attached.</i>"
 )
