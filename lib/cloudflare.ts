@@ -719,30 +719,56 @@ async function headCheckViaVercelIP(
 }
 
 /**
+ * Vercel's HTTP pretest failed: it fetched the domain and did not get a
+ * Vercel-served response, so it refuses to attempt issuance (HTTP 449).
+ *
+ * On a NEW domain this is usually just DNS propagation and retrying is right.
+ * On an ALREADY-HEALTHY domain (the --force path) it never is: it means
+ * something in front of the origin is answering instead of us, and no number of
+ * retries changes that. hannazuki.com burned 6 attempts and ~3.5 minutes on it
+ * on 2026-09-22 — the zone was serving a Cloudflare managed challenge to
+ * datacenter IPs, which is also why Let's Encrypt could not renew the cert.
+ */
+const PRETEST_FAILURE = "http_pretest_domain_not_resolving_to_vercel_error";
+
+/**
  * Trigger Vercel cert issuance for a domain, retrying with exponential backoff.
  * Delays: 5s, 10s, 20s, 40s, 60s, 90s (6 attempts, worst case ~3.5 min).
  * HTTP 409 "already exists" counts as success.
  *
- * Throws if VERCEL_API_TOKEN is unset (cert issuance is only possible with Vercel creds).
- * Returns uid on success, null after all retries exhausted.
+ * `stopOnPretestFailure` gives up immediately on PRETEST_FAILURE — set it on the
+ * proactive/--force path, where the condition is structural rather than timing.
+ *
+ * Returns the uid on success, or the last error so the caller can report WHY.
+ * Returning a bare null here is what left the operator staring at "failed after
+ * 6 attempts" with no cause attached.
  */
-async function issueCertWithRetry(domain: string): Promise<string | null> {
+async function issueCertWithRetry(
+  domain: string,
+  opts: { stopOnPretestFailure?: boolean } = {}
+): Promise<{ uid: string; error?: undefined } | { uid: null; error: string }> {
   const DELAYS = [5000, 10000, 20000, 40000, 60000, 90000];
+  let lastError = "no attempt made";
   for (let i = 0; i < 6; i++) {
     console.log(`[provisionZone ${domain}] cert issuance attempt ${i + 1}/6`);
     try {
       const result = await issueCert(domain);
       console.log(`[provisionZone ${domain}] cert issued: uid=${result.uid}`);
-      return result.uid;
+      return { uid: result.uid };
     } catch (err) {
-      console.log(`[provisionZone ${domain}] cert attempt ${i + 1}/6 failed: ${err instanceof Error ? err.message : String(err)}`);
+      lastError = err instanceof Error ? err.message : String(err);
+      console.log(`[provisionZone ${domain}] cert attempt ${i + 1}/6 failed: ${lastError}`);
+      if (opts.stopOnPretestFailure && lastError.includes(PRETEST_FAILURE)) {
+        console.log(`[provisionZone ${domain}] pretest failure is structural — not retrying`);
+        return { uid: null, error: lastError };
+      }
     }
     if (i < 5) {
       console.log(`[provisionZone ${domain}] waiting ${DELAYS[i] / 1000}s before retry...`);
       await new Promise<void>((r) => setTimeout(r, DELAYS[i]));
     }
   }
-  return null;
+  return { uid: null, error: lastError };
 }
 
 export async function provisionZone(
@@ -809,14 +835,14 @@ export async function provisionZone(
     if (force) {
       if (process.env.VERCEL_API_TOKEN) {
         log("Force flag set — triggering proactive Vercel cert reissue...");
-        const certUid = await issueCertWithRetry(domain);
+        const cert = await issueCertWithRetry(domain, { stopOnPretestFailure: true });
         steps.push(
-          certUid
-            ? { name: "forceCertReissue", ok: true, detail: `cert reissue uid=${certUid}` }
+          cert.uid
+            ? { name: "forceCertReissue", ok: true, detail: `cert reissue uid=${cert.uid}` }
             : {
                 name: "forceCertReissue",
                 ok: false,
-                detail: "forced cert reissue failed after 6 attempts",
+                detail: `forced cert reissue failed — ${cert.error}`,
               }
         );
       } else {
@@ -869,12 +895,12 @@ export async function provisionZone(
       });
     }
 
-    // Step 4: Trigger Vercel cert issuance (POST /v4/certs?teamId=...).
-    // Account-scoped token silently 403s on /v4/certs without teamId — must pass it.
+    // Step 4: Trigger Vercel cert issuance (POST /v8/certs?teamId=...).
+    // Account-scoped token silently 403s without teamId — must pass it.
     // Retry 6× with exponential backoff; 409 = already issued = success.
     if (process.env.VERCEL_API_TOKEN) {
       log("Triggering Vercel cert issuance...");
-      const certUid = await issueCertWithRetry(domain);
+      const { uid: certUid, error: certError } = await issueCertWithRetry(domain);
       if (certUid) {
         steps.push({
           name: "issueCert",
@@ -916,7 +942,7 @@ export async function provisionZone(
         steps.push({
           name: "issueCert",
           ok: false,
-          detail: "Cert issuance failed after 6 attempts",
+          detail: `Cert issuance failed after 6 attempts — ${certError}`,
         });
         steps.push({
           name: "flipToProxied",
@@ -924,7 +950,7 @@ export async function provisionZone(
           detail: `skipped — cert issuance failed. Run: npm run cf-heal -- ${domain}`,
         });
         throw new Error(
-          `Cert issuance failed for ${domain} after 6 attempts. Run: npm run cf-heal -- ${domain}`
+          `Cert issuance failed for ${domain} after 6 attempts (${certError}). Run: npm run cf-heal -- ${domain}`
         );
       }
     } else {

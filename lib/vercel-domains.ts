@@ -137,10 +137,19 @@ export async function listDomains(): Promise<VercelDomainStatus[]> {
 }
 
 /**
- * Trigger Vercel cert issuance for a domain via POST /v4/certs?teamId=...
+ * Trigger Vercel cert issuance for a domain via POST /v8/certs?teamId=...
  *
  * Requires VERCEL_API_TOKEN env var. VERCEL_TEAM_ID is strongly recommended —
- * account-scoped token calls to /v4/certs silently 403 without it (2026-05-29 incident).
+ * account-scoped token calls to the certs endpoint silently 403 without it
+ * (2026-05-29 incident, then on /v4/certs).
+ *
+ * A 449 is NOT transient and must not be retried: it is
+ * `http_pretest_domain_not_resolving_to_vercel_error`, meaning Vercel's HTTP
+ * pretest fetched the domain and did not get a Vercel-served response. For an
+ * orange-clouded domain that means Cloudflare answered instead — e.g. with a
+ * managed challenge, which is what blocked hannazuki.com on 2026-09-22. Fix the
+ * zone, not the retry count. Let's Encrypt's HTTP-01 validator fails the same
+ * way, so a domain in this state also cannot renew.
  *
  * Returns { uid } on success, or throws on unexpected errors.
  * HTTP 409 ("cert already exists") is treated as success and returns { uid: "already-exists" }.
@@ -149,7 +158,7 @@ export async function issueCert(domain: string): Promise<{ uid: string }> {
   const token = process.env.VERCEL_API_TOKEN;
   if (!token) throw new Error("VERCEL_API_TOKEN is not set");
   const teamId = process.env.VERCEL_TEAM_ID;
-  const url = `https://api.vercel.com/v4/certs${teamId ? `?teamId=${encodeURIComponent(teamId)}` : ""}`;
+  const url = `https://api.vercel.com/v8/certs${teamId ? `?teamId=${encodeURIComponent(teamId)}` : ""}`;
 
   const res = await fetch(url, {
     method: "POST",
@@ -157,18 +166,29 @@ export async function issueCert(domain: string): Promise<{ uid: string }> {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ domains: [domain] }),
+    body: JSON.stringify({ cns: [domain] }),
   });
 
   if (res.status === 409) {
     return { uid: "already-exists" };
   }
 
-  const data = (await res.json()) as { uid?: string; error?: { message?: string } };
+  const data = (await res.json()) as {
+    uid?: string;
+    error?: { message?: string; code?: string; name?: string };
+  };
   if (!res.ok) {
-    throw new Error(
-      `Vercel cert API ${res.status}: ${data?.error?.message ?? res.statusText}`
-    );
+    // Report code, not just message. Vercel's cert errors frequently carry no
+    // `message` at all — the 449 pretest failure above is one — so reading only
+    // `message` rendered it as "Vercel cert API 449:" with nothing after the
+    // colon. That cost six blind retries against hannazuki.com on 2026-09-22
+    // before the body was read directly and named the cause.
+    const err = data?.error;
+    const detail =
+      [err?.code, err?.message].filter(Boolean).join(": ") ||
+      res.statusText ||
+      "no error body";
+    throw new Error(`Vercel cert API ${res.status}: ${detail}`);
   }
   if (!data.uid) {
     throw new Error(`Vercel cert API: response missing uid (status ${res.status})`);
