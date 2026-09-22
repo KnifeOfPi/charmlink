@@ -291,6 +291,64 @@ Note: ASN 32934 (Meta) is intentionally referenced in two rules — the `block-b
 Meta scrapers via UA, and `block-meta-asn` challenges any other Meta-originated request as
 defense-in-depth.
 
+### These rules also challenge machines we WANT to reach us
+
+Two consequences, both discovered the expensive way. Neither is a reason to drop
+the rules — they work, and real visitors are never affected, which is precisely
+why both went unnoticed for months.
+
+**1. They broke certificate renewal on 12 domains for four months.**
+
+Let's Encrypt validates from AWS and Google Cloud; Vercel's cert pretest comes
+from the same ranges. `challenge-datacenter-asns` lists 16509/14618 (AWS) and
+15169/396982 (GCP), so from 2026-05-10 every ACME HTTP-01 validation against a
+zone carrying that rule was answered with a managed-challenge interstitial. A
+validator does not run JavaScript, so validation failed silently and the certs
+simply never renewed.
+
+Nothing surfaced it until hannazuki.com became the first cert to come due
+(3 Jul -> 1 Oct). A probe of all 73 active domains at
+`/.well-known/acme-challenge/` from a datacenter IP on 2026-09-22 found 12
+returning `403 cf-mitigated=challenge`; the correlation with real issuance was
+exact — all 20 certs issued 3-22 Sep were unchallenged domains, and zero of the
+12 renewed.
+
+Fixed 2026-09-22 across 14 zones by exempting the ACME path. Three zones took a
+dedicated skip rule at position 1; 11 had already hit the Free plan's 5-custom-
+rule cap, so their existing challenge rules were narrowed in place with
+`and not (http.request.uri.path contains "/.well-known/acme-challenge/")`.
+Position matters: `POST /rulesets/{id}/rules` APPENDS, and custom rules evaluate
+in order, so a skip rule added after the challenging rule never executes.
+
+`charmlink:challenge-cf-bot` (`cf.client.bot`) challenges ACME validators
+independently of the ASN rule, so narrowing only the ASN rule leaves a zone
+broken. Both need the exemption.
+
+**Verify with CT, not `cf-heal`.** Vercel's pretest fetches `/`, not the ACME
+path, so `cf-heal --force` can still return 449
+(`http_pretest_domain_not_resolving_to_vercel_error`) after a correct fix. That
+is expected. The skip rule unblocks Let's Encrypt, which is what actually
+renews; judge by a new `not_after` in `crt.sh`.
+
+**2. Meta cannot fetch a landing page on these zones.**
+
+ASN 32934 is Meta. `block-meta-asn` challenges it, `challenge-datacenter-asns`
+challenges it again, and `block-bad-uas` blocks `facebookexternalhit` outright.
+That is the intended anti-scraping posture and it is fine for organic traffic.
+
+It is NOT fine for a **paid Facebook campaign**, because Meta crawls the
+destination URL for ad review and policy compliance from that same ASN. A
+reviewer — human or automated — sees a "Just a moment" interstitial rather than
+the page. Before running paid traffic to a CharmLink domain, exempt Meta's
+crawler on that zone, or expect review failures that look nothing like a WAF
+problem from inside Ads Manager.
+
+Unresolved as of 2026-09-22: hannazuki.com's Facebook campaign stopped dead at
+~11:00 PDT on 18 Sep (1,452 -> 0 in-app pageviews/day, non-Facebook traffic
+unaffected). The rules above are a candidate cause, but they predate the campaign
+by three months and it ran for four weeks regardless, so the timing is not
+explained. Check Ads Manager for a disapproval on that date before assuming it.
+
 ### Rotating rule content
 
 Because idempotency is keyed on `description`, changing a rule's expression or action without
