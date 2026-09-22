@@ -15,6 +15,7 @@ export interface TotalsData {
   botViews: number;
   totalClicks: number;
   premiumClicks: number;
+  autoredirectVisits: number;
   convertingSessions: number;
   uniqueSessions: number;
 }
@@ -701,15 +702,20 @@ export function AnalyticsDashboard({ summaries, totals, period, onPeriodChange }
           <StatCard label="Total Views" value={totals.totalViews} />
           <StatCard label="Human Views" value={totals.humanViews} />
           <StatCard label="Bot Views" value={totals.botViews} />
+          {/* Both routes to the offer in one number. A redirect domain records
+              an arrival and no click, so a premium-clicks-only headline read as
+              those domains contributing nothing — on 22 Sep tap-dat.com sent
+              207 people while all of Hanna's landing pages together sent 172,
+              and the figure shown was 172. */}
           <StatCard
-            label="Premium Clicks"
-            value={totals.premiumClicks}
-            sub={`${totals.convertingSessions} visitors (some click twice)`}
+            label="Sent to OnlyFans"
+            value={totals.premiumClicks + totals.autoredirectVisits}
+            sub={`${totals.premiumClicks.toLocaleString()} tapped · ${totals.autoredirectVisits.toLocaleString()} redirected`}
           />
           <StatCard
             label="Overall CTR"
             value={`${overallCtr}%`}
-            sub={`${totals.convertingSessions} of ${totals.humanViews} visitors`}
+            sub={`${totals.convertingSessions} of ${totals.humanViews} visitors, taps only`}
           />
           <StatCard label="Sessions" value={totals.uniqueSessions} />
         </div>

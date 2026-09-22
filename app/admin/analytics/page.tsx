@@ -16,6 +16,7 @@ export default function AnalyticsPage() {
   const [totals, setTotals] = useState<TotalsData>({
     totalViews: 0, humanViews: 0, botViews: 0,
     totalClicks: 0, premiumClicks: 0, convertingSessions: 0, uniqueSessions: 0,
+    autoredirectVisits: 0,
   });
   const [period, setPeriod] = useState<"today" | "7d" | "30d" | "all">("7d");
   const [loading, setLoading] = useState(true);

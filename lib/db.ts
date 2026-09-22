@@ -1608,6 +1608,17 @@ export async function getAnalyticsOverview(
    *  AnalyticsSummary.ctr for why this is not premiumClicks. */
   convertingSessions: number;
   uniqueSessions: number;
+  /**
+   * Visitors sent straight to the offer by an auto-redirect domain.
+   *
+   * These are NOT in totalClicks or premiumClicks — a redirect site records no
+   * click, because there is no page to tap. That separation is right for CTR
+   * (those domains have no views, so folding arrivals into either side of the
+   * ratio distorts it) but it made the dashboard's headline click figure
+   * understate how many people were actually sent to OnlyFans, by more than
+   * half on some days. Surfaced so the top-level number can add the two.
+   */
+  autoredirectVisits: number;
 }> {
   const cutoff = periodCutoff(period);
   const timeFilter = cutoff ? "AND created_at >= $1" : "";
@@ -1637,6 +1648,12 @@ export async function getAnalyticsOverview(
     params
   );
 
+  const arRow = await query<{ visits: string }>(
+    `SELECT COUNT(*) AS visits FROM charmlink_events e
+      WHERE ${AUTOREDIRECT_ARRIVALS} ${timeFilter}`,
+    params
+  );
+
   const pv = pvRow[0];
   const clk = clkRow[0];
 
@@ -1648,6 +1665,7 @@ export async function getAnalyticsOverview(
     premiumClicks: parseInt(clk?.premium ?? "0"),
     convertingSessions: parseInt(clk?.converting_sessions ?? "0"),
     uniqueSessions: parseInt(pv?.unique_sessions ?? "0"),
+    autoredirectVisits: parseInt(arRow[0]?.visits ?? "0"),
   };
 }
 

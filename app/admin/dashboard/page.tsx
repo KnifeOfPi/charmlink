@@ -10,6 +10,7 @@ interface Totals {
   botViews: number;
   totalClicks: number;
   premiumClicks: number;
+  autoredirectVisits: number;
   uniqueSessions: number;
 }
 
@@ -126,6 +127,17 @@ export default function DashboardPage() {
     ? ((totals.premiumClicks / totals.humanViews) * 100).toFixed(1)
     : "0.0";
 
+  // Everyone actually sent to the offer, from both kinds of site. A landing
+  // page records a premium click; an auto-redirect domain records an arrival
+  // and no click at all, because there is nothing to tap. Reporting only the
+  // clicks made the headline understate the real total by more than half on
+  // some days (22 Sep: 172 clicks against 224 arrivals), which read as the
+  // redirect domains contributing nothing.
+  //
+  // Deliberately NOT folded into CTR below: redirect domains have no views, so
+  // adding arrivals to the numerator of a views-based ratio would inflate it.
+  const sentToOffer = (totals?.premiumClicks ?? 0) + (totals?.autoredirectVisits ?? 0);
+
   if (!ready) return null;
 
   return (
@@ -157,8 +169,13 @@ export default function DashboardPage() {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
               <StatCard label="Total Creators" value={creatorCount} />
               <StatCard label="Page Views" value={totals?.humanViews ?? 0} sub={`${totals?.botViews ?? 0} bots filtered`} />
-              <StatCard label="Premium Clicks" value={totals?.premiumClicks ?? 0} accent />
-              <StatCard label="Overall CTR" value={`${ctr}%`} sub="premium / views" accent />
+              <StatCard
+                label="Sent to OnlyFans"
+                value={sentToOffer}
+                sub={`${(totals?.premiumClicks ?? 0).toLocaleString()} tapped · ${(totals?.autoredirectVisits ?? 0).toLocaleString()} redirected`}
+                accent
+              />
+              <StatCard label="Overall CTR" value={`${ctr}%`} sub="premium taps / views" accent />
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -166,7 +183,7 @@ export default function DashboardPage() {
                 <h2 className="text-white font-semibold mb-4">More Stats</h2>
                 <div className="grid grid-cols-2 gap-4">
                   <StatCard label="Total Views (incl bots)" value={totals?.totalViews ?? 0} />
-                  <StatCard label="Total Clicks" value={totals?.totalClicks ?? 0} />
+                  <StatCard label="Total Clicks" value={totals?.totalClicks ?? 0} sub="taps only, excl. redirects" />
                   <StatCard label="Unique Sessions" value={totals?.uniqueSessions ?? 0} />
                 </div>
               </div>
