@@ -8,8 +8,8 @@ data-harvesting bots that were previously able to bypass per-creator link protec
 | Area | Change | Reason |
 |---|---|---|
 | CF DNS | CNAME → `cname.vercel-dns.com`, **proxied=true** (orange cloud) | Routes traffic through CF WAF/CDN before it hits Vercel origin |
-| CF WAF | 6 custom rules (empty UA, Meta ASN, bad-UA list, datacenter ASNs, CF bot flag, Tor) via legacy `/firewall/rules` API | Blocks/challenges low-quality traffic at the edge — Free-plan compatible |
-| CF Bot Fight Mode | `fight_mode: true` + `enable_js: true` on every provisioned zone | CF's built-in bot heuristic challenge (Free plan); requires JS challenge support enabled |
+| CF WAF | Up to 6 custom rules (empty UA, Meta ASN, bad-UA list, datacenter ASNs, CF bot flag, Tor) via legacy `/firewall/rules` API. **The Free plan caps a zone at 5**, so zones differ: some carry 5, and the ACME exemption below had to be added as expression narrowing rather than a 6th rule on 11 zones | Blocks/challenges low-quality traffic at the edge — Free-plan compatible |
+| CF Bot Fight Mode | **OFF** unless `CHARMLINK_ENABLE_BFM=1` (see `lib/cloudflare.ts:994`). Free-tier BFM challenges real Chrome users. Measured `fight_mode: false, enable_js: true` on hannazuki.com, 2026-09-22 | Disabled deliberately; `enable_js` stays on because CF requires it alongside `fight_mode` when BFM *is* enabled |
 | CF Advanced Bot Protection | `ai_bots_protection: "block"` + `content_bots_protection: "block"` | Blocks GPTBot/ClaudeBot/Bytespider and content scrapers (Free plan) |
 | Turnstile escalation | `/api/links/[creator]` returns `turnstile_required` when bot confidence is low | Gives benefit-of-doubt to suspicious-but-unconfirmed visitors rather than blocking them |
 | Origin lock | `proxy.ts` returns 403 for creator slug paths on `*.vercel.app` | Forces real traffic through CF-proxied custom domain |

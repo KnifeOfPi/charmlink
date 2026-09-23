@@ -132,10 +132,76 @@ If `cf-heal` exits 1, check the script log output (it shows every step). Most co
 | `findZone failed: no zone matched` | Domain's nameservers don't point to Cloudflare yet | Have the registrar update NS records to CF, wait for propagation (up to 24h, usually <1h), retry. |
 | `cert attempt 6/6 failed: domain not verified` | Vercel's ACME challenge can't reach origin. Usually the CNAME is wrong, or CF is intercepting the challenge. | Manually verify CF Dashboard → DNS → record for domain points to `cname.vercel-dns.com`, **proxied=DNS-only (gray)**. Then re-run heal. |
 | `cert attempt N/6 failed: too many certificates` | Vercel rate limit (Let's Encrypt) — usually 50 certs/week/domain | Wait 1 hour; the rate limit slides off. Then retry. |
+| `cert attempt N/6 failed: Vercel cert API 449: http_pretest_domain_not_resolving_to_vercel_error` | Vercel fetched the domain before issuing and did not get a Vercel-served response — something in front of the origin answered instead. On an orange-clouded domain that is usually a Cloudflare challenge. | **Not transient — do not retry.** See "A domain serves fine but its certificate never renews" below. Note this 449 is EXPECTED on a healthy orange-clouded domain when only the ACME path is exempted, because the pretest fetches `/`. |
 | `setRecordProxied(true) failed: insufficient permissions` | Stale `CLOUDFLARE_API_TOKEN` env | Rotate token; redeploy worker / re-export env. |
 | `SAN limit exceeded` from Vercel | Vercel cert tops out around 100 SANs | Add domain to a 2nd Vercel project, or contact Vercel support. |
 
 If none of those match, screenshot the log + tell Cepheus / Vela. Don't keep retrying — one or two heal attempts is enough to surface any non-race cause.
+
+---
+
+## A domain serves fine but its certificate never renews
+
+**Completely different failure from the gray-cloud one above.** The site is up,
+visitors are unaffected, every dashboard is green — and the origin certificate
+is quietly counting down to expiry. When it lapses, Cloudflare (SSL mode Full
+strict) cannot handshake with the origin and returns **525 to everyone**. There
+is no warning shaped like an outage until it is one.
+
+### Why it happens
+
+Our own WAF rules challenge the machines that renew the certificate.
+`charmlink:challenge-datacenter-asns` covers AMAZON-02, AMAZON-AES and
+GOOGLE-CLOUD-PLATFORM; `charmlink:challenge-cf-bot` fires on `cf.client.bot`.
+Let's Encrypt validates from AWS and Google Cloud, and a validator cannot solve
+a JavaScript interstitial. This blocked renewal on 12 domains for four months
+(2026-05-10 → 2026-09-22) without producing a single visible symptom.
+
+### Detect it
+
+One probe, from any datacenter IP. A clean `404` is healthy — it means the
+request reached our app and there was no token at that path. A `403` is the bug:
+
+```bash
+for d in $(psql "$DATABASE_URL" -tAc \
+  "SELECT custom_domain FROM charmlink_creators WHERE is_active AND custom_domain IS NOT NULL"); do
+  code=$(curl -sS -o /dev/null --max-time 15 -w '%{http_code}' \
+    "https://$d/.well-known/acme-challenge/probe")
+  [ "$code" = "403" ] && echo "BLOCKED: $d"
+done
+```
+
+Run this whenever WAF rules change. It is the only cheap check that catches the
+failure before a cert expires.
+
+### Fix it
+
+Exempt the ACME path on **both** challenge rules — narrowing only the ASN rule
+leaves `challenge-cf-bot` still breaking validation:
+
+```
+and not (http.request.uri.path contains "/.well-known/acme-challenge/")
+```
+
+`POST /rulesets/{id}/rules` **appends**, and custom rules evaluate in order, so a
+skip rule added after the challenging rule never executes. Insert at
+`"position": {"index": 1}`. On a zone already at the Free plan's 5-rule cap
+there is no room for a 6th rule — narrow the existing rules' expressions in
+place instead, which has the same effect and no ordering risk.
+
+### Verify with CT, not cf-heal
+
+```bash
+curl -s "https://crt.sh/?q=<domain>&output=json" | head -c 2000
+```
+
+Look for a **Let's Encrypt** entry with a `not_after` beyond the old one. A
+Google Trust entry is the Cloudflare *edge* cert, which is a different
+certificate and never the one at risk — do not read it as success.
+
+`cf-heal --force` can still return 449 after a correct fix, because Vercel's
+pretest fetches `/` rather than the ACME path. That is expected, not a
+regression.
 
 ---
 
@@ -236,6 +302,27 @@ Symptom: new CharmLink domain shows 525 SSL handshake failed for >15min
   │  Click [ Heal domain ]. Wait ~3 min.     │
   │  Row goes green ✅. No engineer needed.   │
   └──────────────────────────────────────────┘
+```
+
+```
+Symptom: NONE. The site is up and every dashboard is green, but the
+         origin cert is counting down to expiry. This one has no
+         symptom until it is a 525 for every visitor.
+
+  Detect (run after ANY WAF rule change):
+  ┌────────────────────────────────────────────────────────┐
+  │  curl -so/dev/null -w '%{http_code}' \                  │
+  │    https://DOMAIN/.well-known/acme-challenge/probe     │
+  │                                                        │
+  │  404 = healthy.  403 = cert cannot renew.              │
+  └────────────────────────────────────────────────────────┘
+
+  Confirm renewal (NOT via cf-heal — its 449 is expected):
+  ┌────────────────────────────────────────────────────────┐
+  │  curl -s "https://crt.sh/?q=DOMAIN&output=json"        │
+  │  Want: a LET'S ENCRYPT entry with a later not_after.   │
+  │  A Google Trust entry is the CF edge cert — not this.  │
+  └────────────────────────────────────────────────────────┘
 ```
 
 ---
