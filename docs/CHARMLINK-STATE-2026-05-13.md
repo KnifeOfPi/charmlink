@@ -39,8 +39,10 @@ in-app WebView.
 
 ## 2. Current Production Status
 
-Phases 1–13 are **shipped + live**; `main` = `9113a84`, production deployment
-`dpl_AuxqZnDxmxVySfncWaxR27dgNqui` READY (checked 2026-09-25). Phase 12 sweep:
+Phases 1–13 are **shipped + live** (verified against the Vercel production
+deployment on 2026-09-25). This line deliberately names no commit: every docs
+commit moves `main`, so a pinned hash here is stale by the next push — read
+`git log origin/main` and the Vercel dashboard instead. Phase 12 sweep:
 2026-09-18, verified against
 production DB queries and live Vercel deployment/runtime-log checks (not just
 "the commit merged") — see §7.9 for how that verification worked. Phase 12 in
@@ -220,8 +222,11 @@ When a request hits `hannazuki.com/waifuzukii`:
 | `BLOB_READ_WRITE_TOKEN` | Auto-injected by Vercel when a Blob store is connected to the project. Required at runtime for `/api/admin/avatar` uploads. **Currently enabled** — store `charmlink-blob` (id `store_fmeJquaTvcKmJHZU`, public, iad1) connected 2026-05-13 via API. If you ever add Blob to a fresh project, **force a redeploy afterwards** — builds that completed before the env var was injected won't have access to the token. | yes (prod) |
 
 Token / secret storage off-repo:
-- CF token: `~/.openclaw/cloudflare-token` (currently `cfat_sUuTw...` — **lacks
-  `cache:purge` scope**; refresh if you need bulk edge flush). CF Account ID
+- CF token: `~/.openclaw/cloudflare-token` (currently `cfat_sUuTw...`). It is
+  zone-scoped and mostly read-only: it **lacks `cache:purge`**, and on
+  2026-09-22 it could not write WAF rules (Zone → WAF → Edit) or read audit
+  logs (Account → Audit Logs → Read). The Phase 13 WAF fix needed a token with
+  WAF Edit; check which token is on the box before assuming either works. CF Account ID
   `1a52ed006170bc939725fbff79827c23`.
 
 ---
