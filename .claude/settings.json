@@ -19,6 +19,7 @@
       "mcp__Vercel__get_project",
       "mcp__Vercel__list_projects",
       "mcp__Vercel__list_teams",
+      "mcp__Vercel__search_vercel_documentation",
       "Bash(git status)",
       "Bash(git status *)",
       "Bash(git diff *)",
