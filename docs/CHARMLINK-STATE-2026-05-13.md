@@ -2,7 +2,9 @@
 
 This is the "pick it up cold weeks later" doc. Reads top-to-bottom and assumes
 no prior context. For deep history per phase, see `memory/` daily logs
-referenced inline. **Last updated:** 2026-09-18 (Phase 12 — the analytics
+referenced inline. **Last updated:** 2026-09-25 (Phase 13 — our own WAF rule
+had been blocking certificate renewal on 12 domains; fixed and live. Open items
+refreshed in §10). Before that, 2026-09-18 (Phase 12 — the analytics
 trust pass: auto-redirect arrivals recorded server-side and bot-filtered,
 referrers actually captured, analytics rekeyed off the editable slug onto
 `creator_id`, and the admin list stopped hiding live sites. See §2 Phase 12 row
@@ -37,7 +39,9 @@ in-app WebView.
 
 ## 2. Current Production Status
 
-Phases 1–12 are **shipped + live**. Last sweep: 2026-09-18, verified against
+Phases 1–13 are **shipped + live**; `main` = `9113a84`, production deployment
+`dpl_AuxqZnDxmxVySfncWaxR27dgNqui` READY (checked 2026-09-25). Phase 12 sweep:
+2026-09-18, verified against
 production DB queries and live Vercel deployment/runtime-log checks (not just
 "the commit merged") — see §7.9 for how that verification worked. Phase 12 in
 particular was verified by diffing every metric both ways for all 76 creators
@@ -898,7 +902,10 @@ These were on the radar but not done. Pick up as needed.
   click records that were exact throughout — and remain queryable for
   forensics. Removing `clampToEpoch` restores the full view, which is why
   `periodCutoff` still returns the nullable "all time" it can no longer reach.
-- **Top Referrers is broken and always has been.** The panel reports each
+- ~~**Top Referrers is broken and always has been.**~~ **Fixed 2026-09-17
+  (Phase 12):** the beacon now sends `document.referrer` and the route stores
+  only that. Verified live 22–25 Sep: `l.instagram.com` 4,661 views, `t.co` 790.
+  Original note, kept for history: The panel reports each
   domain's own hostname as its top referrer. Cause: `/api/pageview` reads
   `request.headers.get("referer")`, but the beacon is POSTed *from the creator
   page*, so the Referer is that page's own URL. The panel is just re-reporting
@@ -908,7 +915,13 @@ These were on the radar but not done. Pick up as needed.
   hannazuki.com traffic flood below could not be identified from our own data.
   Fix would be to capture `document.referrer` client-side and send it in the
   beacon body — the browser-side value is the actual upstream page.
-- **hannazuki.com is absorbing a large low-converting traffic flood.** It is
+- ~~**hannazuki.com is absorbing a large low-converting traffic flood.**~~
+  **Source identified, then it stopped.** Once referrers were captured, the
+  flood turned out to be a **paid Facebook campaign** (Facebook in-app browser,
+  from ~21 Aug), converting at 1.77% click→sub on a free account. It stopped
+  abruptly at ~11:00 PDT on 18 Sep (1,452 → 0 Facebook pageviews/day; her
+  non-Facebook traffic was unaffected). The operator closed it on 24 Sep as a
+  one-off. Original note: It is
   ~53% of Hanna Zuki's total views at ~5% CTR, against 60%+ on her IG-bio
   domains. It was her *best* domain at 34–74% CTR through 2026-08-10, then took
   a ~50x traffic increase in the week of 08-17 and CTR collapsed to ~5%. The
@@ -919,6 +932,25 @@ These were on the radar but not done. Pick up as needed.
   trailing space, pointing at `http://vip.luvhannazuki.com/` over plain HTTP)
   is deactivated, while both high-converting domains lead with a *free* offer
   that takes ~37% of their clicks.
+
+- **Open as of 2026-09-25:**
+  - **hannazuki.com origin cert must renew before 1 Oct.** The ACME path was
+    unblocked on 22 Sep (Phase 13). Confirm with a new Let's Encrypt
+    `not_after` in `crt.sh` — not with `cf-heal`, whose 449 is expected. A
+    scheduled check fires 28 Sep. The other 11 affected zones need the same
+    check as their certs come due.
+  - **Domain monitor noise and coverage.** It re-posts unchanged state ~3×/day,
+    counts healthy no-op heals as "healed", and checks 53 domains when 73 active
+    creators have one. It should alert on threshold crossings, source its list
+    from the DB, and run the ACME-path probe from
+    `docs/NEW-DOMAIN-TROUBLESHOOTING.md`.
+  - **Bella's 4 GoDaddy domains** (gyozagirl.com, morefromhoney.com,
+    moreofbella.com, seemorekawaii.com) are not on Cloudflare at all and carry
+    ~1,950 premium clicks/week. Moving them needs registrar access.
+  - **viewmysite.com is a parking page, not ours.** It serves a registrar
+    `/lander`, yet creator slug `seta` is active with it as its custom domain
+    and has recorded zero events. Deactivate the row or buy the domain.
+  - **`getAvatarStatsBySlug` is model-wide, not per-domain.**
 
 ### 10.1 RUNNING EXPERIMENT — escape vs stay (fav-site.com, started 2026-08-30)
 
@@ -1018,7 +1050,9 @@ numbers joined on the per-link tracking codes already in the premium URLs
 4. If shipping new code: spawn Vela with a **single fat CLI call** (per the
    ACP-vs-CLI rule in `CODING.md`). KOPi prefers "just deploy yourself" — no
    "merge first or test preview?" check-ins. Verify diff, sanity-check, push,
-   verify live.
+   verify live. In a claude.ai cloud session, a push to `main` is gated as a
+   production deploy and needs the operator's explicit go-ahead in that session;
+   pushing to the working branch is not.
 5. Anything CF-related: check both legacy `/zones/<id>/firewall/rules` AND
    modern `/zones/<id>/rulesets` — edge rules can silently block what app code
    expects to handle.
@@ -1029,7 +1063,12 @@ numbers joined on the per-link tracking codes already in the premium URLs
    whether the *counting* is wrong before theorising about visitors. The tell
    in both cases was an internal contradiction — a segment converting the wrong
    way round, an allocation that was too even — not an implausible headline.
-7. **`AGENTS.md` is not boilerplate.** This repo runs a Next.js whose APIs
+7. **Supabase and Vercel tools come from claude.ai connectors.** Their
+   approval prompts are set per tool at <https://claude.ai/customize/connectors>,
+   not by `.claude/settings.json` — an allow rule there does not stop them. Note
+   that `execute_sql` can also write to production; keep `apply_migration` on
+   approval.
+8. **`AGENTS.md` is not boilerplate.** This repo runs a Next.js whose APIs
    differ from what most models remember; read the relevant guide under
    `node_modules/next/dist/docs/` before writing code against a framework API.
 

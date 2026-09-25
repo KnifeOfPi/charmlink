@@ -707,11 +707,14 @@ Tested architecture supports 100+ creators with custom domains from a single dep
 - Country detection uses Vercel's `x-vercel-ip-country` header (automatic on Vercel)
 - Clicks through `/api/redirect/[linkId]` write a second, server-side row carrying a sentinel session id. It is **excluded** from click counts by `DEDUPED_CLICKS` but deliberately **kept** — the gap between "beacon fired" and "redirect served" is the funnel signal that measured age-gate completion at 98.8%. Don't delete those rows chasing a cleaner schema.
 
-> **Known broken: Top Referrers.** `/api/pageview` reads the `Referer` header,
-> but the beacon is POSTed *from the creator page*, so that header is the page's
-> own URL — the panel just re-reports each domain's pageview count. The real
-> upstream source is not captured anywhere. Fixing it means sending
-> `document.referrer` from the client in the beacon body.
+> **Top Referrers — fixed 2026-09-17.** Until then `/api/pageview` read the
+> request's `Referer` header, which is the creator page's own URL because the
+> beacon is POSTed from that page, so the panel just re-reported each domain's
+> pageview count. The beacon now sends `document.referrer` in its body and the
+> route stores only that, with no fallback to the header. Measured 22–25 Sep:
+> `l.instagram.com` 4,661 views, `t.co` 790, no referrer 1,143. A blank referrer
+> is normal — Instagram's in-app browser often strips it. Rows before
+> 2026-09-17 still carry the old self-referential value.
 
 ### Metrics available
 | Metric | Description |
@@ -725,7 +728,7 @@ Tested architecture supports 100+ creators with custom domains from a single dep
 | Social Clicks | Clicks on social links (Twitter, TikTok, etc.) |
 | CTR | Premium clicks ÷ human views × 100 |
 | Instagram Traffic | Views from Instagram's (or Threads') in-app browser |
-| Top Referrers | Top 10 referer hostnames — **currently self-referential, see the note above** |
+| Top Referrers | Top 10 upstream hostnames from `document.referrer` (correct from 2026-09-17; see the note above) |
 | Device Breakdown | Mobile / Desktop / Tablet split |
 | Country Breakdown | Top 10 countries by view count |
 | Link Breakdown | Clicks per link, sorted by popularity |

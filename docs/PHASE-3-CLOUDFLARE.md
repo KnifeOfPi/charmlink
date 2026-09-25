@@ -343,11 +343,12 @@ the page. Before running paid traffic to a CharmLink domain, exempt Meta's
 crawler on that zone, or expect review failures that look nothing like a WAF
 problem from inside Ads Manager.
 
-Unresolved as of 2026-09-22: hannazuki.com's Facebook campaign stopped dead at
+Not investigated further: hannazuki.com's Facebook campaign stopped dead at
 ~11:00 PDT on 18 Sep (1,452 -> 0 in-app pageviews/day, non-Facebook traffic
-unaffected). The rules above are a candidate cause, but they predate the campaign
-by three months and it ran for four weeks regardless, so the timing is not
-explained. Check Ads Manager for a disapproval on that date before assuming it.
+unaffected). The rules above were a candidate cause, but they predate the
+campaign by three months and it ran for four weeks regardless, so the timing was
+never explained. On 2026-09-24 the operator judged it a one-off and closed it.
+If paid traffic is ever restarted, check Ads Manager for a disapproval first.
 
 ### Rotating rule content
 
