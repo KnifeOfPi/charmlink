@@ -75,7 +75,7 @@ async function isHealthy(domain: string): Promise<{ healthy: boolean; status?: n
 
 async function healDomain(
   domain: string,
-  provisionZone: (d: string, opts?: { force?: boolean }) => Promise<{ ok: boolean; zoneFound: boolean; steps: Array<{ name: string; ok: boolean; detail?: string }> }>,
+  provisionZone: (d: string, opts?: { force?: boolean }) => Promise<{ ok: boolean; zoneFound: boolean; lookupError?: string; steps: Array<{ name: string; ok: boolean; detail?: string }> }>,
   force: boolean
 ): Promise<{ healed: boolean; wasHealthy: boolean; error?: string }> {
   const check = await isHealthy(domain);
@@ -95,6 +95,10 @@ async function healDomain(
   try {
     const result = await provisionZone(domain, { force });
 
+    if (result.lookupError) {
+      console.log(`  [cf-heal] ${domain}: ❌ CF zone lookup failed — ${result.lookupError}`);
+      return { healed: false, wasHealthy: false, error: result.lookupError };
+    }
     if (!result.zoneFound) {
       console.log(`  [cf-heal] ${domain}: ❌ CF zone not found — add zone to Cloudflare first`);
       return { healed: false, wasHealthy: false, error: "CF zone not found" };

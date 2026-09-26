@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDomainStatus, listDomains } from "../../../../../lib/vercel-domains";
-import { checkDnsStatus } from "../../../../../lib/cloudflare-dns";
+import { checkDnsStatus, checkDnsStatusBulk, type DnsStatus } from "../../../../../lib/cloudflare-dns";
 
 export const runtime = "nodejs";
 
@@ -41,7 +41,7 @@ async function probeHealth(domain: string): Promise<{ health: "healthy" | "broke
  * dashboard. null = we couldn't tell (no CF token, or the zone lookup failed).
  */
 function deriveProxied(
-  cloudflare: { zoneFound?: boolean; records: Array<{ type: string; proxied: boolean }> } | null
+  cloudflare: Pick<DnsStatus, "records"> | null
 ): boolean | null {
   if (!cloudflare || cloudflare.records.length === 0) return null;
   const routable = cloudflare.records.filter((r) =>
@@ -60,15 +60,20 @@ function deriveProxied(
  * deriveProxied reports as `null` ("couldn't tell"), i.e. no badge at all. Four
  * of the fleet's highest-traffic domains sat on GoDaddy nameservers, fully
  * origin-exposed, rendering as healthy-and-green the whole time. This surfaces
- * that as its own explicit state. null = CF token missing, so genuinely unknown.
+ * that as its own explicit state. null = genuinely unknown: CF token missing, or
+ * the CF API call failed (rate limit, bad/expired token).
  */
 function deriveOnCloudflare(
-  cloudflare: { zoneFound?: boolean } | null,
+  cloudflare: Pick<DnsStatus, "zoneFound" | "lookupError"> | null,
   cfEnabled: boolean
 ): boolean | null {
   if (!cfEnabled) return null; // no token — we truly can't say
-  if (!cloudflare) return false; // lookup ran and found no zone
-  return cloudflare.zoneFound === true;
+  if (!cloudflare) return null; // lookup never produced an answer
+  if (cloudflare.zoneFound) return true;
+  // A failed API call (rate limit, bad token) is "couldn't tell", not "no zone".
+  // Reporting it as false is what flagged every domain "Not on Cloudflare".
+  if (cloudflare.lookupError) return null;
+  return false; // CF answered: no zone for this domain
 }
 
 export async function GET(request: NextRequest) {
@@ -98,20 +103,19 @@ export async function GET(request: NextRequest) {
       const domains = await listDomains();
       const cfEnabled = !!process.env.CLOUDFLARE_API_TOKEN;
 
+      // One zone listing for the whole fleet instead of per-domain lookups —
+      // the per-domain fan-out is what tripped CF's rate limit.
+      const cfStatuses = cfEnabled
+        ? await checkDnsStatusBulk(domains.map((d) => d.name))
+        : new Map<string, DnsStatus>();
+
       // Enrich each domain with a real server-side health probe (+ CF DNS status
       // when available). Probing here instead of in the browser fixes the false
       // "SSL broken" badge that cross-origin fetch errors used to trigger.
       const enriched = await Promise.all(
         domains.map(async (d) => {
           const probe = await probeHealth(d.name);
-          let cloudflare = null;
-          if (cfEnabled) {
-            try {
-              cloudflare = await checkDnsStatus(d.name);
-            } catch {
-              cloudflare = null;
-            }
-          }
+          const cloudflare = cfStatuses.get(d.name) ?? null;
           return {
             ...d,
             ...probe,

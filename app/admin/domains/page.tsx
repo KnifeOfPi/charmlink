@@ -27,6 +27,9 @@ interface VercelDomain {
    *  nameservers, never onboarded — worse than gray and NOT fixable by Heal
    *  (needs a CF zone + registrar NS repoint). null = couldn't determine. */
   onCloudflare?: boolean | null;
+  /** Raw CF DNS status from the status route. lookupError set = the CF API
+   *  call failed (rate limit, bad token), so onCloudflare/proxied are unknown. */
+  cloudflare?: { lookupError?: string } | null;
   healing?: boolean;
   healMessage?: string;
 }
@@ -179,7 +182,15 @@ export default function DomainsPage() {
         // Serving, but still outside Cloudflare — the failure the old flow hid.
         setError(`${domain}: serving (HTTP ${data.postStatus ?? "?"}) but still NOT proxied`);
       } else {
-        setError(`${domain}: still broken after heal (HTTP ${data.postStatus ?? "?"})`);
+        // Name the step that failed (e.g. findZone: rate limited) — otherwise a
+        // CF API outage reads as an unexplained "still broken".
+        const failed = (data.steps ?? [])
+          .filter((s) => !s.ok)
+          .map((s) => `${s.name}: ${s.detail ?? "failed"}`);
+        setError(
+          `${domain}: still broken after heal (HTTP ${data.postStatus ?? "?"})` +
+            (failed.length > 0 ? ` — ${failed.join("; ")}` : "")
+        );
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Network error";
@@ -206,7 +217,14 @@ export default function DomainsPage() {
       });
       const data = await res.json();
       if (res.ok) {
-        setSuccess(`✅ ${newDomain} added to Vercel`);
+        // 207 = added, but a step (usually Cloudflare) failed. Don't paint that
+        // green: a skipped CF step means no DNS record, i.e. a dead domain.
+        const stepErrors: string[] = Array.isArray(data.errors) ? data.errors : [];
+        if (stepErrors.length > 0) {
+          setError(`${newDomain} added with problems — ${stepErrors.join(" · ")}`);
+        } else {
+          setSuccess(`✅ ${newDomain} added to Vercel`);
+        }
         setNewDomain("");
         loadDomains();
       } else {
@@ -356,6 +374,14 @@ export default function DomainsPage() {
                         title="This domain is on foreign nameservers and was never onboarded to Cloudflare — origin exposed, no WAF/DDoS. Heal CANNOT fix this: it needs a CF zone created and the registrar's nameservers repointed. Populate the CF zone's proxied CNAME BEFORE switching NS, or the domain goes dark during propagation."
                       >
                         Not on Cloudflare
+                      </span>
+                    )}
+                    {domain.cloudflare?.lookupError && (
+                      <span
+                        className="text-xs px-2 py-0.5 rounded-full bg-gray-800 text-gray-300"
+                        title={`Couldn't reach the Cloudflare API, so Cloudflare status is unknown (this is NOT "not on Cloudflare"). Usually a rate limit — hit Refresh in a minute. If it persists, check CLOUDFLARE_API_TOKEN. Error: ${domain.cloudflare.lookupError}`}
+                      >
+                        CF check failed
                       </span>
                     )}
                     {domain.health !== "broken" && domain.onCloudflare !== false && domain.proxied === false && (

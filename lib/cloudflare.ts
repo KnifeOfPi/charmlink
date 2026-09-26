@@ -14,6 +14,7 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { issueCert } from "./vercel-domains";
+import { cfRequest } from "./cf-http";
 
 const execFileAsync = promisify(execFile);
 
@@ -41,7 +42,7 @@ async function cfFetch<T>(
   path: string,
   body?: unknown
 ): Promise<CFResponse<T>> {
-  const res = await fetch(`${CF_BASE}${path}`, {
+  const res = await cfRequest(`${CF_BASE}${path}`, {
     method,
     headers: {
       Authorization: `Bearer ${getToken()}`,
@@ -145,17 +146,21 @@ export async function verifyToken(): Promise<{
 /**
  * Find zone for a domain, trying the domain as-is then stripping subdomains.
  * e.g. "www.hollyxo.com" → finds zone for "hollyxo.com"
+ *
+ * Returns null ONLY when CF answered and has no such zone. An API failure
+ * (rate limit, bad/expired token) throws — it used to be swallowed as null,
+ * which reported real zones as missing and made domain-add skip provisioning.
  */
 export async function findZoneByDomain(domain: string): Promise<ZoneInfo | null> {
   const parts = domain.split(".");
   for (let i = 0; i < parts.length - 1; i++) {
     const candidate = parts.slice(i).join(".");
-    const res = await cfFetchSafe<CFZoneRaw[]>(
+    const res = await cfFetch<CFZoneRaw[]>(
       "GET",
       `/zones?name=${encodeURIComponent(candidate)}&per_page=1`
     );
-    if (res.ok && res.data && res.data.length > 0) {
-      const z = res.data[0];
+    if (res.result.length > 0) {
+      const z = res.result[0];
       return {
         id: z.id,
         name: z.name,
@@ -777,6 +782,9 @@ export async function provisionZone(
 ): Promise<{
   ok: boolean;
   zoneFound: boolean;
+  /** Set when the zone lookup itself failed (rate limit, bad token). zoneFound
+   *  is false then, but that means "couldn't check", NOT "no zone". */
+  lookupError?: string;
   zone?: ZoneInfo;
   steps: ProvisionStep[];
 }> {
@@ -794,7 +802,7 @@ export async function provisionZone(
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     steps.push({ name: "findZone", ok: false, detail });
-    return { ok: false, zoneFound: false, steps };
+    return { ok: false, zoneFound: false, lookupError: detail, steps };
   }
 
   if (!zone) {
