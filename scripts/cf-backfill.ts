@@ -205,6 +205,11 @@ async function main() {
     try {
       const result = await provisionZone(domain);
 
+      if (result.lookupError) {
+        console.log(`❌ zone lookup failed — ${result.lookupError}`);
+        errorCount++;
+        continue;
+      }
       if (!result.zoneFound) {
         console.log("⚠️  zone not in CF account");
         zoneNotFoundCount++;

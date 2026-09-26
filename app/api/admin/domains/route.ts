@@ -188,7 +188,22 @@ export async function POST(request: NextRequest) {
     if (process.env.CLOUDFLARE_API_TOKEN) {
       try {
         const cfResult = await provisionZone(domain);
-        if (!cfResult.zoneFound) {
+        if (cfResult.lookupError) {
+          // The zone may well exist — CF just didn't answer (rate limit, bad
+          // token). Say so, instead of "not in CF account", so the domain gets
+          // healed rather than written off. No DNS record was created.
+          console.warn(
+            `[admin/domains] CF zone lookup failed for ${domain}: ${cfResult.lookupError}`
+          );
+          results.cloudflare = {
+            zoneFound: false,
+            message: `Cloudflare lookup failed: ${cfResult.lookupError}`,
+            steps: cfResult.steps,
+          };
+          results.errors.push(
+            `Cloudflare: zone lookup failed (${cfResult.lookupError}) — no DNS record was created. Click Heal once Cloudflare responds again.`
+          );
+        } else if (!cfResult.zoneFound) {
           console.warn(
             `[admin/domains] CF zone not found for ${domain} — manual setup required`
           );
@@ -197,6 +212,9 @@ export async function POST(request: NextRequest) {
             message:
               "Zone not in CF account — add the zone in Cloudflare first, then re-run this or use npm run cf-backfill",
           };
+          results.errors.push(
+            "Cloudflare: zone not in CF account — add the zone in Cloudflare, then click Heal"
+          );
         } else {
           // Auto-verify + auto-heal loop (fire-and-poll, blocks up to ~2.5 min)
           const verify = await verifyAndAutoHeal(domain, cfResult);
