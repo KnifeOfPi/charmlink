@@ -21,6 +21,30 @@ export async function GET(
       return NextResponse.redirect(new URL("/", request.url));
     }
 
+    // ── Age gate enforcement ──────────────────────────────────────────────
+    // The /r/[linkId] interstitial is the intended gate, but anyone holding
+    // a link UUID could hit this route directly and skip it. Enforce the
+    // same check here: sensitive links require the cl_age cookie.
+    let sensitive = Boolean(link.sensitive);
+    if (!sensitive) {
+      try {
+        const creator = await getCreatorById(link.creator_id);
+        if (creator?.sensitive_default) {
+          sensitive = true;
+        }
+      } catch {
+        // Fall back to per-link flag if creator lookup fails.
+      }
+    }
+
+    if (sensitive) {
+      const ageConfirmed = request.cookies.get("cl_age")?.value === "1";
+      if (!ageConfirmed) {
+        // Redirect to the age gate interstitial instead of the destination.
+        return NextResponse.redirect(new URL(`/r/${linkId}`, request.url));
+      }
+    }
+
     // Determine destination — redirect_url if set, else original url
     const destination = link.redirect_url || link.url;
 
