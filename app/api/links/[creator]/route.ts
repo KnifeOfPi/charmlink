@@ -99,6 +99,19 @@ export async function POST(
     fp_signals?: Record<string, unknown>;
     fp_suspicious?: boolean;
     fp_reasons?: string[];
+    behavior?: {
+      mouseMoves: number;
+      mouseDistance: number;
+      mouseEntropy: number;
+      touchStarts: number;
+      scrolls: number;
+      maxScrollDepth: number;
+      timeToFirstInteraction: number;
+      keyPresses: number;
+      clickTimestamps: number[];
+      isSuspicious: boolean;
+      reasons: string[];
+    };
   };
   try {
     body = (await request.json()) as typeof body;
@@ -119,6 +132,16 @@ export async function POST(
   if (body.fp_suspicious === true) {
     const reasons = Array.isArray(body.fp_reasons) ? body.fp_reasons.join(",") : "unknown";
     console.warn(`[links] suspicious fingerprint: ${reasons} (hash=${body.fingerprint ?? "none"})`);
+    return decoyResponse();
+  }
+
+  // 4c. Behavioral analysis — reject programmatic interaction patterns.
+  // The client tracks mouse/touch/scroll/click behavior and sends it with the
+  // POST. Bots that pass fingerprinting often fail here: no mouse movement,
+  // instant clicks, uniform timing, no scrolling.
+  if (body.behavior?.isSuspicious === true) {
+    const reasons = Array.isArray(body.behavior.reasons) ? body.behavior.reasons.join(",") : "unknown";
+    console.warn(`[links] suspicious behavior: ${reasons} (mouse=${body.behavior.mouseMoves}, scroll=${body.behavior.scrolls}, firstInteraction=${body.behavior.timeToFirstInteraction}ms)`);
     return decoyResponse();
   }
 
