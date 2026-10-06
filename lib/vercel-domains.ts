@@ -173,7 +173,12 @@ export async function issueCert(domain: string): Promise<{ uid: string }> {
     return { uid: "already-exists" };
   }
 
+  // v8 returns the cert ID as `id`; `uid` was the v4 field. Reading only `uid`
+  // after the v4→v8 move threw on every SUCCESSFUL issuance — gyozagirll.com
+  // got five real certs on 2026-09-26 while provisionZone reported failure and
+  // aborted before the orange-cloud flip and WAF.
   const data = (await res.json()) as {
+    id?: string;
     uid?: string;
     error?: { message?: string; code?: string; name?: string };
   };
@@ -190,8 +195,9 @@ export async function issueCert(domain: string): Promise<{ uid: string }> {
       "no error body";
     throw new Error(`Vercel cert API ${res.status}: ${detail}`);
   }
-  if (!data.uid) {
-    throw new Error(`Vercel cert API: response missing uid (status ${res.status})`);
+  const uid = data.id ?? data.uid;
+  if (!uid) {
+    throw new Error(`Vercel cert API: response missing id (status ${res.status})`);
   }
-  return { uid: data.uid };
+  return { uid };
 }
