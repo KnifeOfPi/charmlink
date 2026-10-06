@@ -12,6 +12,7 @@ import {
 } from "../../lib/handoff";
 import { escapeArm } from "../../lib/escape-experiment";
 import { resolveFontFamily } from "../../lib/fonts";
+import { computeFingerprint, type FingerprintResult } from "../../lib/browser-fingerprint";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -1476,6 +1477,7 @@ export function CreatorPage({
   } | null>(null);
   const sessionIdRef = useRef<string>("");
   const trackedView = useRef(false);
+  const fingerprintRef = useRef<FingerprintResult | null>(null);
 
   const fontFamily = resolveFontFamily(creator.font);
 
@@ -1498,10 +1500,20 @@ export function CreatorPage({
           headers["x-turnstile-token"] = turnstileToken;
         }
 
+        // Include fingerprint data if available.
+        const fp = fingerprintRef.current;
+        const body: Record<string, unknown> = { token };
+        if (fp) {
+          body.fingerprint = fp.hash;
+          body.fp_signals = fp.signals;
+          body.fp_suspicious = fp.isSuspicious;
+          body.fp_reasons = fp.reasons;
+        }
+
         const res = await fetch(`/api/links/${slug}`, {
           method: "POST",
           headers,
-          body: JSON.stringify({ token }),
+          body: JSON.stringify(body),
         });
         if (res.ok) {
           const data = (await res.json()) as {
@@ -1525,6 +1537,10 @@ export function CreatorPage({
   );
 
   useEffect(() => {
+    // Compute browser fingerprint once on mount. This is used by the links API
+    // to detect headless Chrome and other automation frameworks.
+    fingerprintRef.current = computeFingerprint();
+
     const ua = navigator.userAgent;
     const uaLower = ua.toLowerCase();
     const isIG      = ua.includes("Instagram");

@@ -75,11 +75,38 @@ export async function detectBot(
     const secFetchDest = request.headers.get("sec-fetch-dest");
     const accept = request.headers.get("accept") ?? "";
     if (!secFetchMode && !secFetchDest && !accept.includes("text/html")) {
-      return { isBot: true, reason: "sec-fetch:missing", confidence: "low" };
+      return { isBot: true, reason: "missing-sec-fetch", confidence: "low" };
     }
   }
 
-  return { isBot: false, reason: "none", confidence: "high" };
+  // 5. Missing Sec-Fetch-* on API routes (low confidence — Turnstile candidate)
+  // API routes called by browser fetch() always carry Sec-Fetch-* headers.
+  // A missing set on an API route suggests a non-browser client (curl, python,
+  // wget) or a headless browser that strips them. Not enough to block — but
+  // enough to challenge with Turnstile.
+  if (pathname.startsWith("/api/")) {
+    const secFetchMode = request.headers.get("sec-fetch-mode");
+    const secFetchDest = request.headers.get("sec-fetch-dest");
+    const accept = request.headers.get("accept") ?? "";
+    // Only flag when ALL signals are missing — a partial set means a real
+    // browser with an odd config (privacy extensions stripping some headers).
+    if (!secFetchMode && !secFetchDest && !accept) {
+      return { isBot: false, reason: "api-missing-sec-fetch", confidence: "low" };
+    }
+  }
+
+  // 6. Suspicious Accept header on API routes
+  // Real browsers send Accept: */* or application/json for fetch() calls.
+  // Anything with Accept: text/html on an API route is a browser navigating
+  // directly to the endpoint — which is unusual and worth challenging.
+  if (pathname.startsWith("/api/")) {
+    const accept = request.headers.get("accept") ?? "";
+    if (accept.includes("text/html")) {
+      return { isBot: false, reason: "api-accept-html", confidence: "low" };
+    }
+  }
+
+  return { isBot: false, reason: "pass", confidence: "high" };
 }
 
 // Backwards-compat: files that still call isBot(userAgent)

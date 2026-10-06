@@ -93,9 +93,15 @@ export async function POST(
   }
 
   // 4. HMAC token validation
-  let body: { token?: string };
+  let body: {
+    token?: string;
+    fingerprint?: string;
+    fp_signals?: Record<string, unknown>;
+    fp_suspicious?: boolean;
+    fp_reasons?: string[];
+  };
   try {
-    body = (await request.json()) as { token?: string };
+    body = (await request.json()) as typeof body;
   } catch {
     return decoyResponse();
   }
@@ -103,6 +109,16 @@ export async function POST(
   // `ip` is passed only to keep accepting tokens minted by the previous
   // IP-bound scheme during the deploy window; it is not required to verify.
   if (!verifyLinkToken(token, slug, ageConfirmed, ip)) {
+    return decoyResponse();
+  }
+
+  // 4b. Browser fingerprint check — reject known headless/automation signals.
+  // The client computes a fingerprint on mount and sends it with the POST.
+  // If the fingerprint flags suspicious signals (headless Chrome, automation),
+  // we treat it as a high-confidence bot and decoy.
+  if (body.fp_suspicious === true) {
+    const reasons = Array.isArray(body.fp_reasons) ? body.fp_reasons.join(",") : "unknown";
+    console.warn(`[links] suspicious fingerprint: ${reasons} (hash=${body.fingerprint ?? "none"})`);
     return decoyResponse();
   }
 
