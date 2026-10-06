@@ -1,4 +1,5 @@
 import { headers } from "next/headers";
+import Link from "next/link";
 import { decoyHtml } from "../lib/decoy/themes";
 
 export const runtime = "nodejs";
@@ -38,9 +39,9 @@ export default async function NotFound() {
           404
         </h1>
         <p style={{ color: "rgba(245,238,252,0.62)", marginBottom: "2rem" }}>
-          This page doesn't exist.
+          This page doesn&apos;t exist.
         </p>
-        <a
+        <Link
           href="/"
           style={{
             color: "#c45bff",
@@ -49,7 +50,7 @@ export default async function NotFound() {
           }}
         >
           Go home
-        </a>
+        </Link>
       </div>
     );
   }
