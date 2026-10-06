@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { createHmac } from "crypto";
+import { signInternal } from "./lib/internal-token";
 import { detectBot } from "./lib/bot-detect";
 import { isLinkPreviewScraper } from "./lib/scraper-detect";
 import { decoyHtml } from "./lib/decoy/themes";
@@ -41,13 +41,9 @@ async function resolveCustomDomain(
     const url = new URL("/api/resolve-domain", internalOrigin);
     url.searchParams.set("domain", hostname);
 
-    // Compute HMAC token for the internal resolver route. Uses the same
-    // CHARMLINK_LINK_TOKEN_SECRET as the link-token system — already required
-    // in production, so no new env var needed.
-    const secret = process.env.CHARMLINK_LINK_TOKEN_SECRET ?? "";
-    const internalToken = secret
-      ? createHmac("sha256", secret).update(`resolve-domain|${hostname}`).digest("hex")
-      : "";
+    // HMAC for the internal resolver route (CHARMLINK_LINK_TOKEN_SECRET).
+    // Web Crypto via lib/internal-token — this file runs on the edge runtime.
+    const internalToken = await signInternal(`resolve-domain|${hostname}`);
 
     const res = await fetch(url.toString(), {
       headers: {
@@ -60,13 +56,10 @@ async function resolveCustomDomain(
 
     if (res.ok) {
       const data = (await res.json()) as { slug: string | null };
-      // Only cache positive results (slug found) or confirmed misses (null
-      // from a successful DB lookup). Do NOT cache resolver failures — a
-      // transient DB blip would otherwise serve the generic app root for
-      // 5 minutes, leaking the CharmLink brand and losing revenue.
-      if (data.slug !== null) {
-        domainCache.set(hostname, { slug: data.slug, expiresAt: now + CACHE_TTL_MS });
-      }
+      // A successful lookup — hit or confirmed miss — is cached 5 min.
+      // Only resolver failures (below) get the short TTL, so a transient DB
+      // blip can't serve the generic app root (brand leak) for 5 minutes.
+      domainCache.set(hostname, { slug: data.slug, expiresAt: now + CACHE_TTL_MS });
       return data.slug;
     }
   } catch {
