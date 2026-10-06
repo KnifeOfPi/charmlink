@@ -12,6 +12,8 @@ import {
 } from "../../lib/handoff";
 import { escapeArm } from "../../lib/escape-experiment";
 import { resolveFontFamily } from "../../lib/fonts";
+import { computeFingerprint, type FingerprintResult } from "../../lib/browser-fingerprint";
+import { BehaviorTracker, type BehaviorSignals } from "../../lib/behavioral-analysis";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -1476,6 +1478,8 @@ export function CreatorPage({
   } | null>(null);
   const sessionIdRef = useRef<string>("");
   const trackedView = useRef(false);
+  const fingerprintRef = useRef<FingerprintResult | null>(null);
+  const behaviorTrackerRef = useRef<BehaviorTracker | null>(null);
 
   const fontFamily = resolveFontFamily(creator.font);
 
@@ -1498,10 +1502,36 @@ export function CreatorPage({
           headers["x-turnstile-token"] = turnstileToken;
         }
 
+        // Include fingerprint + behavioral data if available.
+        const fp = fingerprintRef.current;
+        const behavior = behaviorTrackerRef.current?.getSignals();
+        const body: Record<string, unknown> = { token };
+        if (fp) {
+          body.fingerprint = fp.hash;
+          body.fp_signals = fp.signals;
+          body.fp_suspicious = fp.isSuspicious;
+          body.fp_reasons = fp.reasons;
+        }
+        if (behavior) {
+          body.behavior = {
+            mouseMoves: behavior.mouseMoves,
+            mouseDistance: behavior.mouseDistance,
+            mouseEntropy: behavior.mouseEntropy,
+            touchStarts: behavior.touchStarts,
+            scrolls: behavior.scrolls,
+            maxScrollDepth: behavior.maxScrollDepth,
+            timeToFirstInteraction: behavior.timeToFirstInteraction,
+            keyPresses: behavior.keyPresses,
+            clickTimestamps: behavior.clickTimestamps,
+            isSuspicious: behavior.isSuspicious,
+            reasons: behavior.reasons,
+          };
+        }
+
         const res = await fetch(`/api/links/${slug}`, {
           method: "POST",
           headers,
-          body: JSON.stringify({ token }),
+          body: JSON.stringify(body),
         });
         if (res.ok) {
           const data = (await res.json()) as {
@@ -1525,6 +1555,15 @@ export function CreatorPage({
   );
 
   useEffect(() => {
+    // Compute browser fingerprint once on mount. This is used by the links API
+    // to detect headless Chrome and other automation frameworks.
+    fingerprintRef.current = computeFingerprint();
+
+    // Start behavioral tracking. This runs for the lifetime of the page and
+    // captures mouse/touch/scroll/click patterns that distinguish humans from
+    // bots. The tracker is read when the links API POST fires.
+    behaviorTrackerRef.current = new BehaviorTracker();
+
     const ua = navigator.userAgent;
     const uaLower = ua.toLowerCase();
     const isIG      = ua.includes("Instagram");

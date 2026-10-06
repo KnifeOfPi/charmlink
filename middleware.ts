@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { createHmac } from "crypto";
 import { detectBot } from "./lib/bot-detect";
 import { isLinkPreviewScraper } from "./lib/scraper-detect";
 import { decoyHtml } from "./lib/decoy/themes";
@@ -13,6 +14,7 @@ interface DomainCacheEntry {
 
 const domainCache = new Map<string, DomainCacheEntry>();
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const ERROR_CACHE_TTL_MS = 30 * 1000; // 30 seconds — don't cache failures long
 
 async function resolveCustomDomain(
   hostname: string,
@@ -39,22 +41,41 @@ async function resolveCustomDomain(
     const url = new URL("/api/resolve-domain", internalOrigin);
     url.searchParams.set("domain", hostname);
 
+    // Compute HMAC token for the internal resolver route. Uses the same
+    // CHARMLINK_LINK_TOKEN_SECRET as the link-token system — already required
+    // in production, so no new env var needed.
+    const secret = process.env.CHARMLINK_LINK_TOKEN_SECRET ?? "";
+    const internalToken = secret
+      ? createHmac("sha256", secret).update(`resolve-domain|${hostname}`).digest("hex")
+      : "";
+
     const res = await fetch(url.toString(), {
-      headers: { "x-internal-resolve": "1" },
+      headers: {
+        "x-internal-resolve": "1",
+        "x-internal-token": internalToken,
+      },
       // 3s budget: middleware must not block real users on a slow DB.
       signal: AbortSignal.timeout(3000),
     });
 
     if (res.ok) {
       const data = (await res.json()) as { slug: string | null };
-      domainCache.set(hostname, { slug: data.slug, expiresAt: now + CACHE_TTL_MS });
+      // Only cache positive results (slug found) or confirmed misses (null
+      // from a successful DB lookup). Do NOT cache resolver failures — a
+      // transient DB blip would otherwise serve the generic app root for
+      // 5 minutes, leaking the CharmLink brand and losing revenue.
+      if (data.slug !== null) {
+        domainCache.set(hostname, { slug: data.slug, expiresAt: now + CACHE_TTL_MS });
+      }
       return data.slug;
     }
   } catch {
     // Silently fail — fall through to normal routing
   }
 
-  domainCache.set(hostname, { slug: null, expiresAt: now + CACHE_TTL_MS });
+  // Cache failures with a short TTL so we don't hammer the DB on every
+  // request during an outage, but recover quickly when it comes back.
+  domainCache.set(hostname, { slug: null, expiresAt: now + ERROR_CACHE_TTL_MS });
   return null;
 }
 

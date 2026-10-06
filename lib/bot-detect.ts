@@ -28,8 +28,13 @@ export async function detectBot(
   const ua = request.headers.get("user-agent") ?? "";
 
   // 0. KV honeypot ban list (highest priority)
+  // Prefer cf-connecting-ip (set by Cloudflare, unspoofable) over
+  // x-forwarded-for (client-influenced). Fall back to x-forwarded-for
+  // for non-CF environments (local dev, direct Vercel hits).
   const ip =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "";
+    request.headers.get("cf-connecting-ip") ??
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    "";
   if (ip && (await isIpBanned(ip))) {
     return { isBot: true, reason: "honeypot", confidence: "high" };
   }
@@ -47,23 +52,18 @@ export async function detectBot(
 
   // 3. Datacenter ASN check.
   //
-  // DORMANT BY DEFAULT — DO NOT READ THIS AS ACTIVE PROTECTION. Vercel does
-  // not emit `x-vercel-ip-asn` on any plan (checked against their header docs
-  // and confirmed empirically: a request originating from GCP was not
-  // decoyed). For as long as no proxy supplies one of the headers below, this
-  // branch cannot fire, and the traffic it was written to stop walks straight
-  // through. That is not hypothetical — it is why 81% of auto-redirect
-  // arrivals were being recorded as human in September 2026, and why
-  // lib/synthetic-traffic.ts had to be written to catch them by user agent
-  // after the fact.
+  // ACTIVE as of 2026-10-06: Cloudflare Transform Rule `charmlink:inject-asn`
+  // sets `x-client-asn` = `ip.src.asnum` on all 50 zones. The middleware reads
+  // that header here. We also keep `x-vercel-ip-asn` as a fallback for when
+  // Vercel ships ASN visibility to Hobby.
   //
-  // TO ACTIVATE: the estate already sits behind Cloudflare, which knows the
-  // ASN but does not forward it by default. Add a Cloudflare Transform Rule
-  // (Rules -> Transform Rules -> Modify Request Header) on each zone setting
-  // `cf-ip-asn` to the dynamic value `ip.src.asnum`. This branch starts
-  // working the moment that header arrives; no code change is needed.
+  // Safe: every entry is a datacenter ASN a real human virtually never
+  // browses from. If a real user is on a VPN or corporate proxy that exits
+  // through a datacenter, they may see the decoy — acceptable trade-off.
   const asn =
-    request.headers.get("cf-ip-asn") ?? request.headers.get("x-vercel-ip-asn");
+    request.headers.get("x-client-asn") ??
+    request.headers.get("x-vercel-ip-asn") ??
+    "";
   if (isDatacenterAsn(asn)) {
     return { isBot: true, reason: "asn:datacenter", confidence: "high" };
   }
@@ -75,11 +75,38 @@ export async function detectBot(
     const secFetchDest = request.headers.get("sec-fetch-dest");
     const accept = request.headers.get("accept") ?? "";
     if (!secFetchMode && !secFetchDest && !accept.includes("text/html")) {
-      return { isBot: true, reason: "sec-fetch:missing", confidence: "low" };
+      return { isBot: true, reason: "missing-sec-fetch", confidence: "low" };
     }
   }
 
-  return { isBot: false, reason: "none", confidence: "high" };
+  // 5. Missing Sec-Fetch-* on API routes (low confidence — Turnstile candidate)
+  // API routes called by browser fetch() always carry Sec-Fetch-* headers.
+  // A missing set on an API route suggests a non-browser client (curl, python,
+  // wget) or a headless browser that strips them. Not enough to block — but
+  // enough to challenge with Turnstile.
+  if (pathname.startsWith("/api/")) {
+    const secFetchMode = request.headers.get("sec-fetch-mode");
+    const secFetchDest = request.headers.get("sec-fetch-dest");
+    const accept = request.headers.get("accept") ?? "";
+    // Only flag when ALL signals are missing — a partial set means a real
+    // browser with an odd config (privacy extensions stripping some headers).
+    if (!secFetchMode && !secFetchDest && !accept) {
+      return { isBot: false, reason: "api-missing-sec-fetch", confidence: "low" };
+    }
+  }
+
+  // 6. Suspicious Accept header on API routes
+  // Real browsers send Accept: */* or application/json for fetch() calls.
+  // Anything with Accept: text/html on an API route is a browser navigating
+  // directly to the endpoint — which is unusual and worth challenging.
+  if (pathname.startsWith("/api/")) {
+    const accept = request.headers.get("accept") ?? "";
+    if (accept.includes("text/html")) {
+      return { isBot: false, reason: "api-accept-html", confidence: "low" };
+    }
+  }
+
+  return { isBot: false, reason: "pass", confidence: "high" };
 }
 
 // Backwards-compat: files that still call isBot(userAgent)

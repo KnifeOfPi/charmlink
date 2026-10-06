@@ -42,8 +42,12 @@ export async function POST(
   const { creator: slug } = await params;
 
   // 0. Rate limit: 30 requests/min per IP
+  // Prefer cf-connecting-ip (set by Cloudflare, unspoofable) over
+  // x-forwarded-for (client-influenced).
   const ip =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+    request.headers.get("cf-connecting-ip") ??
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    "unknown";
   const { allowed } = await rateLimit(ip, "links", 30, 60);
   if (!allowed) return decoyResponse();
 
@@ -89,9 +93,28 @@ export async function POST(
   }
 
   // 4. HMAC token validation
-  let body: { token?: string };
+  let body: {
+    token?: string;
+    fingerprint?: string;
+    fp_signals?: Record<string, unknown>;
+    fp_suspicious?: boolean;
+    fp_reasons?: string[];
+    behavior?: {
+      mouseMoves: number;
+      mouseDistance: number;
+      mouseEntropy: number;
+      touchStarts: number;
+      scrolls: number;
+      maxScrollDepth: number;
+      timeToFirstInteraction: number;
+      keyPresses: number;
+      clickTimestamps: number[];
+      isSuspicious: boolean;
+      reasons: string[];
+    };
+  };
   try {
-    body = (await request.json()) as { token?: string };
+    body = (await request.json()) as typeof body;
   } catch {
     return decoyResponse();
   }
@@ -99,6 +122,26 @@ export async function POST(
   // `ip` is passed only to keep accepting tokens minted by the previous
   // IP-bound scheme during the deploy window; it is not required to verify.
   if (!verifyLinkToken(token, slug, ageConfirmed, ip)) {
+    return decoyResponse();
+  }
+
+  // 4b. Browser fingerprint check — reject known headless/automation signals.
+  // The client computes a fingerprint on mount and sends it with the POST.
+  // If the fingerprint flags suspicious signals (headless Chrome, automation),
+  // we treat it as a high-confidence bot and decoy.
+  if (body.fp_suspicious === true) {
+    const reasons = Array.isArray(body.fp_reasons) ? body.fp_reasons.join(",") : "unknown";
+    console.warn(`[links] suspicious fingerprint: ${reasons} (hash=${body.fingerprint ?? "none"})`);
+    return decoyResponse();
+  }
+
+  // 4c. Behavioral analysis — reject programmatic interaction patterns.
+  // The client tracks mouse/touch/scroll/click behavior and sends it with the
+  // POST. Bots that pass fingerprinting often fail here: no mouse movement,
+  // instant clicks, uniform timing, no scrolling.
+  if (body.behavior?.isSuspicious === true) {
+    const reasons = Array.isArray(body.behavior.reasons) ? body.behavior.reasons.join(",") : "unknown";
+    console.warn(`[links] suspicious behavior: ${reasons} (mouse=${body.behavior.mouseMoves}, scroll=${body.behavior.scrolls}, firstInteraction=${body.behavior.timeToFirstInteraction}ms)`);
     return decoyResponse();
   }
 

@@ -49,7 +49,10 @@ const LOADING_HTML = `<!DOCTYPE html>
 </html>`;
 
 export async function GET(request: NextRequest) {
+  // Prefer cf-connecting-ip (set by Cloudflare, unspoofable) over
+  // x-forwarded-for (client-influenced).
   const ip =
+    request.headers.get("cf-connecting-ip") ??
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
     request.headers.get("x-real-ip") ??
     "unknown";

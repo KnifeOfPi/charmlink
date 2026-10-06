@@ -1014,30 +1014,35 @@ export async function provisionZone(
         detail: err instanceof Error ? err.message : String(err),
       });
     }
-
-    try {
-      const adv = await enableAdvancedBotProtection(zone.id);
-      steps.push({
-        name: "enableAdvancedBotProtection",
-        ok: adv.enabled,
-        detail: adv.alreadyEnabled
-          ? "already enabled"
-          : adv.applied
-          ? `applied: ${adv.applied.join(", ")}`
-          : adv.error,
-      });
-    } catch (err) {
-      steps.push({
-        name: "enableAdvancedBotProtection",
-        ok: false,
-        detail: err instanceof Error ? err.message : String(err),
-      });
-    }
   } else {
     steps.push({
       name: "enableBotFightMode",
       ok: true,
       detail: "skipped (set CHARMLINK_ENABLE_BFM=1 to enable; Free tier blocks real browsers)",
+    });
+  }
+
+  // Step 8b: Advanced Bot Protection (non-fatal, ALWAYS ON)
+  // ABP blocks GPTBot, ClaudeBot, Bytespider, and other AI/content scrapers
+  // WITHOUT challenging real users. This is separate from BFM — BFM blocks
+  // real Chrome users on Free tier, but ABP does not. Always apply ABP
+  // regardless of the BFM flag.
+  try {
+    const adv = await enableAdvancedBotProtection(zone.id);
+    steps.push({
+      name: "enableAdvancedBotProtection",
+      ok: adv.enabled,
+      detail: adv.alreadyEnabled
+        ? "already enabled"
+        : adv.applied
+        ? `applied: ${adv.applied.join(", ")}`
+        : adv.error,
+    });
+  } catch (err) {
+    steps.push({
+      name: "enableAdvancedBotProtection",
+      ok: false,
+      detail: err instanceof Error ? err.message : String(err),
     });
   }
 
