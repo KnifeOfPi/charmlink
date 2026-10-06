@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { isbot } from "isbot";
 import { isDatacenterAsn } from "./datacenter-asns";
 import { isIpBanned } from "./kv-ban";
+import { checkIPQS, isIPQSSuspicious } from "./ipqs";
 
 // Meta-2026 patterns not yet in isbot's list
 const META_2026_PATTERNS = [
@@ -66,6 +67,34 @@ export async function detectBot(
     "";
   if (isDatacenterAsn(asn)) {
     return { isBot: true, reason: "asn:datacenter", confidence: "high" };
+  }
+
+  // 3b. IPQualityScore proxy/VPN detection.
+  //
+  // Catches residential proxies, VPNs, and Tor exits that bypass the
+  // datacenter-ASN check. A scraper with a $50/month residential proxy plan
+  // uses real ISP IPs from compromised devices — the ASN check passes, but
+  // IPQS flags it. Results are cached in KV for 24h to minimize API calls.
+  //
+  // Fail-open: if IPQS_API_KEY is not set or the API is unreachable, this
+  // step is skipped entirely.
+  if (ip) {
+    const ipqsResult = await checkIPQS(ip, ua);
+    if (ipqsResult && isIPQSSuspicious(ipqsResult)) {
+      const reasons: string[] = [];
+      if (ipqsResult.isProxy) reasons.push("proxy");
+      if (ipqsResult.isVpn) reasons.push("vpn");
+      if (ipqsResult.isTor) reasons.push("tor");
+      if (ipqsResult.isResidentialProxy) reasons.push("residential-proxy");
+      if (ipqsResult.fraudScore >= 75) reasons.push(`fraud-${ipqsResult.fraudScore}`);
+      if (ipqsResult.recentAbuse) reasons.push("recent-abuse");
+      if (ipqsResult.botStatus) reasons.push("bot-status");
+      return {
+        isBot: true,
+        reason: `ipqs:${reasons.join(",")}`,
+        confidence: "high",
+      };
+    }
   }
 
   // 4. Missing Sec-Fetch-* on page routes (low confidence)

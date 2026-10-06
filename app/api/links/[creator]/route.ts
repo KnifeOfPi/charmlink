@@ -5,6 +5,7 @@ import { detectBot } from "../../../../lib/bot-detect";
 import { verifyLinkToken } from "../../../../lib/link-token";
 import { rateLimit } from "../../../../lib/rate-limit";
 import { verifyTurnstile } from "../../../../lib/turnstile";
+import { checkFingerprintRotation } from "../../../../lib/fingerprint-rotation";
 
 export const runtime = "nodejs";
 
@@ -143,6 +144,18 @@ export async function POST(
     const reasons = Array.isArray(body.behavior.reasons) ? body.behavior.reasons.join(",") : "unknown";
     console.warn(`[links] suspicious behavior: ${reasons} (mouse=${body.behavior.mouseMoves}, scroll=${body.behavior.scrolls}, firstInteraction=${body.behavior.timeToFirstInteraction}ms)`);
     return decoyResponse();
+  }
+
+  // 4d. Fingerprint rotation detection — catch bots rotating fingerprints.
+  // Real browsers produce consistent fingerprints. Bots that rotate canvas
+  // hashes, WebGL renderers, etc. to evade detection produce multiple
+  // distinct fingerprints from the same IP in a short window.
+  if (body.fingerprint) {
+    const rotation = await checkFingerprintRotation(ip, body.fingerprint);
+    if (rotation.isSuspicious) {
+      console.warn(`[links] fingerprint rotation: ${rotation.reason} (ip=${ip}, hash=${body.fingerprint})`);
+      return decoyResponse();
+    }
   }
 
   // 5. Bot detection + Turnstile escalation for uncertain cases.
