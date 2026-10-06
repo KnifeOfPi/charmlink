@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseDeviceType, generateId } from "../../../lib/analytics";
 import { recordEvent, getCreatorBySlug } from "../../../lib/db";
+import { rateLimit } from "../../../lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -13,6 +14,16 @@ interface EscapeFallbackPayload {
 }
 
 export async function POST(request: NextRequest) {
+  // Rate limit: 30 requests/min per IP (escape fallback fires once per visit)
+  const ip =
+    request.headers.get("cf-connecting-ip") ??
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    "unknown";
+  const { allowed } = await rateLimit(ip, "escape-fallback", 30, 60);
+  if (!allowed) {
+    return NextResponse.json({ ok: false }, { status: 429 });
+  }
+
   try {
     const body: EscapeFallbackPayload = await request.json();
     const ua = body.userAgent || request.headers.get("user-agent") || "";

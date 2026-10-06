@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { parseDeviceType, generateId } from "../../../lib/analytics";
 import { recordEvent, getCreatorBySlug } from "../../../lib/db";
 import { resolveIsBot } from "../../../lib/event-bot-flag";
+import { rateLimit } from "../../../lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -17,6 +18,16 @@ interface TrackPayload {
 }
 
 export async function POST(request: NextRequest) {
+  // Rate limit: 60 requests/min per IP (beacons can fire multiple times per page)
+  const ip =
+    request.headers.get("cf-connecting-ip") ??
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    "unknown";
+  const { allowed } = await rateLimit(ip, "track", 60, 60);
+  if (!allowed) {
+    return NextResponse.json({ ok: false }, { status: 429 });
+  }
+
   try {
     const body: TrackPayload = await request.json();
     const ua = request.headers.get("user-agent") || "";

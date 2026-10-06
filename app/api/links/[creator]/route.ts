@@ -42,8 +42,12 @@ export async function POST(
   const { creator: slug } = await params;
 
   // 0. Rate limit: 30 requests/min per IP
+  // Prefer cf-connecting-ip (set by Cloudflare, unspoofable) over
+  // x-forwarded-for (client-influenced).
   const ip =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+    request.headers.get("cf-connecting-ip") ??
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    "unknown";
   const { allowed } = await rateLimit(ip, "links", 30, 60);
   if (!allowed) return decoyResponse();
 
