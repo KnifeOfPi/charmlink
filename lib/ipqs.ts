@@ -95,8 +95,8 @@ export async function checkIPQS(
       headers: {
         "IPQS-KEY": IPQS_API_KEY,
       },
-      // 3 second timeout — don't block the request pipeline
-      signal: AbortSignal.timeout(3000),
+      // Fail open fast: this sits in front of a visitor's premium links.
+      signal: AbortSignal.timeout(1500),
     });
 
     if (!response.ok) {
@@ -142,27 +142,27 @@ export async function checkIPQS(
 }
 
 /**
- * Determine if an IPQS result should be treated as a bot.
+ * Turn an IPQS result into a verdict.
  *
- * We flag:
- *   - Any proxy/VPN/Tor (isProxy, isVpn, isTor)
- *   - Residential proxies (isResidentialProxy)
- *   - High fraud score (>= 75)
- *   - Recent abuse (recentAbuse)
- *   - Known bot status (botStatus)
- *
- * We do NOT flag:
- *   - Low fraud score (< 75) with no other signals
- *   - Corporate/public access points (allowed by allow_public_access_points)
+ * `block` only for near-certain automation: Tor exits, IPQS's own bot flag,
+ * or fraud score >= 90. Everything else IPQS reports (VPN, proxy,
+ * residential proxy, recent abuse, fraud 75–89) describes plenty of real
+ * visitors — iCloud Private Relay, carrier NAT, office VPNs — so those are
+ * returned as `reasons` for shadow logging and are NOT grounds to block until
+ * measured against real traffic.
  */
-export function isIPQSSuspicious(result: IPQSResult): boolean {
-  return (
-    result.isProxy ||
-    result.isVpn ||
-    result.isTor ||
-    result.isResidentialProxy ||
-    result.fraudScore >= 75 ||
-    result.recentAbuse ||
-    result.botStatus
-  );
+export function classifyIPQS(result: IPQSResult): { block: boolean; reasons: string[] } {
+  const hard: string[] = [];
+  if (result.isTor) hard.push("tor");
+  if (result.botStatus) hard.push("bot-status");
+  if (result.fraudScore >= 90) hard.push(`fraud-${result.fraudScore}`);
+  if (hard.length > 0) return { block: true, reasons: hard };
+
+  const soft: string[] = [];
+  if (result.isVpn) soft.push("vpn");
+  if (result.isProxy) soft.push("proxy");
+  if (result.isResidentialProxy) soft.push("residential-proxy");
+  if (result.recentAbuse) soft.push("recent-abuse");
+  if (result.fraudScore >= 75) soft.push(`fraud-${result.fraudScore}`);
+  return { block: false, reasons: soft };
 }

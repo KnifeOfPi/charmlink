@@ -225,17 +225,24 @@ export function computeFingerprint(): FingerprintResult | null {
 
   // ── Overall suspicion ─────────────────────────────────────────────────────
   // Weight reasons: some are stronger signals than others.
-  const strongSignals = ["webdriver", "audio-24000hz", "webgl-swiftshader", "webgl-google-swiftshader", "mac-avail-top-0"];
-  const weakSignals = ["no-window-chrome", "no-device-memory", "no-media-devices", "no-pdf-viewer", "rtt-0", "no-google-voices"];
-  const strongCount = reasons.filter((r) => strongSignals.includes(r)).length;
-  const weakCount = reasons.filter((r) => weakSignals.includes(r)).length;
-
-  // Suspicious if any strong signal, or 3+ weak signals.
-  const isSuspicious = strongCount > 0 || weakCount >= 3;
+  // Strong signals only — keep in sync with STRONG_FP_SIGNALS in
+  // lib/client-signals.ts, which is what the server actually enforces.
+  // "3+ weak signals" matched every iPhone (Safari/WKWebView: no window.chrome,
+  // no deviceMemory, no Google voices) and Chrome on first load (getVoices()
+  // is empty until voiceschanged). mac-avail-top-0 is not strong either: a
+  // fullscreen Mac or one with an auto-hidden menu bar reports 0. Weak reasons
+  // are still sent for measurement.
+  const strongSignals = ["webdriver", "audio-24000hz", "webgl-swiftshader", "webgl-google-swiftshader"];
+  const isSuspicious = reasons.some((r) => strongSignals.includes(r));
 
   // ── Hash ──────────────────────────────────────────────────────────────────
-  // Stable hash of the raw signals (for future server-side rules).
-  const hashInput = JSON.stringify(signals);
+  // Stable hash: exclude values that change between page loads on the same
+  // device (network RTT/downlink/type, the async-loading voice list), or every
+  // visit looks like a new device and rotation detection counts real users.
+  const VOLATILE = new Set(["rtt", "downlink", "connectionType", "googleVoices"]);
+  const hashInput = JSON.stringify(
+    Object.fromEntries(Object.entries(signals).filter(([k]) => !VOLATILE.has(k)))
+  );
   let hash = 0;
   for (let i = 0; i < hashInput.length; i++) {
     hash = ((hash << 5) - hash + hashInput.charCodeAt(i)) | 0;

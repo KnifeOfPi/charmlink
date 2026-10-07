@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import { isbot } from "isbot";
 import { isDatacenterAsn } from "./datacenter-asns";
 import { isIpBanned } from "./kv-ban";
-import { checkIPQS, isIPQSSuspicious } from "./ipqs";
+import { checkIPQS, classifyIPQS } from "./ipqs";
 
 // Meta-2026 patterns not yet in isbot's list
 const META_2026_PATTERNS = [
@@ -24,7 +24,10 @@ function isPageRoute(pathname: string): boolean {
 }
 
 export async function detectBot(
-  request: NextRequest
+  request: NextRequest,
+  // IPQS is a paid network lookup (up to its timeout per uncached IP). Only
+  // the links API opts in; middleware runs on every request and must not.
+  opts: { ipqs?: boolean } = {}
 ): Promise<{ isBot: boolean; reason: string; confidence: "low" | "high" }> {
   const ua = request.headers.get("user-agent") ?? "";
 
@@ -51,49 +54,41 @@ export async function detectBot(
     return { isBot: true, reason: "ua:meta-2026", confidence: "high" };
   }
 
-  // 3. Datacenter ASN check.
+  // 3. Datacenter ASN check — "uncertain", not "bot".
   //
-  // ACTIVE as of 2026-10-06: Cloudflare Transform Rule `charmlink:inject-asn`
-  // sets `x-client-asn` = `ip.src.asnum` on all 50 zones. The middleware reads
-  // that header here. We also keep `x-vercel-ip-asn` as a fallback for when
-  // Vercel ships ASN visibility to Hobby.
+  // Cloudflare Transform Rule `charmlink:inject-asn` sets `x-client-asn` =
+  // `ip.src.asnum` (not yet on every zone — see docs). `x-vercel-ip-asn` is
+  // kept as a fallback should Vercel ever emit it.
   //
-  // Safe: every entry is a datacenter ASN a real human virtually never
-  // browses from. If a real user is on a VPN or corporate proxy that exits
-  // through a datacenter, they may see the decoy — acceptable trade-off.
+  // Low confidence on purpose: real people do browse from these networks
+  // (VPNs, corporate egress). Middleware only decoys on "high", so the page
+  // renders normally and the links API answers "low" with a Turnstile
+  // challenge — a human passes it in about a second, a scraper doesn't.
+  // CDN networks that carry iCloud Private Relay / WARP users are excluded
+  // from the list entirely (lib/datacenter-asns.ts).
   const asn =
     request.headers.get("x-client-asn") ??
     request.headers.get("x-vercel-ip-asn") ??
     "";
   if (isDatacenterAsn(asn)) {
-    return { isBot: true, reason: "asn:datacenter", confidence: "high" };
+    return { isBot: false, reason: "asn:datacenter", confidence: "low" };
   }
 
-  // 3b. IPQualityScore proxy/VPN detection.
+  // 3b. IPQualityScore — links API only (opts.ipqs), never per request.
   //
-  // Catches residential proxies, VPNs, and Tor exits that bypass the
-  // datacenter-ASN check. A scraper with a $50/month residential proxy plan
-  // uses real ISP IPs from compromised devices — the ASN check passes, but
-  // IPQS flags it. Results are cached in KV for 24h to minimize API calls.
-  //
-  // Fail-open: if IPQS_API_KEY is not set or the API is unreachable, this
-  // step is skipped entirely.
-  if (ip) {
+  // Only near-certain verdicts decoy: Tor, IPQS's own bot flag, or fraud
+  // score >= 90. VPN/proxy/residential-proxy users are often real visitors,
+  // so those verdicts are logged (shadow mode) until measured.
+  if (opts.ipqs && ip) {
     const ipqsResult = await checkIPQS(ip, ua);
-    if (ipqsResult && isIPQSSuspicious(ipqsResult)) {
-      const reasons: string[] = [];
-      if (ipqsResult.isProxy) reasons.push("proxy");
-      if (ipqsResult.isVpn) reasons.push("vpn");
-      if (ipqsResult.isTor) reasons.push("tor");
-      if (ipqsResult.isResidentialProxy) reasons.push("residential-proxy");
-      if (ipqsResult.fraudScore >= 75) reasons.push(`fraud-${ipqsResult.fraudScore}`);
-      if (ipqsResult.recentAbuse) reasons.push("recent-abuse");
-      if (ipqsResult.botStatus) reasons.push("bot-status");
-      return {
-        isBot: true,
-        reason: `ipqs:${reasons.join(",")}`,
-        confidence: "high",
-      };
+    if (ipqsResult) {
+      const verdict = classifyIPQS(ipqsResult);
+      if (verdict.block) {
+        return { isBot: true, reason: `ipqs:${verdict.reasons.join(",")}`, confidence: "high" };
+      }
+      if (verdict.reasons.length > 0) {
+        console.info(`[bot-detect] shadow ipqs:${verdict.reasons.join(",")} (not enforced)`);
+      }
     }
   }
 

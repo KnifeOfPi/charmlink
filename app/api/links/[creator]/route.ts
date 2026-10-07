@@ -6,6 +6,7 @@ import { verifyLinkToken } from "../../../../lib/link-token";
 import { rateLimit } from "../../../../lib/rate-limit";
 import { verifyTurnstile } from "../../../../lib/turnstile";
 import { checkFingerprintRotation } from "../../../../lib/fingerprint-rotation";
+import { assessClientSignals } from "../../../../lib/client-signals";
 
 export const runtime = "nodejs";
 
@@ -126,36 +127,23 @@ export async function POST(
     return decoyResponse();
   }
 
-  // 4b. Browser fingerprint check — reject known headless/automation signals.
-  // The client computes a fingerprint on mount and sends it with the POST.
-  // If the fingerprint flags suspicious signals (headless Chrome, automation),
-  // we treat it as a high-confidence bot and decoy.
-  if (body.fp_suspicious === true) {
-    const reasons = Array.isArray(body.fp_reasons) ? body.fp_reasons.join(",") : "unknown";
-    console.warn(`[links] suspicious fingerprint: ${reasons} (hash=${body.fingerprint ?? "none"})`);
+  // 4b. Client-reported fingerprint/behaviour signals — see
+  // lib/client-signals.ts for why only strong automation tells are enforced
+  // and everything else is shadow-logged.
+  const client = assessClientSignals(body);
+  if (client.decoy) {
+    console.warn(`[links] decoy: automation fingerprint ${client.strong.join(",")}`);
     return decoyResponse();
   }
 
-  // 4c. Behavioral analysis — reject programmatic interaction patterns.
-  // The client tracks mouse/touch/scroll/click behavior and sends it with the
-  // POST. Bots that pass fingerprinting often fail here: no mouse movement,
-  // instant clicks, uniform timing, no scrolling.
-  if (body.behavior?.isSuspicious === true) {
-    const reasons = Array.isArray(body.behavior.reasons) ? body.behavior.reasons.join(",") : "unknown";
-    console.warn(`[links] suspicious behavior: ${reasons} (mouse=${body.behavior.mouseMoves}, scroll=${body.behavior.scrolls}, firstInteraction=${body.behavior.timeToFirstInteraction}ms)`);
-    return decoyResponse();
-  }
-
-  // 4d. Fingerprint rotation detection — catch bots rotating fingerprints.
-  // Real browsers produce consistent fingerprints. Bots that rotate canvas
-  // hashes, WebGL renderers, etc. to evade detection produce multiple
-  // distinct fingerprints from the same IP in a short window.
-  if (body.fingerprint) {
+  // 4c. Fingerprint rotation — shadow only. Carrier NAT puts many real
+  // visitors behind one IP, so a per-IP hash count is not proof of a bot.
+  if (typeof body.fingerprint === "string" && body.fingerprint) {
     const rotation = await checkFingerprintRotation(ip, body.fingerprint);
-    if (rotation.isSuspicious) {
-      console.warn(`[links] fingerprint rotation: ${rotation.reason} (ip=${ip}, hash=${body.fingerprint})`);
-      return decoyResponse();
-    }
+    if (rotation.isSuspicious) client.shadow.push(`rotation:${rotation.distinctCount}`);
+  }
+  if (client.shadow.length > 0) {
+    console.info(`[links] shadow ${slug}: ${client.shadow.join(",")} (not enforced)`);
   }
 
   // 5. Bot detection + Turnstile escalation for uncertain cases.
@@ -163,7 +151,7 @@ export async function POST(
   // page routes) misfires on iOS in-app WebViews and other legit clients
   // and is handled below via Turnstile escalation instead of an outright
   // decoy response.
-  const { isBot, confidence } = await detectBot(request);
+  const { isBot, confidence } = await detectBot(request, { ipqs: true });
   if (isBot && confidence === "high") {
     return decoyResponse();
   }
