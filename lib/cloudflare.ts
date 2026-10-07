@@ -2,9 +2,8 @@
 // Env: CLOUDFLARE_API_TOKEN (lib code — no filesystem fallback; see scripts/cf-backfill.ts).
 //
 // Free-tier compatibility note:
-// - WAF rules use the LEGACY /firewall/rules + /filters API. The newer Rulesets API
-//   (PUT /zones/{id}/rulesets/phases/.../entrypoint) returns "request is not authorized"
-//   on Free plan tokens regardless of declared scopes. Verified working: legacy endpoints.
+// - WAF rules and the x-client-asn header use the Rulesets API (custom + late
+//   transform phases). The legacy /firewall/rules API is shut down (2026-10).
 // - Response Header Transform Rules also require the Rulesets engine on Free, so they
 //   are intentionally skipped here. Vercel infra headers (x-vercel-*, x-nextjs-*) will
 //   leak — known and accepted Free-tier limitation.
@@ -104,20 +103,6 @@ interface CFDnsRecord {
   content: string;
   proxied: boolean;
   ttl: number;
-}
-
-interface CFFilter {
-  id: string;
-  expression: string;
-  description?: string;
-}
-
-interface CFFirewallRule {
-  id: string;
-  filter: { id: string; expression?: string; description?: string };
-  action: string;
-  description?: string;
-  paused?: boolean;
 }
 
 interface CFBotManagement {
@@ -477,9 +462,14 @@ export async function enableAdvancedBotProtection(
   applied?: string[];
   error?: string;
 }> {
+  // AI/content-bot blocking ONLY. This used to also send fight_mode: true,
+  // and since 2026-10-06 it runs on every provision and Heal — so any heal
+  // would have switched on Bot Fight Mode, which challenges real Chrome users
+  // on Free and is deliberately gated behind CHARMLINK_ENABLE_BFM
+  // (enableBotFightMode). Caught on the 2026-10-07 canary before the fleet
+  // backfill. fight_mode is set explicitly so a zone it was left on is fixed.
   const target = {
-    fight_mode: true,
-    enable_js: true,
+    fight_mode: process.env.CHARMLINK_ENABLE_BFM === "1",
     ai_bots_protection: "block",
     content_bots_protection: "block",
   };
@@ -490,8 +480,7 @@ export async function enableAdvancedBotProtection(
   );
   if (
     cur.ok &&
-    cur.data?.fight_mode === true &&
-    cur.data?.enable_js === true &&
+    cur.data?.fight_mode === target.fight_mode &&
     cur.data?.ai_bots_protection === "block" &&
     cur.data?.content_bots_protection === "block"
   ) {
@@ -507,144 +496,155 @@ export async function enableAdvancedBotProtection(
   return { enabled: true, applied: Object.keys(target) };
 }
 
-// ── WAF custom rules (legacy /firewall/rules + /filters API) ──────────────────
+// ── WAF custom rules + ASN header (Rulesets API) ─────────────────────────────
 //
-// The Rulesets engine (PUT /zones/{id}/rulesets/phases/.../entrypoint) is unavailable
-// to Free-plan API tokens regardless of declared scopes (returns "request is not
-// authorized"). The legacy firewall rules API still works on Free and is what we use.
+// Cloudflare shut the legacy /firewall/rules + /filters API (10020
+// "firewallrules.api.deprecated"), and it had been failing quietly long
+// before: on 2026-10-06, 66 of 78 live zones carried no charmlink rules at
+// all. Rulesets writes DO work with our token (the 2026-09-22 ACME fix and
+// the inject-asn rollout both used them), whatever the old note here said.
 //
-// Idempotency model: each rule has a unique `description` starting with "charmlink:".
-// Before creating, we GET /firewall/rules and skip any whose description already exists.
+// Rule set = the layout live on hannazuki.com, which is the documented
+// design (link-preview crawlers are NOT blocked at the edge, so the origin
+// can serve them the decoy), with two corrections:
+//   - Cloudflare's own ASN (13335) is not "datacenter": iCloud Private Relay
+//     and WARP users exit through it. Meta (32934) has its own rule.
+//   - the 5th Free-plan slot blocks Tor.
+// The ACME bypass is FIRST: custom rules evaluate in order, and a challenge
+// on /.well-known/acme-challenge/ silently breaks certificate renewal (it did,
+// on 12 domains, for four months — docs/PHASE-3-CLOUDFLARE.md).
+//
+// Zones that already carry any `charmlink:` firewall rule are left untouched:
+// changing a live zone's policy is a deliberate decision, not a side effect
+// of provisioning. Non-charmlink rules are always preserved.
 
-const WAF_RULES: Array<{ description: string; expression: string; action: string }> = [
+interface CFRule {
+  description?: string;
+  expression: string;
+  action: string;
+  action_parameters?: unknown;
+  enabled?: boolean;
+}
+
+const ACME_BYPASS_PARAMS = {
+  ruleset: "current",
+  phases: ["http_request_firewall_managed"],
+  products: ["bic", "hot", "securityLevel", "uaBlock", "waf", "zoneLockdown"],
+};
+
+export const WAF_RULES: CFRule[] = [
+  {
+    description: "charmlink:acme-http01-bypass",
+    expression: '(http.request.uri.path contains "/.well-known/acme-challenge/")',
+    action: "skip",
+    action_parameters: ACME_BYPASS_PARAMS,
+  },
+  {
+    description: "charmlink:block-meta-asn",
+    expression: "(ip.src.asnum eq 32934)",
+    action: "managed_challenge",
+  },
+  {
+    description: "charmlink:challenge-datacenter-asns",
+    // AMAZON-02, AMAZON-AES, GOOGLE-CLOUD-PLATFORM, DIGITALOCEAN, MICROSOFT, GOOGLE
+    expression: "(ip.src.asnum in {16509 14618 396982 14061 8075 15169})",
+    action: "managed_challenge",
+  },
   {
     description: "charmlink:block-empty-ua",
     expression: '(http.user_agent eq "")',
     action: "block",
   },
   {
-    description: "charmlink:block-meta-asn",
-    expression: "(ip.geoip.asnum eq 32934)",
-    action: "managed_challenge",
-  },
-  {
-    description: "charmlink:block-bad-uas",
-    expression:
-      '(http.user_agent contains "facebookexternalhit") or ' +
-      '(http.user_agent contains "Twitterbot") or ' +
-      '(http.user_agent contains "Slackbot") or ' +
-      '(http.user_agent contains "TelegramBot") or ' +
-      '(http.user_agent contains "WhatsApp") or ' +
-      '(http.user_agent contains "LinkedInBot") or ' +
-      '(http.user_agent contains "Discordbot")',
-    action: "block",
-  },
-  {
-    description: "charmlink:challenge-datacenter-asns",
-    // ASNs: AWS(16509), Hetzner(24940→see set), DO(14061), GCP(15169), Azure(8075),
-    // Linode(63949), OVH(16276), Meta(32934), Cloudflare(13335), AWS GovCloud(14618),
-    // Tencent(396982), etc. The set below mirrors the original Phase 3 spec list.
-    expression: "(ip.geoip.asnum in {16509 14618 396982 32934 13335 14061 8075 15169})",
-    action: "managed_challenge",
-  },
-  {
-    description: "charmlink:challenge-cf-bot",
-    expression: "(cf.client.bot)",
-    action: "managed_challenge",
-  },
-  {
     description: "charmlink:block-tor",
-    expression: '(ip.geoip.country eq "T1")',
+    expression: '(ip.src.country eq "T1")',
     action: "block",
   },
 ];
 
+export const ASN_TRANSFORM_RULE: CFRule = {
+  description: "charmlink:inject-asn",
+  expression: "true",
+  action: "rewrite",
+  action_parameters: {
+    headers: { "x-client-asn": { operation: "set", expression: "ip.src.asnum" } },
+  },
+};
+
+const isCharmlink = (r: CFRule) => (r.description ?? "").startsWith("charmlink:");
+const strip = (r: CFRule): CFRule => ({
+  description: r.description,
+  expression: r.expression,
+  action: r.action,
+  ...(r.action_parameters !== undefined ? { action_parameters: r.action_parameters } : {}),
+  ...(r.enabled !== undefined ? { enabled: r.enabled } : {}),
+});
+
+async function getEntrypointRules(
+  zoneId: string,
+  phase: string
+): Promise<{ ok: boolean; rules: CFRule[]; error?: string }> {
+  const res = await cfFetchSafe<{ rules?: CFRule[] }>(
+    "GET",
+    `/zones/${zoneId}/rulesets/phases/${phase}/entrypoint`
+  );
+  if (res.ok) return { ok: true, rules: res.data?.rules ?? [] };
+  // No entrypoint ruleset yet is normal for a fresh zone.
+  if (/could not find entrypoint|10003/i.test(res.error ?? "")) return { ok: true, rules: [] };
+  return { ok: false, rules: [], error: res.error };
+}
+
+async function putEntrypointRules(zoneId: string, phase: string, rules: CFRule[]) {
+  return cfFetchSafe<unknown>("PUT", `/zones/${zoneId}/rulesets/phases/${phase}/entrypoint`, {
+    rules: rules.map(strip),
+  });
+}
+
 /**
- * Idempotently apply WAF custom rules to the zone using the legacy firewall API.
- *
- * Strategy:
- *   1. GET /zones/{id}/firewall/rules
- *   2. For each WAF_RULES entry, if a rule with matching `description` exists, skip.
- *      Otherwise create a filter then a firewall rule referencing it.
- *
- * NOTE: this never deletes existing charmlink rules (unlike the previous Rulesets
- * implementation) — it's purely additive on a per-description basis. To rotate rule
- * content, change the `description` (e.g. add a version suffix) so the new rule is
- * created and you delete the old one manually in the dashboard.
+ * Idempotently give a zone the charmlink WAF rules (Rulesets API).
+ * Return shape kept from the legacy implementation for provisionZone.
  */
 export async function applyWafRules(
-  zoneId: string
-): Promise<{
-  rulesApplied: number;
-  rulesSkipped: number;
-  errors: string[];
-  ruleIds: string[];
-}> {
-  const errors: string[] = [];
-  const ruleIds: string[] = [];
-  let applied = 0;
-  let skipped = 0;
-
-  // 1. Pull existing firewall rules (paginated, but 100/page is plenty for our use)
-  const listRes = await cfFetchSafe<CFFirewallRule[]>(
-    "GET",
-    `/zones/${zoneId}/firewall/rules?per_page=100`
-  );
-  if (!listRes.ok) {
-    errors.push(`list firewall rules: ${listRes.error}`);
-    return { rulesApplied: 0, rulesSkipped: 0, errors, ruleIds };
+  zoneId: string,
+  opts: { dryRun?: boolean } = {}
+): Promise<{ rulesApplied: number; rulesSkipped: number; errors: string[]; ruleIds: string[] }> {
+  const phase = "http_request_firewall_custom";
+  const current = await getEntrypointRules(zoneId, phase);
+  if (!current.ok) {
+    return { rulesApplied: 0, rulesSkipped: 0, errors: [`read rules: ${current.error}`], ruleIds: [] };
   }
-
-  const existingByDescription = new Map<string, CFFirewallRule>();
-  for (const r of listRes.data ?? []) {
-    if (r.description) existingByDescription.set(r.description, r);
+  if (current.rules.some(isCharmlink)) {
+    // Existing charmlink policy: leave it alone (see header comment).
+    return { rulesApplied: 0, rulesSkipped: WAF_RULES.length, errors: [], ruleIds: [] };
   }
-
-  // 2. Create each rule that doesn't exist yet
-  for (const rule of WAF_RULES) {
-    const existing = existingByDescription.get(rule.description);
-    if (existing) {
-      skipped++;
-      ruleIds.push(existing.id);
-      continue;
-    }
-
-    // 2a. Create filter
-    const filterRes = await cfFetchSafe<CFFilter[]>(
-      "POST",
-      `/zones/${zoneId}/filters`,
-      [{ expression: rule.expression, description: rule.description }]
-    );
-    if (!filterRes.ok || !filterRes.data || filterRes.data.length === 0) {
-      errors.push(`${rule.description}: filter create failed: ${filterRes.error ?? "no data"}`);
-      continue;
-    }
-    const filterId = filterRes.data[0].id;
-
-    // 2b. Create firewall rule referencing the filter
-    const ruleRes = await cfFetchSafe<CFFirewallRule[]>(
-      "POST",
-      `/zones/${zoneId}/firewall/rules`,
-      [
-        {
-          filter: { id: filterId },
-          action: rule.action,
-          description: rule.description,
-        },
-      ]
-    );
-    if (!ruleRes.ok || !ruleRes.data || ruleRes.data.length === 0) {
-      errors.push(`${rule.description}: rule create failed: ${ruleRes.error ?? "no data"}`);
-      // Try to clean up the orphaned filter so we don't accumulate cruft
-      await cfFetchSafe<unknown>("DELETE", `/zones/${zoneId}/filters/${filterId}`);
-      continue;
-    }
-
-    applied++;
-    ruleIds.push(ruleRes.data[0].id);
+  if (opts.dryRun) {
+    return { rulesApplied: WAF_RULES.length, rulesSkipped: 0, errors: [], ruleIds: [] };
   }
+  const res = await putEntrypointRules(zoneId, phase, [...WAF_RULES, ...current.rules]);
+  if (!res.ok) {
+    return { rulesApplied: 0, rulesSkipped: 0, errors: [`write rules: ${res.error}`], ruleIds: [] };
+  }
+  return { rulesApplied: WAF_RULES.length, rulesSkipped: 0, errors: [], ruleIds: [] };
+}
 
-  return { rulesApplied: applied, rulesSkipped: skipped, errors, ruleIds };
+/**
+ * Idempotently add the `x-client-asn` request header (= ip.src.asnum) that
+ * lib/bot-detect.ts reads. Preserves any other late-transform rules.
+ */
+export async function applyAsnTransform(
+  zoneId: string,
+  opts: { dryRun?: boolean } = {}
+): Promise<{ applied: boolean; alreadyPresent: boolean; error?: string }> {
+  const phase = "http_request_late_transform";
+  const current = await getEntrypointRules(zoneId, phase);
+  if (!current.ok) return { applied: false, alreadyPresent: false, error: `read rules: ${current.error}` };
+  if (current.rules.some((r) => r.description === ASN_TRANSFORM_RULE.description)) {
+    return { applied: false, alreadyPresent: true };
+  }
+  if (opts.dryRun) return { applied: true, alreadyPresent: false };
+  const res = await putEntrypointRules(zoneId, phase, [...current.rules, ASN_TRANSFORM_RULE]);
+  if (!res.ok) return { applied: false, alreadyPresent: false, error: `write rules: ${res.error}` };
+  return { applied: true, alreadyPresent: false };
 }
 
 // ── Transform rules — REMOVED ────────────────────────────────────────────────
@@ -1060,6 +1060,22 @@ export async function provisionZone(
   } catch (err) {
     steps.push({
       name: "applyWafRules",
+      ok: false,
+      detail: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  // Step 10: x-client-asn header for the app-side datacenter check (non-fatal)
+  try {
+    const asn = await applyAsnTransform(zone.id);
+    steps.push({
+      name: "applyAsnTransform",
+      ok: !asn.error,
+      detail: asn.error ?? (asn.alreadyPresent ? "already present" : "added"),
+    });
+  } catch (err) {
+    steps.push({
+      name: "applyAsnTransform",
       ok: false,
       detail: err instanceof Error ? err.message : String(err),
     });

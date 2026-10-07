@@ -1,15 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { rateLimit } from "../../../lib/rate-limit";
+import { clientIp } from "../../../lib/client-ip";
 
 export const runtime = "nodejs";
 
 export async function POST(request: NextRequest) {
-  // Prefer cf-connecting-ip (set by Cloudflare, unspoofable) over
-  // x-forwarded-for (client-influenced).
-  const ip =
-    request.headers.get("cf-connecting-ip") ??
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    "unknown";
+  // Trusted only when the request really came through Cloudflare (lib/client-ip).
+  const ip = clientIp(request.headers);
   const { allowed } = await rateLimit(ip, "age-confirm", 10, 60);
   if (!allowed) {
     return NextResponse.json({ error: "Too many requests" }, { status: 429 });

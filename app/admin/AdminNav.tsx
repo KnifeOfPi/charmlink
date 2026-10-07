@@ -18,6 +18,7 @@ export function AdminNav() {
     { href: "/admin/analytics", label: "Analytics", icon: "📈" },
     { href: "/admin/experiment", label: "Split Test", icon: "🧪" },
     { href: "/admin/domains", label: "Domains", icon: "🌐" },
+    { href: "/admin/incidents", label: "Incidents", icon: "🚩" },
   ];
 
   return (
