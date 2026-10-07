@@ -1725,3 +1725,100 @@ export async function getTrafficCounts(
     premiumClicks: Number(rows[0]?.premium_clicks ?? 0),
   };
 }
+
+// ── Platform incidents (bans / restrictions / link blocks) ──────────────────
+
+export const INCIDENT_PLATFORMS = ["instagram", "facebook", "tiktok", "threads", "x", "other"] as const;
+export const INCIDENT_KINDS = [
+  "account_banned",
+  "account_restricted",
+  "link_blocked",
+  "link_warning",
+  "shadowban",
+  "content_removed",
+  "other",
+] as const;
+
+export interface IncidentInput {
+  occurred_at: string;
+  platform: (typeof INCIDENT_PLATFORMS)[number];
+  kind: (typeof INCIDENT_KINDS)[number];
+  creator_id?: string | null;
+  domain?: string | null;
+  account_handle?: string | null;
+  details?: string | null;
+  recent_changes?: string | null;
+}
+
+export interface IncidentRow extends IncidentInput {
+  id: string;
+  creator_slug: string | null;
+  resolved_at: string | null;
+  resolution: string | null;
+  created_at: string;
+  /** Creator's daily averages 7 days before vs 3 days after the incident. */
+  views_per_day_before: number | null;
+  views_per_day_after: number | null;
+  clicks_per_day_before: number | null;
+  clicks_per_day_after: number | null;
+}
+
+export async function listIncidents(limit = 200): Promise<IncidentRow[]> {
+  return query<IncidentRow>(
+    `SELECT i.*, c.slug AS creator_slug,
+            t.views_before / 7.0  AS views_per_day_before,
+            t.views_after  / 3.0  AS views_per_day_after,
+            t.clicks_before / 7.0 AS clicks_per_day_before,
+            t.clicks_after  / 3.0 AS clicks_per_day_after
+       FROM charmlink_incidents i
+       LEFT JOIN charmlink_creators c ON c.id = i.creator_id
+       LEFT JOIN LATERAL (
+         SELECT
+           COUNT(*) FILTER (WHERE e.type = 'pageview' AND NOT e.is_bot AND e.created_at <  i.occurred_at) AS views_before,
+           COUNT(*) FILTER (WHERE e.type = 'pageview' AND NOT e.is_bot AND e.created_at >= i.occurred_at) AS views_after,
+           COUNT(*) FILTER (WHERE ${DEDUPED_CLICKS} AND e.link_type = 'premium' AND NOT e.is_bot AND e.created_at <  i.occurred_at) AS clicks_before,
+           COUNT(*) FILTER (WHERE ${DEDUPED_CLICKS} AND e.link_type = 'premium' AND NOT e.is_bot AND e.created_at >= i.occurred_at) AS clicks_after
+         FROM charmlink_events e
+         WHERE i.creator_id IS NOT NULL
+           AND e.creator_id = i.creator_id
+           AND e.created_at >= i.occurred_at - interval '7 days'
+           AND e.created_at <  i.occurred_at + interval '3 days'
+       ) t ON i.creator_id IS NOT NULL
+      ORDER BY i.occurred_at DESC
+      LIMIT $1`,
+    [limit]
+  );
+}
+
+export async function createIncident(input: IncidentInput): Promise<{ id: string }> {
+  const rows = await query<{ id: string }>(
+    `INSERT INTO charmlink_incidents
+       (occurred_at, platform, kind, creator_id, domain, account_handle, details, recent_changes)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     RETURNING id`,
+    [
+      input.occurred_at,
+      input.platform,
+      input.kind,
+      input.creator_id || null,
+      input.domain?.trim().toLowerCase() || null,
+      input.account_handle?.trim() || null,
+      input.details?.trim() || null,
+      input.recent_changes?.trim() || null,
+    ]
+  );
+  return rows[0];
+}
+
+export async function resolveIncident(id: string, resolution: string | null): Promise<boolean> {
+  const rows = await query<{ id: string }>(
+    `UPDATE charmlink_incidents SET resolved_at = now(), resolution = $2 WHERE id = $1 RETURNING id`,
+    [id, resolution?.trim() || null]
+  );
+  return rows.length > 0;
+}
+
+export async function deleteIncident(id: string): Promise<boolean> {
+  const rows = await query<{ id: string }>(`DELETE FROM charmlink_incidents WHERE id = $1 RETURNING id`, [id]);
+  return rows.length > 0;
+}
