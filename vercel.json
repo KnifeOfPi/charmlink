@@ -1,0 +1,5 @@
+{
+  "crons": [
+    { "path": "/api/cron/traffic-alert", "schedule": "*/10 * * * *" }
+  ]
+}

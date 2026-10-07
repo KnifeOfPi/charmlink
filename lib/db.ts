@@ -1699,3 +1699,29 @@ export async function logHoneypotHit(
     [ip.slice(0, 100), userAgent.slice(0, 512), referer.slice(0, 512)]
   );
 }
+
+// ── Traffic watchdog ─────────────────────────────────────────────────────────
+
+/**
+ * Human arrivals and premium clicks across ALL creators in [from, to).
+ * Used by /api/cron/traffic-alert to notice an outage: on 2026-10-06 every
+ * custom domain served the bare app root for 37 minutes and nothing noticed —
+ * arrivals and clicks simply went to zero.
+ */
+export async function getTrafficCounts(
+  from: Date,
+  to: Date
+): Promise<{ arrivals: number; premiumClicks: number }> {
+  const rows = await query<{ arrivals: string; premium_clicks: string }>(
+    `SELECT
+       COUNT(*) FILTER (WHERE (e.type = 'pageview' AND NOT e.is_bot) OR (${AUTOREDIRECT_ARRIVALS})) AS arrivals,
+       COUNT(*) FILTER (WHERE ${DEDUPED_CLICKS} AND e.link_type = 'premium' AND NOT e.is_bot) AS premium_clicks
+     FROM charmlink_events e
+     WHERE e.created_at >= $1 AND e.created_at < $2`,
+    [from.toISOString(), to.toISOString()]
+  );
+  return {
+    arrivals: Number(rows[0]?.arrivals ?? 0),
+    premiumClicks: Number(rows[0]?.premium_clicks ?? 0),
+  };
+}
