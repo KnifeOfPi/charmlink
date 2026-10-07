@@ -7,6 +7,7 @@ import { rateLimit } from "../../../../lib/rate-limit";
 import { verifyTurnstile } from "../../../../lib/turnstile";
 import { checkFingerprintRotation } from "../../../../lib/fingerprint-rotation";
 import { assessClientSignals } from "../../../../lib/client-signals";
+import { clientIp } from "../../../../lib/client-ip";
 
 export const runtime = "nodejs";
 
@@ -44,12 +45,8 @@ export async function POST(
   const { creator: slug } = await params;
 
   // 0. Rate limit: 30 requests/min per IP
-  // Prefer cf-connecting-ip (set by Cloudflare, unspoofable) over
-  // x-forwarded-for (client-influenced).
-  const ip =
-    request.headers.get("cf-connecting-ip") ??
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    "unknown";
+  // Trusted only when the request really came through Cloudflare (lib/client-ip).
+  const ip = clientIp(request.headers);
   const { allowed } = await rateLimit(ip, "links", 30, 60);
   if (!allowed) return decoyResponse();
 
@@ -151,7 +148,11 @@ export async function POST(
   // page routes) misfires on iOS in-app WebViews and other legit clients
   // and is handled below via Turnstile escalation instead of an outright
   // decoy response.
-  const { isBot, confidence } = await detectBot(request, { ipqs: true });
+  // IPQS is not used as a gate (2026-10-07 decision): its residential/VPN
+  // verdicts overlap real visitors, the free tier ran out in a day, and the
+  // only near-certain signal it adds (Tor) is blocked at the Cloudflare edge.
+  // lib/ipqs.ts and detectBot's opts.ipqs stay for an offline analytics use.
+  const { isBot, confidence } = await detectBot(request);
   if (isBot && confidence === "high") {
     return decoyResponse();
   }

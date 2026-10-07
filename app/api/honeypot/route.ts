@@ -3,6 +3,7 @@ import { rateLimit } from "../../../lib/rate-limit";
 import { banIp } from "../../../lib/kv-ban";
 import { isBot } from "../../../lib/bot-detect";
 import { logHoneypotHit } from "../../../lib/db";
+import { clientIp } from "../../../lib/client-ip";
 
 // Honeypot endpoint. The legitimate trap is the off-screen, aria-hidden,
 // tabIndex=-1 anchor in CreatorPage, which a real user cannot see or tab to.
@@ -49,13 +50,8 @@ const LOADING_HTML = `<!DOCTYPE html>
 </html>`;
 
 export async function GET(request: NextRequest) {
-  // Prefer cf-connecting-ip (set by Cloudflare, unspoofable) over
-  // x-forwarded-for (client-influenced).
-  const ip =
-    request.headers.get("cf-connecting-ip") ??
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    request.headers.get("x-real-ip") ??
-    "unknown";
+  // Trusted only when the request really came through Cloudflare (lib/client-ip).
+  const ip = clientIp(request.headers);
   const ua = request.headers.get("user-agent") ?? "unknown";
   const referer = request.headers.get("referer") ?? "none";
 

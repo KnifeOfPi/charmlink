@@ -3,6 +3,7 @@ import { isbot } from "isbot";
 import { isDatacenterAsn } from "./datacenter-asns";
 import { isIpBanned } from "./kv-ban";
 import { checkIPQS, classifyIPQS } from "./ipqs";
+import { clientIp } from "./client-ip";
 
 // Meta-2026 patterns not yet in isbot's list
 const META_2026_PATTERNS = [
@@ -32,13 +33,9 @@ export async function detectBot(
   const ua = request.headers.get("user-agent") ?? "";
 
   // 0. KV honeypot ban list (highest priority)
-  // Prefer cf-connecting-ip (set by Cloudflare, unspoofable) over
-  // x-forwarded-for (client-influenced). Fall back to x-forwarded-for
-  // for non-CF environments (local dev, direct Vercel hits).
-  const ip =
-    request.headers.get("cf-connecting-ip") ??
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    "";
+  // Trusted only when the request really came through Cloudflare (lib/client-ip).
+  const rawIp = clientIp(request.headers);
+  const ip = rawIp === "unknown" ? "" : rawIp;
   if (ip && (await isIpBanned(ip))) {
     return { isBot: true, reason: "honeypot", confidence: "high" };
   }

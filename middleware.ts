@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { signInternal } from "./lib/internal-token";
+import { viaCloudflare } from "./lib/client-ip";
 import { detectBot } from "./lib/bot-detect";
 import { isLinkPreviewScraper } from "./lib/scraper-detect";
 import { decoyHtml } from "./lib/decoy/themes";
@@ -209,6 +210,17 @@ export async function middleware(request: NextRequest) {
     if (!isExempt) {
       return new NextResponse("Forbidden", { status: 403 });
     }
+  }
+
+  // ── Origin lock (shadow) ───────────────────────────────────────────────────
+  // Every live custom domain is orange-clouded, so a real visitor always
+  // arrives from a Cloudflare edge address. A request for a custom domain
+  // that did NOT come through Cloudflare reached the Vercel origin directly,
+  // skipping the WAF. Logged only for now: a zone left gray-cloud (it has
+  // happened — six for two months) would otherwise go dark instead of merely
+  // exposed. Enforce once the logs show no real traffic here.
+  if (!isAppHost(hostname) && !pathname.startsWith("/.well-known/") && !viaCloudflare(request.headers)) {
+    console.info(`[origin-lock] shadow: direct hit host=${hostname} path=${pathname}`);
   }
 
   // ── Bot detection ──────────────────────────────────────────────────────────

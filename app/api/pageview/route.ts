@@ -3,6 +3,7 @@ import { parseDeviceType, generateId } from "../../../lib/analytics";
 import { recordEvent, getCreatorBySlug } from "../../../lib/db";
 import { resolveIsBot } from "../../../lib/event-bot-flag";
 import { rateLimit } from "../../../lib/rate-limit";
+import { clientIp } from "../../../lib/client-ip";
 
 export const runtime = "nodejs";
 
@@ -31,10 +32,8 @@ interface PageViewPayload {
 
 export async function POST(request: NextRequest) {
   // Rate limit: 60 requests/min per IP (one beacon per page view)
-  const ip =
-    request.headers.get("cf-connecting-ip") ??
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    "unknown";
+  // Trusted only when the request really came through Cloudflare (lib/client-ip).
+  const ip = clientIp(request.headers);
   const { allowed } = await rateLimit(ip, "pageview", 60, 60);
   if (!allowed) {
     return NextResponse.json({ ok: false }, { status: 429 });
