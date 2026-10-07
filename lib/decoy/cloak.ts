@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { createHmac } from "crypto";
+import { signInternal } from "../internal-token";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Edge-side lookup for the per-creator `cloak_enabled` flag.
@@ -48,15 +48,9 @@ async function fetchMeta(
   const url = new URL("/api/resolve-creator-meta", internalOrigin);
   url.searchParams.set(kind, value);
 
-  // Compute HMAC token for the internal resolver route. Uses the same
-  // CHARMLINK_LINK_TOKEN_SECRET as the link-token system — already required
-  // in production, so no new env var needed.
-  const secret = process.env.CHARMLINK_LINK_TOKEN_SECRET ?? "";
-  const internalToken = secret
-    ? createHmac("sha256", secret).update(`resolve-creator-meta|${kind}|${value}`).digest("hex")
-    : "";
-
   try {
+    // Web Crypto via lib/internal-token — this runs on the edge runtime.
+    const internalToken = await signInternal(`resolve-creator-meta|${kind}|${value}`);
     const res = await fetch(url.toString(), {
       headers: {
         "x-internal-resolve": "1",

@@ -1,3 +1,6 @@
+// CDN networks are deliberately absent: Cloudflare (13335), Fastly (54113)
+// and Akamai (20940) carry real people — iCloud Private Relay (Safari) and
+// Cloudflare WARP exit through them.
 export const DATACENTER_ASNS: Set<string> = new Set([
   // AWS
   "16509",
@@ -15,12 +18,6 @@ export const DATACENTER_ASNS: Set<string> = new Set([
   "24940",
   // Linode (Akamai Cloud)
   "63949",
-  // Cloudflare
-  "13335",
-  // Fastly
-  "54113",
-  // Akamai
-  "20940",
   // Oracle Cloud
   "31898",
   // Alibaba Cloud
