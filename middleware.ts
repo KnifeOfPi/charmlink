@@ -133,10 +133,10 @@ function stripVercelHeaders(response: NextResponse): void {
 // Returns an inline HTML response with NO Charmlink/Vercel/Next.js fingerprints.
 // Caller is responsible for deciding whether to invoke this; we just build the
 // response and scrub every header we can.
-function buildDecoyResponse(slug: string): Response {
+function buildDecoyResponse(slug: string, status = 200): Response {
   const html = decoyHtml(slug);
   const res = new Response(html, {
-    status: 200,
+    status,
     headers: {
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",
@@ -152,6 +152,27 @@ function buildDecoyResponse(slug: string): Response {
   }
   res.headers.set("server", "nginx");
   return res;
+}
+
+// ── Custom-domain path allowlist ──────────────────────────────────────────────
+// A creator's domain only ever serves its landing page ("/"), the sensitive-
+// link interstitial (/r/…), API calls and framework/static files. Anything
+// else used to fall through to Next.js, which (a) rendered the stock 404 —
+// /_next scripts and data-dpl-id, i.e. "this is a Next.js app on Vercel" —
+// and (b) rendered OTHER creators' pages: aussieprincess.com/<slug> served
+// that creator's page under her domain. app/not-found.tsx tried to fix (a)
+// but renders inside the root layout, so the scripts were still there.
+function isCustomDomainPath(pathname: string): boolean {
+  return (
+    pathname === "/" ||
+    pathname === "" ||
+    pathname.startsWith("/r/") ||
+    pathname.startsWith("/api/") ||
+    pathname.startsWith("/_next/") ||
+    pathname.startsWith("/.well-known/acme-challenge/") ||
+    pathname === "/favicon.ico" ||
+    pathname === "/robots.txt"
+  );
 }
 
 // ── Page-route detection for decoy bypass ─────────────────────────────────────
@@ -221,6 +242,12 @@ export async function middleware(request: NextRequest) {
   // exposed. Enforce once the logs show no real traffic here.
   if (!isAppHost(hostname) && !pathname.startsWith("/.well-known/") && !viaCloudflare(request.headers)) {
     console.info(`[origin-lock] shadow: direct hit host=${hostname} path=${pathname}`);
+  }
+
+  // ── Unknown path on a creator domain → plain-HTML decoy 404 ───────────────
+  // Before bot detection and DB lookups: nothing legitimate lives here.
+  if (!isAppHost(hostname) && !isCustomDomainPath(pathname)) {
+    return buildDecoyResponse(hostname, 404);
   }
 
   // ── Bot detection ──────────────────────────────────────────────────────────
