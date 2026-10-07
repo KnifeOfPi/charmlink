@@ -1,11 +1,12 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Geist } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 
-const geist = Geist({subsets:['latin'],variable:'--font-sans'});
+// Self-hosted (see lib/fonts.ts for why not next/font/google).
+const geist = localFont({ src: "../assets/fonts/geist-var.woff2", weight: "100 900", variable: "--font-sans" });
 
-const inter = Inter({ subsets: ["latin"] });
+const inter = localFont({ src: "../assets/fonts/inter-var.woff2", weight: "100 900" });
 
 export const metadata: Metadata = {
   title: "Creator Links",
