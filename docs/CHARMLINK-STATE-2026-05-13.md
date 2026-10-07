@@ -2,7 +2,10 @@
 
 This is the "pick it up cold weeks later" doc. Reads top-to-bottom and assumes
 no prior context. For deep history per phase, see `memory/` daily logs
-referenced inline. **Last updated:** 2026-10-06 (Phase 14 — maximum hardening:
+referenced inline. **Last updated:** 2026-10-07 (Phase 15 — Phase 14 took every
+creator domain down for 37 minutes on 2026-10-06; fixed, and every Phase 14
+signal that would have blocked real visitors now runs in shadow (log-only)
+mode — see §2 Phase 15 row and §4). Before that, 2026-10-06 (Phase 14 — hardening:
 datacenter ASN detection activated via CF Transform Rules, IPQualityScore
 proxy/VPN detection, browser fingerprinting, behavioral analysis, fingerprint
 rotation detection, Turnstile escalation activated, 404 decoy, beacon rate
@@ -77,6 +80,7 @@ they are unusually detailed.
 | 12 | **2026-09-03/18** The analytics trust pass. Four faults, each of which had produced a confidently wrong number rather than an obvious break. (a) `autoredirect` events were rejected by the type CHECK constraint for the whole life of the feature, so three live redirect domains read as zero while OnlyFans recorded 152 clicks against the same links in a week — reported as "those sites are dead". Arrivals are now recorded server-side via `after()`, and the domain chips show arrivals instead of a hard 0. (b) 81% of those arrivals turned out to be automated with `is_bot` false on every row, because the datacenter-ASN gate never fires (Vercel emits no `x-vercel-ip-asn`); `lib/synthetic-traffic.ts` catches them by UA, analytics-only and never gating. Taken at face value the Instagram->OnlyFans handoff read 34% when the human figure is ~93%. (c) Top Referrers was 100% self-referential — the server read the `Referer` of its own fetch — now captured from `document.referrer` client-side. (d) Analytics keyed on the **editable** `creator_slug`, so renaming a creator detached its history or handed it to whoever took the freed slug: `kai`->`reynaa` stranded 845 views and 379 premium clicks, leaving bouncedat.club reporting less than half its real performance for a quarter. All read paths now key on `creator_id`, with a CI guard that fails on a fresh rename. Plus: "Today" resets at Pacific midnight not UTC; premium URLs no longer leak into the RSC payload; gray-cloud domains are detected and healed; a site with no `model_id` can no longer be invisible in the admin list, nor be created. | `df8def4`, `a88a9ee`, `d630863`, `ac32422`, `1301f1c`, `adddb02`, `73378e3`, `288e124`, `697772b`, `56bc412` |
 | 13 | **2026-09-22** The certificate blind spot. `charmlink:challenge-datacenter-asns`, shipped 2026-05-10, managed-challenged AMAZON-02/AMAZON-AES/GOOGLE-CLOUD-PLATFORM — the exact ranges Let's Encrypt validates from. Every ACME HTTP-01 validation on a zone carrying that rule got a JavaScript interstitial, which a validator cannot solve, so origin certs silently stopped renewing. Real visitors were never affected, which is why it survived four months: the failure was invisible from every angle anyone looked from. It surfaced only when hannazuki.com became the first cert to come due (3 Jul → 1 Oct). A probe of all 73 active domains found **12** returning `403 cf-mitigated=challenge` on `/.well-known/acme-challenge/`, and the correlation with real issuance was exact — all 20 certs issued 3–22 Sep were unchallenged domains, zero of the 12 renewed. Fixed across 14 zones by exempting the ACME path (position-1 skip rule where the Free plan's 5-rule cap left room, expression narrowing where it did not); verified narrow, with `/` still challenged. Two second-order findings: the ASN list was mislabelled in this document as "AWS-GovCloud, Tencent", names that hid the connection to our own CA; and the same rules challenge Meta's ASN 32934, which is where Meta crawls landing pages from for **paid ad review**. | `fb9e2a3`, `77633e2` |
 | 14 | **2026-10-06** Maximum hardening. The dormant datacenter-ASN detection was activated via CF Transform Rules (`x-client-asn` = `ip.src.asnum` on all 50 zones). IPQualityScore proxy/VPN detection added (catches residential proxies that bypass ASN checks). Browser fingerprinting (20+ signals: webdriver, window.chrome, AudioContext 24000Hz, WebGL SwiftShader, deviceMemory, screen.availTop, mediaDevices, RTT=0, pdfViewerEnabled, Google TTS voices, canvas hash) catches headless Chrome. Behavioral analysis (mouse/touch/scroll/click patterns, entropy, timing) catches bots that pass fingerprinting. Fingerprint rotation detection (>3 distinct fingerprints per IP in 24h) catches evasion attempts. Turnstile escalation activated (LOW confidence → challenge). 404 decoy on custom domains (no more Next.js 404 fingerprint leaks). Beacon rate limits (60/min track+pageview, 30/min autoredirect+escape-fallback). Internal route auth (HMAC-gated resolve-domain, resolve-creator-meta, creators). IP source hardened (`cf-connecting-ip` preferred). ABP decoupled from BFM (always blocks GPTBot/ClaudeBot/Bytespider). Resolver cache TTL fixed (30s failures, 5min success). Age gate enforced on `/api/redirect/[linkId]`. Admin gate on `/api/creators`. | `b78450e`, `f251a05`, `b2ecdb2` |
+| 15 | **2026-10-06/07** Phase 14 outage and correction. Phase 14 imported Node `crypto` into `middleware.ts`/`lib/decoy/cloak.ts`; middleware runs on the **edge runtime**, which has no `crypto`, so every request threw, domain resolution returned null and **every custom domain served the bare CharmLink app root from 16:08 to 16:45 UTC** (premium clicks 32 → 0). Rolled back, then fixed with Web Crypto (`lib/internal-token.ts`, #17). Reading the Phase 14 code against real traffic showed its client-side checks would have decoyed real visitors once domains resolved — behaviour was sampled at page load before any interaction (flags everyone), the "3 weak fingerprint signals" rule matched every iPhone, rotation counted per-load values across carrier-NAT IPs, and the ASN list included the CDNs iCloud Private Relay/WARP exit through. First production traffic after the fix confirmed it: every real visitor's shadow log carried `no-mouse-movement, instant-interaction, no-scroll`. All of those now run in **shadow mode** (logged as `[links] shadow …`, not enforced); only near-certain tells decoy (§4). Added: traffic watchdog → Slack (#18), `npm run check:visitor-signals` / `check:traffic-watchdog` regression checks, self-hosted fonts so builds no longer fail when Google Fonts doesn't answer (#19). | `5c18666` (#17), `1512794` (#18), `606e1d8` (#19) |
 
 See `memory/archive-2026-05-10.md` for Phase 1–3 ship-day notes and
 `memory/2026-05-11.md` for everything Phase 4 + 5 day-of.
@@ -164,11 +168,11 @@ When a request hits `hannazuki.com/waifuzukii`:
        **The two corrected labels are why this rule went four months without being connected to the cert failures it was causing.** Let's Encrypt validates from AWS and Google Cloud; a list reading "AWS-GovCloud, Tencent" looks like pure scraper infrastructure, a list reading "Amazon us-east-1, Google Cloud" does not. Full incident in `docs/PHASE-3-CLOUDFLARE.md`.
      - `charmlink:challenge-cf-bot` — CF's own `cf.client.bot` flag → managed-challenge, **also excluding `/.well-known/acme-challenge/`** — this rule challenges ACME validators independently of the ASN rule, so exempting only the ASN rule leaves a zone unable to renew
      - `charmlink:block-tor` — Tor exit nodes (country `T1`) → block
-   - **Transform Rule (Phase 14):** `charmlink:inject-asn` — sets `x-client-asn` = `ip.src.asnum` on all 50 zones. This activates the dormant datacenter-ASN detection in `bot-detect.ts`.
-   - **Note:** `lib/datacenter-asns.ts` carries a wider 15-ASN list (used for app-side scoring in `lib/bot-detect.ts`), but only the 8 above are blocked at the CF edge — Free-plan rule expression length limits us.
+   - **Transform Rule (Phase 14):** `charmlink:inject-asn` — sets `x-client-asn` = `ip.src.asnum`. **Only on 26 of the 78 live zones** (checked via CF API 2026-10-07): the rollout covered the first page of 50 zones the CF API returned, not the live set. The other 52 send no ASN, so the app-side check can't fire there. Needs a pass over every live zone.
+   - **Note:** `lib/datacenter-asns.ts` carries a wider 12-ASN list for the app-side check in `lib/bot-detect.ts` (CDN networks Cloudflare 13335 / Fastly 54113 / Akamai 20940 were removed in Phase 15 — iCloud Private Relay and WARP users exit through them). An app-side hit is **low confidence**: the page renders and the links API answers with a Turnstile challenge, never an instant decoy. Only the 8 above are acted on at the CF edge — Free-plan rule expression length limits us.
    - **Bot Fight Mode:** OFF by default (`CHARMLINK_ENABLE_BFM` flag) — Free
      tier BFM nukes real Chrome users
-   - **AI Bots + Content Bots:** blocked (GPTBot, ClaudeBot, Bytespider) — **always on** as of Phase 14 (decoupled from BFM)
+   - **AI Bots + Content Bots:** blocked (GPTBot, ClaudeBot, Bytespider) — decoupled from BFM in Phase 14, **but only applied when a zone is provisioned or healed**. Zones sampled 2026-10-06 still showed `ai_bots_protection: disabled`; needs a fleet pass.
    - **NOT BLOCKED at edge:** known social link-preview UAs (facebookexternalhit,
      Telegrambot, Discordbot, Slackbot, WhatsApp, LinkedInBot, Twitterbot) —
      we want them to reach origin so Phase 5 decoy fires
@@ -188,8 +192,10 @@ When a request hits `hannazuki.com/waifuzukii`:
      root for 5 minutes, leaking the "CharmLink" brand)
 3. **`/api/links/[creator]` route** (Phase 1 → Phase 5 polish → Phase 14):
    - **Rate limit (30/min)** — per IP, via Vercel KV
-   - **IP source (Phase 14):** `cf-connecting-ip` preferred over `x-forwarded-for`
-     (unspoofable, set by Cloudflare)
+   - **IP source (Phase 14):** `cf-connecting-ip` preferred over `x-forwarded-for`.
+     Set by Cloudflare for proxied traffic, but a client hitting `*.vercel.app`
+     directly (API paths are exempt from the origin lock) can send its own —
+     so it is not "unspoofable" until origins accept only Cloudflare IPs (§10).
    - **Sec-Fetch-Site check:** permits `same-origin`, `none`, missing; rejects
      `cross-site` / `same-site` (Sec-Fetch-Site `none` was added in `f2aaac9`
      for iOS `instagram://extbrowser/` → Safari handoff)
@@ -197,30 +203,31 @@ When a request hits `hannazuki.com/waifuzukii`:
    - **HMAC link token verify** — bound to slug + time bucket + age state; **not**
      bound to client IP as of Phase 8 (it was, and that's what was silently
      rejecting real mobile visitors — see §7.9)
-   - **Browser fingerprint check (Phase 14):** client computes 20+ signals
-     (webdriver, window.chrome, AudioContext 24000Hz, WebGL SwiftShader,
-     deviceMemory, screen.availTop, mediaDevices, RTT=0, pdfViewerEnabled,
-     Google TTS voices, canvas hash, plugins, timezone, language) and sends
-     with POST. Suspicious fingerprints → decoy.
-   - **Behavioral analysis (Phase 14):** client tracks mouse/touch/scroll/click
-     patterns (movement count/distance/entropy, touch events, scroll depth,
-     time to first interaction, key presses, click timing). Programmatic
-     patterns → decoy.
-   - **Fingerprint rotation detection (Phase 14):** >3 distinct fingerprints
-     per IP in 24h → decoy. Catches bots rotating canvas/WebGL/audio
-     fingerprints to evade detection.
-   - **Bot detection + Turnstile escalation (Phase 14):**
-     - HIGH confidence bot → decoy
-     - LOW confidence (missing Sec-Fetch on API routes, suspicious Accept) →
-       Turnstile challenge
+   - **Client signals — fingerprint, behaviour, rotation (Phase 14, corrected
+     Phase 15):** the page sends fingerprint reasons and behaviour data with the
+     POST; `lib/client-signals.ts` decides server-side. **Only strong automation
+     tells decoy** (`webdriver`, SwiftShader WebGL, headless 24 kHz audio). Weak
+     fingerprint reasons, behaviour (sampled at page load, so it flags every
+     visitor) and fingerprint rotation (>3 hashes per IP — normal behind carrier
+     NAT) are **shadow only**: logged as `[links] shadow <slug>: …`, not enforced.
+     The browser's own `fp_suspicious` flag is ignored (a bot reports `false`).
+     Locked by `npm run check:visitor-signals`. Promote a shadow signal to
+     enforcement only after measuring it against real visitors.
+   - **Bot detection + Turnstile escalation:**
+     - HIGH confidence bot → decoy (UA lists, honeypot ban, IPQS Tor / bot flag /
+       fraud ≥ 90 — IPQS runs only here, never in middleware)
+     - LOW confidence (datacenter ASN, missing Sec-Fetch on API routes,
+       suspicious Accept) → Turnstile challenge
+     - IPQS VPN / proxy / residential / recent-abuse → shadow only
      - Clean → real payload
 4. **`<CreatorPage>` (client)**:
    - Loads premium links on mount (`1458de8` — interaction gate removed; the
      other layers are sufficient, and the gate was blanking iOS users who
      never scrolled)
    - **Browser fingerprint computed on mount (Phase 14)** — sent with links API POST
-   - **Behavioral tracking started on mount (Phase 14)** — mouse/touch/scroll/click
-     patterns captured for the lifetime of the page
+   - **Behavioral tracking started on mount (Phase 14)** — but the links POST
+     also fires on mount, so it reports a visitor who has not interacted yet.
+     Useful only if it is sampled at the premium-link tap instead (§10).
    - Sensitive links route to `/r/[linkId]` interstitial; non-sensitive
      redirect directly
    - IG WebView banner: hot-pink, two-button chooser (Chrome / Copy for Safari)
@@ -241,13 +248,18 @@ When a request hits `hannazuki.com/waifuzukii`:
    - Every hit logged for monitoring
    - **IP source (Phase 14):** `cf-connecting-ip` preferred
 8. **`/api/resolve-domain`, `/api/resolve-creator-meta`, `/api/creators` (Phase 14):**
-   - HMAC-gated internal routes — require `x-internal-token` header computed
-     from `CHARMLINK_LINK_TOKEN_SECRET`. Prevents scrapers from mapping
-     domains to slugs and learning cloak status.
-   - `/api/creators` additionally requires `CHARMLINK_ADMIN_KEY` Bearer token.
+   - `/api/resolve-domain` and `/api/resolve-creator-meta` require an
+     `x-internal-token` HMAC computed from `CHARMLINK_LINK_TOKEN_SECRET`
+     (`lib/internal-token.ts` — **Web Crypto, because middleware runs on the
+     edge runtime; never import Node `crypto` there**, that is what caused the
+     2026-10-06 outage).
+   - `/api/creators` requires only the `CHARMLINK_ADMIN_KEY` Bearer token (no
+     HMAC), and is open if that key is unset. Nothing calls it.
 9. **`app/not-found.tsx` (Phase 14):**
-   - Custom domains serve decoy HTML instead of stock Next.js 404 (which
-     leaks `/_next` assets and `data-dpl-id` fingerprints)
+   - Custom domains serve decoy HTML instead of the stock Next.js 404 —
+     **but rendered inside the root layout**, so the page still carries the
+     `/_next` scripts it was meant to hide. Serving the decoy as raw HTML from
+     middleware would actually achieve it (§10).
    - Canonical domain serves a simple branded 404
 10. **Beacon endpoints (Phase 14):**
     - `/api/track`, `/api/pageview`: 60 req/min per IP
@@ -269,7 +281,9 @@ When a request hits `hannazuki.com/waifuzukii`:
 | `TURNSTILE_SECRET_KEY` | Server-side Turnstile verify | optional (gracefully skipped) |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Public widget key (`Charmlink` widget) | optional (gracefully skipped) |
 | `CHARMLINK_ENABLE_BFM` | Set `1` to flip CF Bot Fight Mode on — **leave unset** | no |
-| `IPQS_API_KEY` | IPQualityScore proxy/VPN detection API key. Sign up at ipqualityscore.com (free tier 5K lookups/month, paid from $49.99/mo for 100K). If unset, IPQS check is skipped (fail-open). | optional |
+| `IPQS_API_KEY` | IPQualityScore proxy/VPN detection API key (free tier 5K lookups/month). Fail-open if unset or out of credits. Called only from `/api/links/[creator]` since Phase 15. **Credits ran out 2026-10-07** — Phase 14 called it on every request — so it is currently a no-op until topped up. | optional |
+| `CRON_SECRET` | Authenticates Vercel's cron call to `/api/cron/traffic-alert` (sent as a Bearer token). Unset = the watchdog answers 503 and never runs. | yes (for alerts) |
+| `SLACK_ALERT_WEBHOOK_URL` | Slack incoming-webhook URL the traffic watchdog posts to. | yes (for alerts) |
 | `BLOB_READ_WRITE_TOKEN` | Auto-injected by Vercel when a Blob store is connected to the project. Required at runtime for `/api/admin/avatar` uploads. **Currently enabled** — store `charmlink-blob` (id `store_fmeJquaTvcKmJHZU`, public, iad1) connected 2026-05-13 via API. If you ever add Blob to a fresh project, **force a redeploy afterwards** — builds that completed before the env var was injected won't have access to the token. | yes (prod) |
 
 Token / secret storage off-repo:
@@ -901,6 +915,13 @@ that is the model to copy when a claim depends on in-app browser behaviour.
 
 ### 9.3 Verified Working (2026-10-06, Phase 14)
 
+> **Correction (2026-10-07):** this section only tested bots and datacenter
+> traffic getting the decoy — which a total outage also passes. It never
+> loaded a creator page as a normal visitor, and that is how the edge-runtime
+> crash shipped. The "all 50 zones" claim below is 26 of 78 live zones. A
+> release is verified when a real-visitor page load returns the creator page
+> and real premium links, and the traffic watchdog stays quiet.
+
 - **CF Transform Rule deployed to all 50 zones:** `charmlink:inject-asn` sets
   `x-client-asn` = `ip.src.asnum` on every request. Verified via CF API —
   6 zones already had it (from earlier partial run), 44 newly added.
@@ -921,6 +942,25 @@ that is the model to copy when a claim depends on in-app browser behaviour.
 ## 10. Known Open / Future Items
 
 These were on the radar but not done. Pick up as needed.
+
+- **Phase 15 follow-ups (from the 2026-10-06 review):**
+  - Deploy `charmlink:inject-asn` to the 52 live zones that lack it (iterate
+    the live domain list, not one page of the CF zone listing).
+  - Move the WAF rules to the Rulesets API — the legacy `/firewall/rules` API
+    is shut down, and 66 of 78 live zones carry no `charmlink:` rules at all —
+    with the ACME exemption built in, then verify cert renewal (§9.3 of
+    `docs/PHASE-3-CLOUDFLARE.md`).
+  - Run Advanced Bot Protection across all zones once.
+  - Lock origins to Cloudflare IPs so `cf-connecting-ip` can't be forged on
+    `*.vercel.app`.
+  - Serve the 404 decoy as raw HTML from middleware (`app/not-found.tsx`
+    still ships `/_next` scripts).
+  - Sample behaviour at the premium-link tap, not page load; then measure
+    every shadow signal for a week (`[links] shadow` logs, by device and IG
+    vs not) and enforce only those under ~0.5% false positives on visitors
+    who went on to click — starting with Turnstile, not decoy.
+  - Protect `main` (require a PR and a green Vercel check) — Phase 14 went
+    straight to `main` in three commits.
 
 - **CF token refresh** with `cache:purge` scope (current token can't bulk flush
   edge). Not blocking — most responses are `cf-cache-status: DYNAMIC` — but
@@ -949,9 +989,10 @@ These were on the radar but not done. Pick up as needed.
   the other way), honeypot bot-UA share up from 0.12%, Blocked Visitors
   count staying low rather than climbing back into the thousands.
 - ~~**Datacenter ASN detection dormant**~~ — **ACTIVATED 2026-10-06 (Phase 14):**
-  CF Transform Rule `charmlink:inject-asn` deployed to all 50 zones. Sets
-  `x-client-asn` = `ip.src.asnum`. `bot-detect.ts` now reads the header and
-  decoys datacenter ASNs. Original note: the app-side check had never fired
+  CF Transform Rule `charmlink:inject-asn` deployed to 26 of 78 live zones
+  (see §4 — the rest still need it). Sets `x-client-asn` = `ip.src.asnum`.
+  `bot-detect.ts` reads the header; a datacenter hit gets a Turnstile
+  challenge (Phase 15), not a decoy. Original note: the app-side check had never fired
   because Vercel emits no `x-vercel-ip-asn` and CF didn't forward the ASN.
 - ~~**Turnstile escalation inactive**~~ — **ACTIVATED 2026-10-06 (Phase 14):**
   `bot-detect.ts` now emits `confidence: "low"` for API routes with missing
@@ -963,15 +1004,17 @@ These were on the radar but not done. Pick up as needed.
   `lib/browser-fingerprint.ts` computes 20+ signals (webdriver, window.chrome,
   AudioContext 24000Hz, WebGL SwiftShader, deviceMemory, screen.availTop,
   mediaDevices, RTT=0, pdfViewerEnabled, Google TTS voices, canvas hash,
-  plugins, timezone, language). Sent with links API POST. Suspicious
-  fingerprints → decoy.
+  plugins, timezone, language). Sent with links API POST. Only strong
+  automation tells decoy; the rest is shadow-logged (Phase 15).
 - ~~**Behavioral analysis not built**~~ — **SHIPPED 2026-10-06 (Phase 14):**
   `lib/behavioral-analysis.ts` tracks mouse/touch/scroll/click patterns
   (movement count/distance/entropy, touch events, scroll depth, time to first
-  interaction, key presses, click timing). Programmatic patterns → decoy.
+  interaction, key presses, click timing). Shadow only since Phase 15 — it
+  is sampled at page load, before anyone can interact.
 - ~~**Fingerprint rotation detection not built**~~ — **SHIPPED 2026-10-06
   (Phase 14):** `lib/fingerprint-rotation.ts` stores fingerprint hashes in KV
-  with 24h TTL. >3 distinct fingerprints per IP in 24h → decoy.
+  with 24h TTL. >3 distinct fingerprints per IP in 24h → shadow log only
+  (carrier NAT puts many real visitors behind one IP).
 - ~~**IPQualityScore integration not built**~~ — **SHIPPED 2026-10-06 (Phase 14):**
   `lib/ipqs.ts` queries IPQS Proxy Detection API. Catches residential proxies,
   VPNs, Tor exits that bypass ASN checks. Results cached in KV for 24h.
@@ -984,8 +1027,8 @@ These were on the radar but not done. Pick up as needed.
   `/api/autoredirect` and `/api/escape-fallback` limited to 30 req/min per IP.
 - ~~**Internal resolver routes public**~~ — **SHIPPED 2026-10-06 (Phase 14):**
   `/api/resolve-domain`, `/api/resolve-creator-meta`, and `/api/creators` now
-  require HMAC `x-internal-token` header. `/api/creators` additionally requires
-  `CHARMLINK_ADMIN_KEY` Bearer token.
+  The two resolvers require an HMAC `x-internal-token` header; `/api/creators`
+  requires only `CHARMLINK_ADMIN_KEY`.
 - ~~**IP source spoofable**~~ — **SHIPPED 2026-10-06 (Phase 14):** all routes
   now prefer `cf-connecting-ip` (unspoofable, set by Cloudflare) over
   `x-forwarded-for` (client-influenced).
