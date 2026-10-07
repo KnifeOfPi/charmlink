@@ -160,24 +160,41 @@ charmlink/
 When a request hits `hannazuki.com/waifuzukii`:
 
 1. **Cloudflare edge** (Phase 3 + Phase 14) — orange-cloud proxies through:
-   - **Active WAF rules per zone (up to 6 via legacy `/firewall/rules`; the Free plan caps a zone at 5, so zones differ):**
-     - `charmlink:block-empty-ua` — empty UA → block
-     - `charmlink:block-meta-asn` — Meta ASN 32934 → managed-challenge
-     - `charmlink:block-bad-uas` — bad UA list (curl/python-requests/wget/etc.) → block
-     - `charmlink:challenge-datacenter-asns` — 8 hosting ASNs `{16509, 14618, 396982, 32934, 13335, 14061, 8075, 15169}` → managed-challenge, **excluding `/.well-known/acme-challenge/`** (see below). Verified against ARIN RDAP 2026-09-22: AMAZON-02, **AMAZON-AES** (not AWS-GovCloud), **GOOGLE-CLOUD-PLATFORM** (not Tencent), FACEBOOK, CLOUDFLARENET, DIGITALOCEAN-ASN, MICROSOFT/Azure, GOOGLE.
-       **The two corrected labels are why this rule went four months without being connected to the cert failures it was causing.** Let's Encrypt validates from AWS and Google Cloud; a list reading "AWS-GovCloud, Tencent" looks like pure scraper infrastructure, a list reading "Amazon us-east-1, Google Cloud" does not. Full incident in `docs/PHASE-3-CLOUDFLARE.md`.
-     - `charmlink:challenge-cf-bot` — CF's own `cf.client.bot` flag → managed-challenge, **also excluding `/.well-known/acme-challenge/`** — this rule challenges ACME validators independently of the ASN rule, so exempting only the ASN rule leaves a zone unable to renew
-     - `charmlink:block-tor` — Tor exit nodes (country `T1`) → block
-   - **Transform Rule (Phase 14):** `charmlink:inject-asn` — sets `x-client-asn` = `ip.src.asnum`. **Only on 26 of the 78 live zones** (checked via CF API 2026-10-07): the rollout covered the first page of 50 zones the CF API returned, not the live set. The other 52 send no ASN, so the app-side check can't fire there. Needs a pass over every live zone.
+   - **WAF custom rules — all 78 live zones (Rulesets API, Phase 15, 2026-10-07).**
+     Two layouts are live; `lib/cloudflare.ts` `WAF_RULES` is the canonical one and
+     what new domains get. `scripts/cf-rules-backfill.ts` (dry-run by default)
+     brings zones up to it and never changes a zone that already has
+     `charmlink:` rules. The legacy `/firewall/rules` API is shut down.
+     - **Canonical (66 zones + new domains), = hannazuki.com's layout:**
+       1. `charmlink:acme-http01-bypass` — skip the rest for
+          `/.well-known/acme-challenge/` (**first**, or cert renewal breaks — §13)
+       2. `charmlink:block-meta-asn` — Meta ASN 32934 → managed challenge
+       3. `charmlink:challenge-datacenter-asns` — `{16509 14618 396982 14061 8075 15169}`
+          (AMAZON-02, AMAZON-AES, GOOGLE-CLOUD-PLATFORM, DIGITALOCEAN, MICROSOFT,
+          GOOGLE) → managed challenge. Cloudflare 13335 deliberately absent
+          (Private Relay / WARP users).
+       4. `charmlink:block-empty-ua` → block
+       5. `charmlink:block-tor` — country `T1` → block
+       Link-preview crawlers are NOT blocked here, so the origin can decoy them.
+     - **Older layout (10 zones, from Phase 3, left as-is):** meta-asn and
+       datacenter challenges (old 8-ASN list incl. 13335) and `challenge-cf-bot`,
+       each with the ACME exclusion inline; `block-empty-ua`; `block-bad-uas`
+       (blocks facebookexternalhit, Twitterbot, Slackbot… at the edge — so the
+       decoy never fires there). Aligning them is an open decision (§10).
+       ASN labels and the cert-renewal incident: `docs/PHASE-3-CLOUDFLARE.md`.
+   - **Transform Rule (Phase 14):** `charmlink:inject-asn` — sets `x-client-asn` = `ip.src.asnum`. **On all 78 live zones** since 2026-10-07 (the Phase 14 rollout had covered only 26 — one page of the CF zone list). New domains get it from `provisionZone` step 10.
    - **Note:** `lib/datacenter-asns.ts` carries a wider 12-ASN list for the app-side check in `lib/bot-detect.ts` (CDN networks Cloudflare 13335 / Fastly 54113 / Akamai 20940 were removed in Phase 15 — iCloud Private Relay and WARP users exit through them). An app-side hit is **low confidence**: the page renders and the links API answers with a Turnstile challenge, never an instant decoy. Only the 8 above are acted on at the CF edge — Free-plan rule expression length limits us.
    - **Bot Fight Mode:** OFF by default (`CHARMLINK_ENABLE_BFM` flag) — Free
      tier BFM nukes real Chrome users
-   - **AI Bots + Content Bots:** blocked (GPTBot, ClaudeBot, Bytespider) — decoupled from BFM in Phase 14, **but only applied when a zone is provisioned or healed**. Zones sampled 2026-10-06 still showed `ai_bots_protection: disabled`; needs a fleet pass.
+   - **AI Bots + Content Bots:** blocked (GPTBot, ClaudeBot, Bytespider) — on all 78 live zones (fleet pass 2026-10-07), and on provision/Heal. `enableAdvancedBotProtection` used to also send `fight_mode: true`, so from 2026-10-06 any Heal would have switched Bot Fight Mode on — fixed 2026-10-07; it now leaves BFM to `CHARMLINK_ENABLE_BFM`.
    - **NOT BLOCKED at edge:** known social link-preview UAs (facebookexternalhit,
      Telegrambot, Discordbot, Slackbot, WhatsApp, LinkedInBot, Twitterbot) —
      we want them to reach origin so Phase 5 decoy fires
 2. **Next.js middleware** (`middleware.ts`):
    - Host → creator slug rewrite (`hannazuki.com/` → `/waifuzukii`)
+   - **Origin lock (shadow, Phase 15):** custom-domain requests that did not
+     come through Cloudflare are logged `[origin-lock] shadow` — not blocked,
+     because a gray-clouded zone would go dark. Enforce once the logs are clean.
    - Detect link-preview scrapers via UA → render Phase-5 themed decoy
      (`lib/decoy/cloak.ts`) inline, zero Next chrome, theme deterministic by
      creator slug
@@ -192,10 +209,10 @@ When a request hits `hannazuki.com/waifuzukii`:
      root for 5 minutes, leaking the "CharmLink" brand)
 3. **`/api/links/[creator]` route** (Phase 1 → Phase 5 polish → Phase 14):
    - **Rate limit (30/min)** — per IP, via Vercel KV
-   - **IP source (Phase 14):** `cf-connecting-ip` preferred over `x-forwarded-for`.
-     Set by Cloudflare for proxied traffic, but a client hitting `*.vercel.app`
-     directly (API paths are exempt from the origin lock) can send its own —
-     so it is not "unspoofable" until origins accept only Cloudflare IPs (§10).
+   - **IP source (`lib/client-ip.ts`, Phase 15):** `cf-connecting-ip` is used only
+     when Vercel's TCP peer (`x-real-ip`) is a published Cloudflare range;
+     otherwise the peer itself. A direct origin hit can no longer choose its
+     own rate-limit / ban key.
    - **Sec-Fetch-Site check:** permits `same-origin`, `none`, missing; rejects
      `cross-site` / `same-site` (Sec-Fetch-Site `none` was added in `f2aaac9`
      for iOS `instagram://extbrowser/` → Safari handoff)
@@ -256,10 +273,12 @@ When a request hits `hannazuki.com/waifuzukii`:
    - `/api/creators` requires only the `CHARMLINK_ADMIN_KEY` Bearer token (no
      HMAC), and is open if that key is unset. Nothing calls it.
 9. **`app/not-found.tsx` (Phase 14):**
-   - Custom domains serve decoy HTML instead of the stock Next.js 404 —
-     **but rendered inside the root layout**, so the page still carries the
-     `/_next` scripts it was meant to hide. Serving the decoy as raw HTML from
-     middleware would actually achieve it (§10).
+   - Superseded for custom domains (Phase 15): middleware answers any path
+     outside `/`, `/r/`, `/api/`, `/_next/`, the ACME path, favicon and robots
+     with the plain-HTML decoy (404, `server: nginx`, no `/_next`). Before
+     that, unknown paths reached Next.js — the stock 404, and other creators'
+     pages: `aussieprincess.com/<slug>` rendered that creator. `not-found.tsx`
+     now only serves the app host.
    - Canonical domain serves a simple branded 404
 10. **Beacon endpoints (Phase 14):**
     - `/api/track`, `/api/pageview`: 60 req/min per IP
@@ -943,24 +962,26 @@ that is the model to copy when a claim depends on in-app browser behaviour.
 
 These were on the radar but not done. Pick up as needed.
 
-- **Phase 15 follow-ups (from the 2026-10-06 review):**
-  - Deploy `charmlink:inject-asn` to the 52 live zones that lack it (iterate
-    the live domain list, not one page of the CF zone listing).
-  - Move the WAF rules to the Rulesets API — the legacy `/firewall/rules` API
-    is shut down, and 66 of 78 live zones carry no `charmlink:` rules at all —
-    with the ACME exemption built in, then verify cert renewal (§9.3 of
-    `docs/PHASE-3-CLOUDFLARE.md`).
-  - Run Advanced Bot Protection across all zones once.
-  - Lock origins to Cloudflare IPs so `cf-connecting-ip` can't be forged on
-    `*.vercel.app`.
-  - Serve the 404 decoy as raw HTML from middleware (`app/not-found.tsx`
-    still ships `/_next` scripts).
+- **Phase 15 follow-ups.** Done 2026-10-07: ASN header + WAF on all 78 live
+  zones (Rulesets API), AI-bot blocking fleet-wide, trusted client IP, raw-HTML
+  decoy 404, `main` protected (PR + Vercel check), traffic watchdog → Slack,
+  incident log (`/admin/incidents`). Still open:
+  - **Log every platform incident** in `/admin/incidents` — ban, restriction,
+    link block — with what changed just before. It is the only outcome data
+    the bot-defence decisions have.
+  - **Origin lock:** read the `[origin-lock] shadow` logs for a week; if they
+    show no real visitors, enforce (403 for custom-domain requests not via
+    Cloudflare, ACME path exempt).
+  - **Align the 10 older-layout zones?** They block link-preview crawlers at
+    the edge (no decoy) and challenge Cloudflare's own ASN. A policy choice.
   - Sample behaviour at the premium-link tap, not page load; then measure
     every shadow signal for a week (`[links] shadow` logs, by device and IG
     vs not) and enforce only those under ~0.5% false positives on visitors
     who went on to click — starting with Turnstile, not decoy.
-  - Protect `main` (require a PR and a green Vercel check) — Phase 14 went
-    straight to `main` in three commits.
+  - IPQS is not used as a gate (2026-10-07). If ever revived, use it to
+    label analytics offline, not inline.
+  - `charmlink_models` and `charmlink_event_write_failures` have RLS off —
+    readable through Supabase's public API if an anon key is exposed.
 
 - **CF token refresh** with `cache:purge` scope (current token can't bulk flush
   edge). Not blocking — most responses are `cf-cache-status: DYNAMIC` — but
