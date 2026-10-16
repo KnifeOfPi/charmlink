@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCreatorById, updateCreator, deleteCreator } from "../../../../../lib/db";
+import { cleanCreatorFields } from "../../../../../lib/slug";
 
 export const runtime = "nodejs";
 
@@ -38,6 +39,8 @@ export async function PUT(
   const { id } = await params;
   try {
     const body = await request.json();
+    const fieldError = cleanCreatorFields(body, { requireSlug: false });
+    if (fieldError) return NextResponse.json({ error: fieldError }, { status: 400 });
     const updated = await updateCreator({ ...body, id });
     if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json(updated);

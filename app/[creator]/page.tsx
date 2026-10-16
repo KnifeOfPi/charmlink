@@ -130,8 +130,17 @@ export default async function CreatorPageServer({ params, searchParams }: PagePr
     notFound();
   }
 
-  // No such creator — a normal 404, not an error condition. Not logged.
-  if (!dbCreator) notFound();
+  // No such creator. On the app host that is an ordinary bad URL (not logged).
+  // Reached via a custom domain it means the domain maps to a slug with no
+  // active creator — the creator's own domain is serving the decoy 404 —
+  // which went unnoticed on 2026-10-15 (slug "Account 2"). Say so loudly.
+  if (!dbCreator) {
+    const customDomain = (await headers()).get("x-custom-domain");
+    if (customDomain) {
+      console.warn(`[creator:page] ${customDomain} maps to slug "${slug}" but no active creator has it — the domain is serving the decoy 404`);
+    }
+    notFound();
+  }
 
   // ── Auto-redirect sites ────────────────────────────────────────────────────
   // No landing page: hand the visitor straight to the target, escaping the
