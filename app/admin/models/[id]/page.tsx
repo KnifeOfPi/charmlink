@@ -323,7 +323,7 @@ export default function ModelPage({ params }: { params: Promise<{ id: string }> 
               <div className="flex flex-wrap gap-2">
                 <Input
                   value={newSlug}
-                  onChange={(e) => setNewSlug(e.target.value)}
+                  onChange={(e) => setNewSlug(e.target.value.toLowerCase().replace(/\s+/g, "-"))}
                   placeholder="slug (e.g. reynaxo)"
                   className="text-sm w-44"
                 />

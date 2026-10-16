@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAllCreators, createCreator, createModel } from "../../../../lib/db";
+import { cleanCreatorFields } from "../../../../lib/slug";
 
 export const runtime = "nodejs";
 
@@ -29,6 +30,11 @@ export async function POST(request: NextRequest) {
   }
   try {
     const body = await request.json();
+
+    // Slug and domain are normalized and validated here, not just in one of
+    // the admin forms — see lib/slug.ts for the "Account 2" incident.
+    const fieldError = cleanCreatorFields(body, { requireSlug: true });
+    if (fieldError) return NextResponse.json({ error: fieldError }, { status: 400 });
 
     // A creator with no model_id is invisible in the admin creators list: that
     // list is built by looping over models, so an unassigned site matches none
