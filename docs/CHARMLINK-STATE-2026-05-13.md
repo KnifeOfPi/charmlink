@@ -1128,6 +1128,14 @@ These were on the radar but not done. Pick up as needed.
     creators have one. It should alert on threshold crossings, source its list
     from the DB, and run the ACME-path probe from
     `docs/NEW-DOMAIN-TROUBLESHOOTING.md`.
+    **Update 2026-10-23:** since the 2026-10-07 WAF rollout every homepage
+    answers a datacenter/cloud IP with `403 cf-mitigated: challenge`, so a
+    monitor probing `/` from a server reported ~75 healthy domains as "still
+    403 / heal failed". Use **`npm run domain-health`** instead: it probes the
+    ACME path (404 = DNS, TLS, proxy, origin and cert renewal all fine), reads
+    the domain list from the DB, flags domains not behind Cloudflare, and exits
+    1 only on real failures. Never run `cf-heal` on a 403 — it cannot change a
+    WAF challenge.
   - **Bella's 4 GoDaddy domains** (gyozagirl.com, morefromhoney.com,
     moreofbella.com, seemorekawaii.com) are not on Cloudflare at all and carry
     ~1,950 premium clicks/week. Moving them needs registrar access.

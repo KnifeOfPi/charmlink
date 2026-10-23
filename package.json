@@ -13,7 +13,8 @@
     "check:event-types": "tsx scripts/check-event-types.ts",
     "check:visitor-signals": "tsx scripts/check-visitor-signals.ts",
     "check:traffic-watchdog": "tsx scripts/check-traffic-watchdog.ts",
-    "check:slug": "tsx scripts/check-slug.ts"
+    "check:slug": "tsx scripts/check-slug.ts",
+    "domain-health": "tsx scripts/domain-health.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",
