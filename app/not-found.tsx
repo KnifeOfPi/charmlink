@@ -1,6 +1,7 @@
 import { headers } from "next/headers";
 import Link from "next/link";
 import { decoyHtml } from "../lib/decoy/themes";
+import type { DecoyContext } from "../lib/decoy/themes";
 
 export const runtime = "nodejs";
 
@@ -9,8 +10,7 @@ export const runtime = "nodejs";
  *
  * On custom domains (creator landing pages), unknown paths should NOT leak
  * the stock Next.js 404 with its /_next assets and data-dpl-id fingerprint.
- * Instead, we serve the same decoy page that middleware serves to detected
- * bots — a wholesome blog post that looks like a real indie site.
+ * Instead, we serve a minimal branded 404 using the same decoy renderer.
  *
  * On the canonical app domain (charmrev.com), we serve a simple branded 404.
  */
@@ -55,9 +55,17 @@ export default async function NotFound() {
     );
   }
 
-  // Custom domain: serve decoy HTML. This prevents fingerprint leaks from
-  // stock Next.js 404 pages (which include /_next assets and data-dpl-id).
-  const html = decoyHtml(host);
+  // Custom domain: serve a minimal decoy 404. No creator profile available
+  // here (we don't have a slug), so use a bare generic context.
+  const ctx: DecoyContext = {
+    slug: host,
+    name: "Page Not Found",
+    tagline: "This page does not exist.",
+    avatarUrl: "data:,",
+    theme: { bgColor: "#1a1a2e", accentColor: "#888", textColor: "#ccc" },
+    links: [],
+  };
+  const html = decoyHtml(ctx);
   return (
     <div dangerouslySetInnerHTML={{ __html: html }} />
   );

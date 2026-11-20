@@ -5,6 +5,7 @@ import { viaCloudflare } from "./lib/client-ip";
 import { detectBot } from "./lib/bot-detect";
 import { isLinkPreviewScraper } from "./lib/scraper-detect";
 import { decoyHtml } from "./lib/decoy/themes";
+import type { DecoyContext } from "./lib/decoy/themes";
 import { getCreatorMeta } from "./lib/decoy/cloak";
 
 // ── Custom domain cache (edge-compatible, in-process) ────────────────────────
@@ -133,8 +134,8 @@ function stripVercelHeaders(response: NextResponse): void {
 // Returns an inline HTML response with NO Charmlink/Vercel/Next.js fingerprints.
 // Caller is responsible for deciding whether to invoke this; we just build the
 // response and scrub every header we can.
-function buildDecoyResponse(slug: string, status = 200): Response {
-  const html = decoyHtml(slug);
+function buildDecoyResponse(ctx: DecoyContext, status = 200): Response {
+  const html = decoyHtml(ctx);
   const res = new Response(html, {
     status,
     headers: {
@@ -247,7 +248,14 @@ export async function middleware(request: NextRequest) {
   // ── Unknown path on a creator domain → plain-HTML decoy 404 ───────────────
   // Before bot detection and DB lookups: nothing legitimate lives here.
   if (!isAppHost(hostname) && !isCustomDomainPath(pathname)) {
-    return buildDecoyResponse(hostname, 404);
+    return buildDecoyResponse({
+      slug: hostname,
+      name: "Page Not Found",
+      tagline: "This page does not exist.",
+      avatarUrl: "data:,",
+      theme: { bgColor: "#1a1a2e", accentColor: "#888", textColor: "#ccc" },
+      links: [],
+    }, 404);
   }
 
   // ── Bot detection ──────────────────────────────────────────────────────────
@@ -295,7 +303,21 @@ export async function middleware(request: NextRequest) {
       // If lookup fails (meta === null) we fall through to normal rendering
       // rather than risk decoying a real user.
       if (meta && meta.exists && meta.cloakEnabled) {
-        return buildDecoyResponse(meta.slug ?? candidateSlug);
+        return buildDecoyResponse({
+          slug: meta.slug ?? candidateSlug,
+          name: meta.name ?? candidateSlug,
+          tagline: meta.tagline ?? "",
+          avatarUrl: meta.avatar_url ?? "data:,",
+          theme: {
+            bgColor: meta.theme_bg ?? "#1a1a2e",
+            accentColor: meta.theme_accent ?? "#c45bff",
+            textColor: meta.theme_text ?? "#f5eefc",
+            bgType: meta.bg_type,
+            bgColor2: meta.bg_color_2,
+            bgColor3: meta.bg_color_3,
+          },
+          links: (meta.decoy_links ?? []).map(l => ({ label: l.label, url: l.url, icon: l.icon })),
+        });
       }
     }
   }

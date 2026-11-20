@@ -1,32 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCreatorBySlug, getCreatorByDomain } from "../../../lib/db";
+import { getCreatorBySlug, getCreatorByDomain, getDecoyLinksBySlug } from "../../../lib/db";
 import { verifyInternal } from "../../../lib/internal-token";
 
 export const runtime = "nodejs";
 
-// Internal-only route: middleware calls this to check cloak_enabled.
-// Must not be publicly accessible — a scraper could map any slug to its
-// cloak status and learn which creators have decoy protection.
-//
-// Auth: HMAC (lib/internal-token) of the lookup key using
-// CHARMLINK_LINK_TOKEN_SECRET, sent by lib/decoy/cloak.ts as `x-internal-token`.
-/**
- * Internal-only metadata lookup for middleware-side bot-decoy decisions.
+/** Internal-only metadata lookup for middleware-side bot-decoy decisions.
  *
- * Accepts `?slug=...` or `?domain=...` (slug wins if both are present).
- * Returns `{ slug, cloak_enabled, exists }` so the edge middleware can decide
- * whether to short-circuit with the decoy HTML response or fall through to
- * normal rendering.
+ *  Accepts `?slug=...` or `?domain=...` (slug wins if both are present).
+ *  Returns the full creator profile needed to build a branded decoy page
+ *  (name, tagline, avatar, theme colors) plus social links with
+ *  show_in_decoy=true. Premium links are never included.
  *
- * The response intentionally contains no creator identity (no name, tagline,
- * avatar, etc.) so it is safe to cache for short periods.
- */
+ *  Auth: HMAC (lib/internal-token) of the lookup key using
+ *  CHARMLINK_LINK_TOKEN_SECRET, sent by lib/decoy/cloak.ts as x-internal-token. */
 export async function GET(request: NextRequest) {
   const sp = new URL(request.url).searchParams;
   const slug = sp.get("slug");
   const domain = sp.get("domain");
 
-  // Determine lookup key for token verification
   const kind = slug ? "slug" : "domain";
   const value = slug ?? domain ?? "";
 
@@ -47,20 +38,31 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ exists: false, slug: null, cloak_enabled: false });
     }
 
-    // Default cloak_enabled to true when the column is missing (back-compat
-    // with envs where the migration hasn't been applied yet).
     const rec = creator as unknown as Record<string, unknown>;
     const raw = rec.cloak_enabled;
     const cloakEnabled = raw === undefined || raw === null ? true : Boolean(raw);
+
+    // Fetch decoy links for this creator (social + show_in_decoy=true only)
+    const decoyLinks = await getDecoyLinksBySlug(creator.slug);
 
     return NextResponse.json({
       exists: true,
       slug: creator.slug,
       cloak_enabled: cloakEnabled,
+      // Full profile for decoy page rendering
+      name: creator.name,
+      tagline: creator.tagline,
+      avatar_url: creator.avatar_url,
+      theme_bg: creator.theme_bg,
+      theme_accent: creator.theme_accent,
+      theme_text: creator.theme_text,
+      bg_type: creator.bg_type,
+      bg_color_2: creator.bg_color_2,
+      bg_color_3: creator.bg_color_3,
+      // Decoy links (social, show_in_decoy=true only — never premium)
+      decoy_links: decoyLinks,
     });
   } catch {
-    // On DB error, default to NOT cloaking — failing closed on the decoy means
-    // real users keep working, which is the safer choice.
     return NextResponse.json({ exists: false, slug: null, cloak_enabled: false });
   }
 }
