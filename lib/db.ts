@@ -161,6 +161,7 @@ export interface DBLink {
   show_border: boolean;
   title_color: string | null;
   title_font_size: string | null;
+  show_in_decoy: boolean;
   created_at: string;
 }
 
@@ -241,6 +242,7 @@ export interface CreateLinkInput {
   show_border?: boolean;
   title_color?: string | null;
   title_font_size?: string | null;
+  show_in_decoy?: boolean;
 }
 
 export interface UpdateLinkInput extends Partial<Omit<CreateLinkInput, "creator_id">> {
@@ -579,13 +581,26 @@ export async function getLinksByCreatorSlug(slug: string): Promise<DBLink[]> {
   );
 }
 
+/** Fetch only social links marked show_in_decoy=true for the decoy page.
+ *  Premium links are NEVER included — the decoy must contain no adult signals. */
+export async function getDecoyLinksBySlug(slug: string): Promise<Pick<DBLink, "label" | "url" | "icon">[]> {
+  return query<Pick<DBLink, "label" | "url" | "icon">>(
+    `SELECT l.label, l.url, l.icon FROM charmlink_links l
+     JOIN charmlink_creators c ON c.id = l.creator_id
+     WHERE c.slug = $1 AND l.is_active = true AND c.is_active = true
+       AND l.link_type = 'social' AND l.show_in_decoy = true
+     ORDER BY l.sort_order ASC, l.created_at ASC`,
+    [slug]
+  );
+}
+
 export async function createLink(input: CreateLinkInput): Promise<DBLink> {
   const rows = await query<DBLink>(
     `INSERT INTO charmlink_links
       (creator_id, label, url, icon, link_type, sort_order, is_active,
        subtitle, image_url, deeplink_enabled, recovery_url, redirect_url,
-       sensitive, badge, notes, tags)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+       sensitive, badge, notes, tags, show_in_decoy)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
      RETURNING *`,
     [
       input.creator_id,
@@ -604,6 +619,7 @@ export async function createLink(input: CreateLinkInput): Promise<DBLink> {
       input.badge ?? null,
       input.notes ?? "",
       input.tags ?? [],
+      input.show_in_decoy ?? false,
     ]
   );
   return rows[0];
@@ -618,7 +634,7 @@ export async function updateLink(input: UpdateLinkInput): Promise<DBLink | null>
     // v3
     "show_text_glow", "text_glow_color", "text_glow_intensity",
     "hover_animation", "border_color", "show_border",
-    "title_color", "title_font_size",
+    "title_color", "title_font_size", "show_in_decoy",
   ] as const;
 
   const setClauses: string[] = [];

@@ -458,6 +458,7 @@ function AddLinkForm({ creatorId, onAdded, authHeaders, token, creatorSlug }: Ad
     show_text_glow: false,
     text_glow_color: "#ffffff",
     text_glow_intensity: 5,
+    show_in_decoy: false,
     hover_animation: "",
     border_color: "",
     show_border: false,
@@ -496,6 +497,7 @@ function AddLinkForm({ creatorId, onAdded, authHeaders, token, creatorSlug }: Ad
         show_text_glow: form.show_text_glow,
         text_glow_color: form.text_glow_color,
         text_glow_intensity: form.text_glow_intensity,
+        show_in_decoy: form.show_in_decoy,
         hover_animation: form.hover_animation || null,
         border_color: form.border_color || null,
         show_border: form.show_border,
@@ -514,6 +516,7 @@ function AddLinkForm({ creatorId, onAdded, authHeaders, token, creatorSlug }: Ad
           subtitle: "", image_url: "", deeplink_enabled: false, recovery_url: "",
           redirect_url: "", sensitive: false, badge: "", notes: "", tags: "",
           show_text_glow: false, text_glow_color: "#ffffff", text_glow_intensity: 5,
+          show_in_decoy: false,
           hover_animation: "", border_color: "", show_border: false,
           title_color: "", title_font_size: "",
         });
@@ -668,6 +671,15 @@ function AddLinkForm({ creatorId, onAdded, authHeaders, token, creatorSlug }: Ad
               />
               <Label className="text-xs">Deeplink</Label>
             </div>
+            {form.link_type === "social" && (
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={form.show_in_decoy ?? false}
+                  onCheckedChange={(v) => setForm((p) => ({ ...p, show_in_decoy: v }))}
+                />
+                <Label className="text-xs">Show in bot preview</Label>
+              </div>
+            )}
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Notes (admin only)</Label>
